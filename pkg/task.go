@@ -1,7 +1,8 @@
-package cmd
+package pkg
 
 import (
 	"fmt"
+
 	"github.com/AlexanderGrooff/reconcile/modules"
 )
 
@@ -17,7 +18,7 @@ type Task struct {
 }
 
 func (t Task) String() string {
-	return fmt.Sprintf("Task: %s (Module: %s)", t.Name, t.Module)
+	return fmt.Sprintf("%s (module: %s)", t.Name, t.Module)
 }
 
 func (t *Task) ExecuteModule() error {
