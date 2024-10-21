@@ -1,0 +1,20 @@
+---
+- name: task 1
+  module: shell
+  params:
+    execute: echo 'hello world'
+    revert: echo 'reverting'
+
+- name: task 2
+  module: shell
+  params:
+    execute: exit 1
+    revert: echo 'reverting 2'
+  after: "task 1"
+
+- name: task 3
+  module: shell
+  params:
+    execute: echo 'hello world 3'
+    revert: echo 'reverting 3'
+  after: "task 2"
