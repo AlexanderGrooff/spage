@@ -1,8 +1,11 @@
 package modules
 
+type ModuleInput map[string]interface{}
+type ModuleOutput map[string]interface{}
+
 type Module interface {
-	Execute(params map[string]interface{}) error
-	Revert(params map[string]interface{}) error
+	Execute(params ModuleInput) (ModuleOutput, error)
+	Revert(params ModuleInput) (ModuleOutput, error)
 }
 
 // ModuleRegistry stores available modules

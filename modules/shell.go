@@ -8,28 +8,37 @@ import (
 
 type ShellModule struct{}
 
-func (s ShellModule) Execute(params map[string]interface{}) error {
+func (s ShellModule) Execute(params ModuleInput) (ModuleOutput, error) {
 	command := params["execute"].(string)
 	cmd := exec.Command("bash", "-c", command)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
+	output := ModuleOutput{}
+	output["stdout"] = cmd.Stdout
+	output["stderr"] = cmd.Stderr
+
 	if err != nil {
-		return fmt.Errorf("failed to execute command: %v", err)
+		return output, fmt.Errorf("failed to execute command: %v", err)
 	}
-	return nil
+
+	return output, nil
 }
 
-func (s ShellModule) Revert(params map[string]interface{}) error {
+func (s ShellModule) Revert(params ModuleInput) (ModuleOutput, error) {
 	command := params["revert"].(string)
 	cmd := exec.Command("bash", "-c", command)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
+	output := ModuleOutput{}
+	output["stdout"] = cmd.Stdout
+	output["stderr"] = cmd.Stderr
+
 	if err != nil {
-		return fmt.Errorf("failed to revert command: %v", err)
+		return output, fmt.Errorf("failed to revert command: %v", err)
 	}
-	return nil
+	return output, nil
 }
 
 func init() {

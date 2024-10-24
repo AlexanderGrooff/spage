@@ -4,17 +4,24 @@
   params:
     execute: echo 'hello world'
     revert: echo 'reverting'
+  register: hello_world
 
 - name: task 2
   module: shell
   params:
-    execute: exit 1
+    execute: "echo task 2"
     revert: echo 'reverting 2'
-  after: "task 1"
+  before: "task 1"
 
 - name: task 3
   module: shell
   params:
-    execute: echo 'hello world 3'
+    execute: "echo 'previous task: {{ .hello_world }}'"
     revert: echo 'reverting 3'
   after: "task 2"
+
+- name: crash and burn
+  module: shell
+  params:
+    execute: exit 1
+  after: "task 3"
