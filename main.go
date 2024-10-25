@@ -30,7 +30,7 @@ var rootCmd = &cobra.Command{
 	Short: "spage the given file",
 	Long:  `spage the given file using the specified inventory file.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := pkg.Reconcile(generated.Graph, inventoryFile); err != nil {
+		if err := pkg.Execute(generated.Graph, inventoryFile); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}

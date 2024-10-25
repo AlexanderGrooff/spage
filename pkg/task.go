@@ -33,7 +33,15 @@ func (t Task) ExecuteModule(c Context) (ModuleOutput, error) {
 	if !ok {
 		return nil, fmt.Errorf("module %s not found", t.Module)
 	}
-	return module.Execute(t.Params, c)
+	output, err := module.Execute(t.Params, c)
+	if err != nil {
+		return nil, err
+	}
+	moduleOutput, ok := output.(ModuleOutput)
+	if !ok {
+		return nil, fmt.Errorf("module %s did not return a valid ModuleOutput", t.Module)
+	}
+	return moduleOutput, nil
 }
 
 func (t Task) RevertModule(c Context) (ModuleOutput, error) {
@@ -41,5 +49,13 @@ func (t Task) RevertModule(c Context) (ModuleOutput, error) {
 	if !ok {
 		return nil, fmt.Errorf("module %s not found", t.Module)
 	}
-	return module.Revert(t.Params, c)
+	output, err := module.Revert(t.Params, c)
+	if err != nil {
+		return nil, err
+	}
+	moduleOutput, ok := output.(ModuleOutput)
+	if !ok {
+		return nil, fmt.Errorf("module %s did not return a valid ModuleOutput", t.Module)
+	}
+	return moduleOutput, nil
 }

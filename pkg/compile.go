@@ -14,6 +14,13 @@ func Indent(n int) string {
 	return "\t" + Indent(n-1)
 }
 
+func getStringFromMap(m map[string]interface{}, key string) string {
+	if value, ok := m[key]; ok {
+		return value.(string)
+	}
+	return ""
+}
+
 func TextToTasks(text []byte) ([]Task, error) {
 	var yamlMap []map[string]interface{}
 	err := yaml.Unmarshal([]byte(text), &yamlMap)
@@ -32,7 +39,6 @@ func TextToTasks(text []byte) ([]Task, error) {
 
 		// Convert back to yaml so we can unmarshal it into the correct type
 		paramsData, err := yaml.Marshal(block["params"])
-
 		if err != nil {
 			return nil, fmt.Errorf("Failed to marshal params for module %s: %v", m, block["params"])
 		}
@@ -44,9 +50,14 @@ func TextToTasks(text []byte) ([]Task, error) {
 		}
 
 		tasks = append(tasks, Task{
-			Name:   block["name"].(string),
-			Module: m.(string),
-			Params: params.(ModuleInput),
+			Name:     getStringFromMap(block, "name"),
+			Module:   m.(string),
+			Params:   params.(ModuleInput),
+			Validate: getStringFromMap(block, "validate"),
+			Before:   getStringFromMap(block, "before"),
+			After:    getStringFromMap(block, "after"),
+			When:     getStringFromMap(block, "when"),
+			Register: getStringFromMap(block, "register"),
 		})
 	}
 	return tasks, nil

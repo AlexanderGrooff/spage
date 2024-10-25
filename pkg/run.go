@@ -4,27 +4,28 @@ import (
 	"fmt"
 )
 
-func Reconcile(graph Graph, inventoryFile string) error {
+func Execute(graph Graph, inventoryFile string) error {
 	c := make(Context)
 	executed := make([][]Task, len(graph.Tasks))
 	for executionLevel, taskOnLevel := range graph.Tasks {
-		fmt.Printf("Starting execution level %d\n", executionLevel)
+		fmt.Printf("Starting execution level %d\n\n", executionLevel)
 		for _, task := range taskOnLevel {
 			// TODO: execute in parallel
-			fmt.Printf("Executing %s\n", task)
+			fmt.Printf("[%s]:execute\n", task)
 			output, err := task.ExecuteModule(c)
 			c[task.Register] = output
 			if err != nil {
-				fmt.Printf("Error executing %s: %v\n", task, err)
-				fmt.Println("Reverting tasks...")
+				fmt.Printf("error executing '%s': %v\n\n", task, err)
 
 				if err := RevertTasks(executed, c); err != nil {
-					return fmt.Errorf("reconciliation failed: %w", err)
+					return fmt.Errorf("run failed: %w", err)
 				}
 				return fmt.Errorf("reverted all tasks")
 			}
+			fmt.Printf("%s\n", output.String())
 			executed[executionLevel] = append(executed[executionLevel], task)
 		}
+		fmt.Println()
 	}
 
 	fmt.Println("All tasks executed successfully")
@@ -36,10 +37,12 @@ func RevertTasks(taskLevels [][]Task, c Context) error {
 	for j := len(taskLevels) - 1; j >= 0; j-- {
 		tasks := taskLevels[j]
 		for _, task := range tasks {
-			fmt.Printf("Reverting %s\n", tasks[j])
-			if _, revertErr := task.RevertModule(c); revertErr != nil {
-				fmt.Printf("Error reverting %s: %v\n", task, revertErr)
+			fmt.Printf("[%s]:revert\n", tasks[j])
+			output, revertErr := task.RevertModule(c)
+			if revertErr != nil {
+				fmt.Printf("error reverting %s: %v\n", task, revertErr)
 			}
+			fmt.Printf("%s\n", output.String())
 		}
 	}
 	return nil

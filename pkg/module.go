@@ -5,7 +5,9 @@ import "reflect"
 type ModuleInput interface {
 	ToCode(ident int) string
 }
-type ModuleOutput interface{}
+type ModuleOutput interface {
+	String() string
+}
 
 type Module interface {
 	Execute(params interface{}, c Context) (interface{}, error)
