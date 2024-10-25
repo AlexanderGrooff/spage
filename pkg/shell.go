@@ -31,7 +31,7 @@ func (sm ShellModule) OutputType() reflect.Type {
 }
 
 func (i ShellInput) ToCode(indent int) string {
-	return fmt.Sprintf("pkg.ShellInput{Execute: %q, Revert: %q},\n",
+	return fmt.Sprintf("pkg.ShellInput{Execute: %q, Revert: %q},",
 		// Indent(indent),
 		i.Execute,
 		i.Revert,

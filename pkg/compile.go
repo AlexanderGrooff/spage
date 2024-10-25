@@ -11,7 +11,7 @@ func Indent(n int) string {
 	if n == 0 {
 		return ""
 	}
-	return "\t" + Indent(n-1)
+	return "  " + Indent(n-1)
 }
 
 func containsInMap(m map[string]interface{}, item string) bool {

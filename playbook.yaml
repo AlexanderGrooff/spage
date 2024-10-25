@@ -1,8 +1,14 @@
 ---
 - name: task 1
   shell:
-    execute: "echo task 1"
-    revert: echo 'reverting 1'
+    execute: |
+      echo task 1
+      echo task 1 line 2
+  register: hello_world
+
+- name: revert only
+  shell:
+    revert: "echo revert only"
   register: hello_world
 
 - name: task 2
