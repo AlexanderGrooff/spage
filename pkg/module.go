@@ -1,11 +1,11 @@
-package modules
+package pkg
 
 type ModuleInput map[string]interface{}
 type ModuleOutput map[string]interface{}
 
 type Module interface {
-	Execute(params ModuleInput) (ModuleOutput, error)
-	Revert(params ModuleInput) (ModuleOutput, error)
+	Execute(params ModuleInput, c Context) (ModuleOutput, error)
+	Revert(params ModuleInput, c Context) (ModuleOutput, error)
 }
 
 // ModuleRegistry stores available modules

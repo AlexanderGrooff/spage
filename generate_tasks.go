@@ -10,7 +10,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/AlexanderGrooff/reconcile/pkg"
+	"github.com/AlexanderGrooff/spage/pkg"
 	"gopkg.in/yaml.v3"
 )
 
@@ -50,7 +50,7 @@ func main() {
 	fmt.Fprintln(f, "package generated")
 	fmt.Fprintln(f)
 	fmt.Fprintln(f, "import (")
-	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/reconcile/pkg"`)
+	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/pkg"`)
 	fmt.Fprintln(f, ")")
 	fmt.Fprintln(f)
 	fmt.Fprintln(f, "var Graph = pkg.Graph{")

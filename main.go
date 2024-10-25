@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/AlexanderGrooff/reconcile/generated"
-	"github.com/AlexanderGrooff/reconcile/pkg"
+	"github.com/AlexanderGrooff/spage/generated"
+	"github.com/AlexanderGrooff/spage/pkg"
 )
 
 // Task struct definition...
@@ -26,9 +26,9 @@ func main() {
 var inventoryFile string
 
 var rootCmd = &cobra.Command{
-	Use:   "reconcile [file]",
-	Short: "Reconcile the given file",
-	Long:  `Reconcile the given file using the specified inventory file.`,
+	Use:   "spage [file]",
+	Short: "spage the given file",
+	Long:  `spage the given file using the specified inventory file.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := pkg.Reconcile(generated.Graph, inventoryFile); err != nil {
 			fmt.Println(err)

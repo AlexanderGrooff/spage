@@ -16,7 +16,7 @@
 - name: task 3
   module: shell
   params:
-    execute: "echo 'previous task: {{ .hello_world }}'"
+    execute: "echo 'previous task: {{ hello_world.stdout }}'"
     revert: echo 'reverting 3'
   after: "task 2"
 

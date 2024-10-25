@@ -1,4 +1,4 @@
-module github.com/AlexanderGrooff/reconcile
+module github.com/AlexanderGrooff/spage
 
 go 1.21
 
