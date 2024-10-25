@@ -5,14 +5,23 @@ import (
 )
 
 type Task struct {
-	Name     string              `yaml:"name"`
-	Module   string              `yaml:"module"`
+	Name     string      `yaml:"name"`
+	Module   string      `yaml:"module"`
 	Params   ModuleInput `yaml:"params"`
-	Validate string              `yaml:"validate"`
-	Before   string              `yaml:"before"`
-	After    string              `yaml:"after"`
-	When     string              `yaml:"when"`
-	Register string              `yaml:"register"`
+	Validate string      `yaml:"validate"`
+	Before   string      `yaml:"before"`
+	After    string      `yaml:"after"`
+	When     string      `yaml:"when"`
+	Register string      `yaml:"register"`
+}
+
+func (t Task) ToCode(ident int) string {
+	return fmt.Sprintf("%s{Name: %q, Module: %q, Params: %s},\n",
+		Indent(ident),
+		t.Name,
+		t.Module,
+		t.Params.ToCode(ident+1),
+	)
 }
 
 func (t Task) String() string {

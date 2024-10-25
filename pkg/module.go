@@ -1,11 +1,17 @@
 package pkg
 
-type ModuleInput map[string]interface{}
-type ModuleOutput map[string]interface{}
+import "reflect"
+
+type ModuleInput interface {
+	ToCode(ident int) string
+}
+type ModuleOutput interface{}
 
 type Module interface {
-	Execute(params ModuleInput, c Context) (ModuleOutput, error)
-	Revert(params ModuleInput, c Context) (ModuleOutput, error)
+	Execute(params interface{}, c Context) (interface{}, error)
+	Revert(params interface{}, c Context) (interface{}, error)
+	InputType() reflect.Type
+	OutputType() reflect.Type
 }
 
 // ModuleRegistry stores available modules

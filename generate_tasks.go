@@ -11,7 +11,6 @@ import (
 	"os"
 
 	"github.com/AlexanderGrooff/spage/pkg"
-	"gopkg.in/yaml.v3"
 )
 
 func main() {
@@ -30,8 +29,7 @@ func main() {
 	}
 
 	// Parse YAML
-	var tasks []pkg.Task
-	err = yaml.Unmarshal(data, &tasks)
+	tasks, err := pkg.TextToTasks(data)
 	if err != nil {
 		log.Fatalf("Error parsing YAML: %v", err)
 	}
@@ -59,11 +57,7 @@ func main() {
 	for _, taskExecutionLevel := range graph.Tasks {
 		fmt.Fprintln(f, "\t\t[]pkg.Task{")
 		for _, task := range taskExecutionLevel {
-			fmt.Fprintf(f, "\t\t\t{Name: %q, Module: %q, Params: map[string]interface{}{\n", task.Name, task.Module)
-			for k, v := range task.Params {
-				fmt.Fprintf(f, "\t\t\t\t%q: %#v,\n", k, v)
-			}
-			fmt.Fprintln(f, "\t\t\t}},")
+			fmt.Fprintln(f, task.ToCode(3))
 		}
 		fmt.Fprintln(f, "\t\t},")
 	}

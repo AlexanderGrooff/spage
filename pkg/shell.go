@@ -1,21 +1,54 @@
 package pkg
 
 import (
+	"bytes"
 	"fmt"
-	"os"
 	"os/exec"
+	"reflect"
 )
 
 type ShellModule struct{}
 
-func templateAndExecute(command string, c Context) (ModuleOutput, error) {
+type ShellInput struct {
+	Execute string `yaml:"execute"`
+	Revert  string `yaml:"revert"`
+	ModuleInput
+}
+type ShellOutput struct {
+	Stdout string `yaml:"stdout"`
+	Stderr string `yaml:"stderr"`
+	ModuleOutput
+}
+
+func (sm ShellModule) InputType() reflect.Type {
+	return reflect.TypeOf(ShellInput{})
+}
+
+func (sm ShellModule) OutputType() reflect.Type {
+	return reflect.TypeOf(ShellOutput{})
+}
+
+func (i ShellInput) ToCode(indent int) string {
+	return fmt.Sprintf("%spkg.ShellInput{Execute: %q, Revert: %q},\n",
+		Indent(indent),
+		i.Execute,
+		i.Revert,
+	)
+}
+
+func templateAndExecute(command string, c Context) (ShellOutput, error) {
+	var stdout, stderr bytes.Buffer
 	cmd := exec.Command("bash", "-c", c.TemplateString(command))
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
 	err := cmd.Run()
-	output := ModuleOutput{}
-	output["stdout"] = cmd.Stdout
-	output["stderr"] = cmd.Stderr
+	output := ShellOutput{
+		Stdout: stdout.String(),
+		Stderr: stderr.String(),
+	}
+
+	fmt.Printf("Output: %v\n", output)
 
 	if err != nil {
 		return output, fmt.Errorf("failed to execute command: %v", err)
@@ -24,14 +57,14 @@ func templateAndExecute(command string, c Context) (ModuleOutput, error) {
 	return output, nil
 }
 
-func (s ShellModule) Execute(params ModuleInput, c Context) (ModuleOutput, error) {
-	command := params["execute"].(string)
-	return templateAndExecute(command, c)
+func (s ShellModule) Execute(params interface{}, c Context) (interface{}, error) {
+	shellParams := params.(ShellInput)
+	return templateAndExecute(shellParams.Execute, c)
 }
 
-func (s ShellModule) Revert(params ModuleInput, c Context) (ModuleOutput, error) {
-	command := params["revert"].(string)
-	return templateAndExecute(command, c)
+func (s ShellModule) Revert(params interface{}, c Context) (interface{}, error) {
+	shellParams := params.(ShellInput)
+	return templateAndExecute(shellParams.Revert, c)
 }
 
 func init() {
