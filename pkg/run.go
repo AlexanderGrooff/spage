@@ -14,8 +14,9 @@ func Execute(graph Graph, inventoryFile string) error {
 			fmt.Printf("[%s]:execute\n", task)
 			output, err := task.ExecuteModule(c)
 			c[task.Register] = output
+			executed[executionLevel] = append(executed[executionLevel], task)
 			if err != nil {
-				fmt.Printf("error executing '%s': %v\n\n", task, err)
+				fmt.Printf("error executing '%s': %v\n\nREVERTING\n\n", task, err)
 
 				if err := RevertTasks(executed, c); err != nil {
 					return fmt.Errorf("run failed: %w", err)
@@ -23,7 +24,6 @@ func Execute(graph Graph, inventoryFile string) error {
 				return fmt.Errorf("reverted all tasks")
 			}
 			fmt.Printf("%s\n", output.String())
-			executed[executionLevel] = append(executed[executionLevel], task)
 		}
 		fmt.Println()
 	}
@@ -37,7 +37,7 @@ func RevertTasks(taskLevels [][]Task, c Context) error {
 	for j := len(taskLevels) - 1; j >= 0; j-- {
 		tasks := taskLevels[j]
 		for _, task := range tasks {
-			fmt.Printf("[%s]:revert\n", tasks[j])
+			fmt.Printf("[%s]:revert\n", task)
 			output, revertErr := task.RevertModule(c)
 			if revertErr != nil {
 				fmt.Printf("error reverting %s: %v\n", task, revertErr)
