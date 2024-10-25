@@ -11,6 +11,7 @@ import (
 	"os"
 
 	"github.com/AlexanderGrooff/spage/pkg"
+	_ "github.com/AlexanderGrooff/spage/pkg/modules"
 )
 
 func main() {
@@ -49,6 +50,7 @@ func main() {
 	fmt.Fprintln(f)
 	fmt.Fprintln(f, "import (")
 	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/pkg"`)
+	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/pkg/modules"`)
 	fmt.Fprintln(f, ")")
 	fmt.Fprintln(f)
 	fmt.Fprintln(f, "var Graph = pkg.Graph{")
