@@ -11,6 +11,14 @@ import (
 
 type ShellModule struct{}
 
+func (sm ShellModule) InputType() reflect.Type {
+	return reflect.TypeOf(ShellInput{})
+}
+
+func (sm ShellModule) OutputType() reflect.Type {
+	return reflect.TypeOf(ShellOutput{})
+}
+
 type ShellInput struct {
 	Execute string `yaml:"execute"`
 	Revert  string `yaml:"revert"`
@@ -23,14 +31,6 @@ type ShellOutput struct {
 	Stderr   string `yaml:"stderr"`
 	Command  string `yaml:"command"`
 	pkg.ModuleOutput
-}
-
-func (sm ShellModule) InputType() reflect.Type {
-	return reflect.TypeOf(ShellInput{})
-}
-
-func (sm ShellModule) OutputType() reflect.Type {
-	return reflect.TypeOf(ShellOutput{})
 }
 
 func (i ShellInput) ToCode(indent int) string {
@@ -46,12 +46,16 @@ func (o ShellOutput) String() string {
 
 func templateAndExecute(command string, c pkg.Context) (ShellOutput, error) {
 	var stdout, stderr bytes.Buffer
-	templatedCmd := c.TemplateString(command)
+	var err error
+	templatedCmd, err := c.TemplateString(command)
+	if err != nil {
+		return ShellOutput{}, err
+	}
 	cmd := exec.Command("bash", "-c", templatedCmd)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 	output := ShellOutput{
 		Stdout:   stdout.String(),
 		Stderr:   stderr.String(),
