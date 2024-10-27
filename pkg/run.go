@@ -5,25 +5,43 @@ import (
 )
 
 func Execute(graph Graph, inventoryFile string) error {
-	c := make(Context)
+	var contexts map[string]Context
+	if inventoryFile == "" {
+		contexts = make(map[string]Context)
+		fmt.Printf("No inventory file specified. Assuming target is this machine\n")
+		contexts["localhost"] = Context{}
+	} else {
+		inventory, err := LoadInventory(inventoryFile)
+		if err != nil {
+			return fmt.Errorf("failed to load inventory: %w", err)
+		}
+		contexts, err = inventory.GetContextForRun()
+		if err != nil {
+			return fmt.Errorf("failed to get contexts for run: %w", err)
+		}
+	}
+
 	executed := make([][]Task, len(graph.Tasks))
 	for executionLevel, taskOnLevel := range graph.Tasks {
 		fmt.Printf("Starting execution level %d\n\n", executionLevel)
 		for _, task := range taskOnLevel {
 			// TODO: execute in parallel
-			fmt.Printf("[%s]:execute\n", task)
-			output, err := task.ExecuteModule(c)
-			c[task.Register] = output
-			executed[executionLevel] = append(executed[executionLevel], task)
-			if err != nil {
-				fmt.Printf("error executing '%s': %v\n\nREVERTING\n\n", task, err)
+			for hostname, c := range contexts {
+				// TODO: execute in parallel
+				fmt.Printf("[%s - %s]:execute\n", hostname, task)
+				output, err := task.ExecuteModule(c)
+				c[task.Register] = output
+				executed[executionLevel] = append(executed[executionLevel], task)
+				if err != nil {
+					fmt.Printf("error executing '%s': %v\n\nREVERTING\n\n", task, err)
 
-				if err := RevertTasks(executed, c); err != nil {
-					return fmt.Errorf("run failed: %w", err)
+					if err := RevertTasks(executed, contexts); err != nil {
+						return fmt.Errorf("run failed: %w", err)
+					}
+					return fmt.Errorf("reverted all tasks")
 				}
-				return fmt.Errorf("reverted all tasks")
+				fmt.Printf("%s\n", output.String())
 			}
-			fmt.Printf("%s\n", output.String())
 		}
 		fmt.Println()
 	}
@@ -32,17 +50,19 @@ func Execute(graph Graph, inventoryFile string) error {
 	return nil
 }
 
-func RevertTasks(taskLevels [][]Task, c Context) error {
+func RevertTasks(taskLevels [][]Task, contexts map[string]Context) error {
 	// Revert all tasks per level in descending order
 	for j := len(taskLevels) - 1; j >= 0; j-- {
 		tasks := taskLevels[j]
 		for _, task := range tasks {
-			fmt.Printf("[%s]:revert\n", task)
-			output, revertErr := task.RevertModule(c)
-			if revertErr != nil {
-				fmt.Printf("error reverting %s: %v\n", task, revertErr)
+			for hostname, c := range contexts {
+				fmt.Printf("[%s - %s]:revert\n", hostname, task)
+				output, revertErr := task.RevertModule(c)
+				if revertErr != nil {
+					fmt.Printf("error reverting %s: %v\n", task, revertErr)
+				}
+				fmt.Printf("%s\n", output.String())
 			}
-			fmt.Printf("%s\n", output.String())
 		}
 	}
 	return nil

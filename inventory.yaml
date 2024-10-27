@@ -1,0 +1,3 @@
+all:
+  mbp:
+    host: localhost

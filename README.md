@@ -22,3 +22,10 @@ TODO:
 - Implement validation step
 - Generate graph
 - Always run parallel
+
+## Differences between Spage and Ansible
+
+Inventory:
+
+- `host` in inventory instead of `ansible_host`
+- `groups` string under 

@@ -25,7 +25,7 @@ func (t Task) ToCode(ident int) string {
 }
 
 func (t Task) String() string {
-	return fmt.Sprintf("%s (module: %s)", t.Name, t.Module)
+	return t.Name
 }
 
 func (t Task) ExecuteModule(c Context) (ModuleOutput, error) {

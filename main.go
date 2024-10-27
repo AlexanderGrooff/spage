@@ -44,4 +44,5 @@ func Execute() error {
 func init() {
 	rootCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file (required)")
 	// rootCmd.MarkFlagRequired("inventory")
+	// TODO: allow xor inventory file or inventory string/host?
 }
