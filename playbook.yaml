@@ -11,8 +11,8 @@
     execute: "echo 'previous task: {{ .hello_world.Stdout }}'"
     revert: echo 'reverting 3'
 
-#- name: crash and burn
-#  shell:
-#    execute: exit 1
-#    revert: echo 'reverting failed task'
-#  after: "task 3"
+- name: place file
+  template:
+    src: example.tmpl
+    dest: a/tmp/test.txt
+  after: task 1

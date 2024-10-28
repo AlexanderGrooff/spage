@@ -32,13 +32,14 @@ type TemplateOutput struct {
 }
 
 func (i TemplateInput) ToCode(indent int) string {
-	return fmt.Sprintf("modules.TemplateInput{Src: %s, Dest: %s},",
+	return fmt.Sprintf("modules.TemplateInput{Src: \"%s\", Dest: \"%s\"},",
 		i.Src,
 		i.Dest,
 	)
 }
 
 func (o TemplateOutput) String() string {
+	// TODO: show diff
 	return fmt.Sprintf("  cmd: %s\n  exitcode: %d\n  stdout: %s\n  stderr: %s\n", o.Command, o.ExitCode, o.Stdout, o.Stderr)
 }
 
@@ -53,8 +54,13 @@ func templateContentsToFile(src, dest string, c pkg.Context) error {
 		return err
 	}
 
-	if err := c.WriteRemoteFile("localhost", dest, templatedContents); err != nil {
-		return fmt.Errorf("failed to write to remote file %s: %v", dest, err)
+	if c.Host.IsLocal {
+		if err := c.WriteLocalFile(dest, templatedContents); err != nil {
+			return fmt.Errorf("failed to write to local file %s: %v", dest, err)
+		}
+	}
+	if err := c.WriteRemoteFile(c.Host.Host, dest, templatedContents); err != nil {
+		return fmt.Errorf("failed to write remote file %s on host %s: %v", dest, c.Host.Host, err)
 	}
 	return nil
 }

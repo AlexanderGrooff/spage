@@ -14,9 +14,10 @@ type Inventory struct {
 }
 
 type Host struct {
-	Host   string `yaml:"host"`
-	Vars   map[string]interface{}
-	Groups []string `yaml:"groups"`
+	Host    string `yaml:"host"`
+	Vars    map[string]interface{}
+	Groups  []string `yaml:"groups"`
+	IsLocal bool
 }
 
 type Group struct {
@@ -37,32 +38,36 @@ func LoadInventory(path string) (*Inventory, error) {
 	return &inventory, nil
 }
 
-func (i Inventory) GetContextForHost(host string) (map[string]interface{}, error) {
-	context := make(map[string]interface{})
+func (i Inventory) GetContextForHost(host Host) (Context, error) {
+	facts := make(map[string]interface{})
 	// Apply vars in order of precedence: global, group, host
 	for k, v := range i.Vars {
-		context[k] = v
+		facts[k] = v
 	}
-	for _, groupName := range i.Hosts[host].Groups {
+	for _, groupName := range i.Hosts[host.Host].Groups {
 		group, ok := i.Groups[groupName]
 		if !ok {
-			return nil, fmt.Errorf("could not find group %s in inventory", groupName)
+			return Context{}, fmt.Errorf("could not find group %s in inventory", groupName)
 		}
 		for k, v := range group.Vars {
-			context[k] = v
+			facts[k] = v
 		}
 	}
-	for k, v := range i.Hosts[host].Vars {
-		context[k] = v
+	for k, v := range i.Hosts[host.Host].Vars {
+		facts[k] = v
 	}
-	return context, nil
+	// TODO: also compare hostnames? Or even CLI flag?
+	if host.Host == "localhost" {
+		host.IsLocal = true
+	}
+	return Context{Facts: facts, Host: host}, nil
 }
 
 func (i Inventory) GetContextForRun() (map[string]Context, error) {
 	var err error
 	contexts := make(map[string]Context)
-	for hostname := range i.Hosts {
-		contexts[hostname], err = i.GetContextForHost(hostname)
+	for hostname, host := range i.Hosts {
+		contexts[hostname], err = i.GetContextForHost(host)
 		if err != nil {
 			return nil, fmt.Errorf("could not get context for host '%s': %v", hostname, err)
 		}

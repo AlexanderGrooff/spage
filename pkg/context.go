@@ -10,7 +10,11 @@ import (
 	"text/template"
 )
 
-type Context map[string]interface{}
+type Facts map[string]interface{}
+type Context struct {
+	Host  Host
+	Facts Facts
+}
 
 func (c Context) TemplateString(s string) (string, error) {
 	tmpl, err := template.New("tmpl").Parse(s)
@@ -19,7 +23,7 @@ func (c Context) TemplateString(s string) (string, error) {
 	}
 
 	var buf bytes.Buffer
-	err = tmpl.Execute(&buf, c)
+	err = tmpl.Execute(&buf, c.Facts)
 	if err != nil {
 		return "", fmt.Errorf("failed to execute template: %v", err)
 	}

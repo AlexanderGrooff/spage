@@ -18,6 +18,8 @@ TODO:
 - Always run parallel
 - Add revert conditions `revert_when`
 - Make template variables case insensitive
+- Determine order of task based on variable usage
+- Should we compile assets (templates, files) along with the code?
 
 ## Differences between Spage and Ansible
 
