@@ -8,24 +8,24 @@ go run main.go -i inventory.yaml
 
 TODO:
 
-- Rename project (reconcile doesn't make sense)
 - Add more modules
-- Add inventory support
 - Validate module input
-- Do this instead of module: and params:
-  - shell:
-      param1:
-      param2:
 - Implement task variables
 - Implement task dependencies
 - Implement task when
 - Implement validation step
 - Generate graph
 - Always run parallel
+- Add revert conditions `revert_when`
+- Make template variables case insensitive
 
 ## Differences between Spage and Ansible
 
 Inventory:
 
 - `host` in inventory instead of `ansible_host`
-- `groups` string under 
+- `groups` string under a host
+
+Templating:
+
+- Use `text/template` instead of Jinja

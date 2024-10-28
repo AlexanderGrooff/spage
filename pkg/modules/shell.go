@@ -1,9 +1,7 @@
 package modules
 
 import (
-	"bytes"
 	"fmt"
-	"os/exec"
 	"reflect"
 
 	"github.com/AlexanderGrooff/spage/pkg"
@@ -26,10 +24,9 @@ type ShellInput struct {
 }
 
 type ShellOutput struct {
-	ExitCode int    `yaml:"exit_code"`
-	Stdout   string `yaml:"stdout"`
-	Stderr   string `yaml:"stderr"`
-	Command  string `yaml:"command"`
+	Stdout  string `yaml:"stdout"`
+	Stderr  string `yaml:"stderr"`
+	Command string `yaml:"command"`
 	pkg.ModuleOutput
 }
 
@@ -41,26 +38,20 @@ func (i ShellInput) ToCode(indent int) string {
 }
 
 func (o ShellOutput) String() string {
-	return fmt.Sprintf("  cmd: %s\n  exitcode: %d\n  stdout: %s\n  stderr: %s\n", o.Command, o.ExitCode, o.Stdout, o.Stderr)
+	return fmt.Sprintf("  cmd: %s\n  stdout: %s\n  stderr: %s\n", o.Command, o.Stdout, o.Stderr)
 }
 
 func templateAndExecute(command string, c pkg.Context) (ShellOutput, error) {
-	var stdout, stderr bytes.Buffer
 	var err error
 	templatedCmd, err := c.TemplateString(command)
 	if err != nil {
 		return ShellOutput{}, err
 	}
-	cmd := exec.Command("bash", "-c", templatedCmd)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
+	stdout, stderr, err := pkg.RunLocalCommand(templatedCmd)
 	output := ShellOutput{
-		Stdout:   stdout.String(),
-		Stderr:   stderr.String(),
-		ExitCode: cmd.ProcessState.ExitCode(),
-		Command:  cmd.String(),
+		Stdout:  stdout,
+		Stderr:  stderr,
+		Command: templatedCmd,
 	}
 
 	if err != nil {

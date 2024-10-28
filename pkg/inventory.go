@@ -34,7 +34,6 @@ func LoadInventory(path string) (*Inventory, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("Loaded Inventory:\n%v\n", inventory)
 	return &inventory, nil
 }
 

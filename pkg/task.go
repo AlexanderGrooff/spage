@@ -16,10 +16,11 @@ type Task struct {
 }
 
 func (t Task) ToCode(ident int) string {
-	return fmt.Sprintf("%s{Name: %q, Module: %q, Params: %s},\n",
+	return fmt.Sprintf("%s{Name: %q, Module: %q, Register: %q, Params: %s},\n",
 		Indent(ident),
 		t.Name,
 		t.Module,
+		t.Register,
 		t.Params.ToCode(ident+1),
 	)
 }

@@ -6,25 +6,13 @@
       echo task 1 line 2
   register: hello_world
 
-- name: revert only
-  shell:
-    revert: "echo revert only"
-  register: hello_world
-
 - name: task 2
   shell:
-    execute: "echo task 2"
-    revert: echo 'reverting 2'
-  before: task 1
-
-- name: task 3
-  shell:
-    execute: "echo 'previous task: {{ hello_world.stdout }}'"
+    execute: "echo 'previous task: {{ .hello_world.Stdout }}'"
     revert: echo 'reverting 3'
-  after: "task 2"
 
-- name: crash and burn
-  shell:
-    execute: exit 1
-    revert: echo 'reverting failed task'
-  after: "task 3"
+#- name: crash and burn
+#  shell:
+#    execute: exit 1
+#    revert: echo 'reverting failed task'
+#  after: "task 3"

@@ -30,7 +30,10 @@ func Execute(graph Graph, inventoryFile string) error {
 				// TODO: execute in parallel
 				fmt.Printf("[%s - %s]:execute\n", hostname, task)
 				output, err := task.ExecuteModule(c)
-				c[task.Register] = output
+				if task.Register != "" {
+					fmt.Printf("Setting context %s::%s to %s\n", hostname, task.Register, output)
+					c[task.Register] = output
+				}
 				executed[executionLevel] = append(executed[executionLevel], task)
 				if err != nil {
 					fmt.Printf("error executing '%s': %v\n\nREVERTING\n\n", task, err)
