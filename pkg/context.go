@@ -12,32 +12,30 @@ import (
 )
 
 type Facts map[string]interface{}
-type Context struct {
-	Host    Host
-	Facts   Facts
-	History Facts
+
+func (f *Facts) Merge(other Facts) {
+	for key, value := range other {
+		(*f)[key] = value
+	}
 }
 
-func (c Context) TemplateString(s string) (string, error) {
-	tmpl, err := template.New("tmpl").Parse(s)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse template: %v", err)
-	}
-
-	var buf bytes.Buffer
-	err = tmpl.Execute(&buf, c.Facts)
-	if err != nil {
-		return "", fmt.Errorf("failed to execute template: %v", err)
-	}
-
-	return buf.String(), nil
+func (f *Facts) Add(k string, v interface{}) Facts {
+	(*f)[k] = v
+	return *f
 }
 
-func (c Context) ReadTemplateFile(filename string) (string, error) {
+type HostContext struct {
+	Host     Host
+	Facts    Facts
+	History  Facts
+	Previous interface{}
+}
+
+func (c HostContext) ReadTemplateFile(filename string) (string, error) {
 	return c.ReadLocalFile("templates/" + filename)
 }
 
-func (c Context) ReadLocalFile(filename string) (string, error) {
+func (c HostContext) ReadLocalFile(filename string) (string, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -48,14 +46,14 @@ func (c Context) ReadLocalFile(filename string) (string, error) {
 	return string(data), nil
 }
 
-func (c Context) ReadFile(filename string) (string, error) {
+func (c HostContext) ReadFile(filename string) (string, error) {
 	if c.Host.IsLocal {
 		return c.ReadLocalFile(filename)
 	}
 	return c.ReadRemoteFile(filename)
 }
 
-func (c Context) ReadRemoteFile(filename string) (string, error) {
+func (c HostContext) ReadRemoteFile(filename string) (string, error) {
 	stdout, _, err := RunRemoteCommand(c.Host.Host, fmt.Sprintf("cat \"%s\"", filename))
 	if err != nil {
 		return "", err
@@ -63,7 +61,7 @@ func (c Context) ReadRemoteFile(filename string) (string, error) {
 	return stdout, nil
 }
 
-func (c Context) WriteFile(filename, contents string) error {
+func (c HostContext) WriteFile(filename, contents string) error {
 	if c.Host.IsLocal {
 		return WriteLocalFile(filename, contents)
 	}
@@ -108,7 +106,7 @@ func RunLocalCommand(command string) (string, string, error) {
 
 	err = cmd.Run()
 	if err != nil {
-		return stdout.String(), stderr.String(), fmt.Errorf("failed to execute command: %v", err)
+		return stdout.String(), stderr.String(), fmt.Errorf("failed to execute command %q: %v", command, err)
 	}
 
 	return stdout.String(), stderr.String(), nil
@@ -145,4 +143,24 @@ func RunRemoteCommand(host, command string) (string, string, error) {
 		return stdout.String(), stderr.String(), fmt.Errorf("failed to run '%v' on host %s: %w", command, host, err)
 	}
 	return stdout.String(), stderr.String(), nil
+}
+
+func TemplateString(s string, additionalVars ...Facts) (string, error) {
+	tmpl, err := template.New("tmpl").Parse(s)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse template: %v", err)
+	}
+
+	allVars := make(Facts)
+	for _, v := range additionalVars {
+		allVars.Merge(v)
+	}
+
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, allVars)
+	if err != nil {
+		return "", fmt.Errorf("failed to execute template: %v", err)
+	}
+
+	return buf.String(), nil
 }

@@ -45,9 +45,9 @@ func (o ShellOutput) Changed() bool {
 	return true
 }
 
-func templateAndExecute(command string, c pkg.Context) (ShellOutput, error) {
+func templateAndExecute(command string, c pkg.HostContext, prev ShellOutput) (ShellOutput, error) {
 	var err error
-	templatedCmd, err := c.TemplateString(command)
+	templatedCmd, err := pkg.TemplateString(command, c.Facts.Add("Previous", prev))
 	if err != nil {
 		return ShellOutput{}, err
 	}
@@ -58,21 +58,23 @@ func templateAndExecute(command string, c pkg.Context) (ShellOutput, error) {
 		Command: templatedCmd,
 	}
 
-	if err != nil {
-		return output, fmt.Errorf("failed to execute command: %w", err)
+	return output, err
+}
+
+func (s ShellModule) Execute(params interface{}, c pkg.HostContext) (interface{}, error) {
+	shellParams := params.(ShellInput)
+	return templateAndExecute(shellParams.Execute, c, ShellOutput{})
+}
+
+func (s ShellModule) Revert(params interface{}, c pkg.HostContext, previous interface{}) (interface{}, error) {
+	shellParams := params.(ShellInput)
+	var prev ShellOutput
+	if previous != nil {
+		prev = previous.(ShellOutput)
+	} else {
+		prev = ShellOutput{}
 	}
-
-	return output, nil
-}
-
-func (s ShellModule) Execute(params interface{}, c pkg.Context) (interface{}, error) {
-	shellParams := params.(ShellInput)
-	return templateAndExecute(shellParams.Execute, c)
-}
-
-func (s ShellModule) Revert(params interface{}, c pkg.Context, previous interface{}) (interface{}, error) {
-	shellParams := params.(ShellInput)
-	return templateAndExecute(shellParams.Revert, c)
+	return templateAndExecute(shellParams.Revert, c, prev)
 }
 
 func init() {

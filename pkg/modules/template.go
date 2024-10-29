@@ -18,8 +18,8 @@ func (sm TemplateModule) OutputType() reflect.Type {
 }
 
 type TemplateInput struct {
-	Src  string `yaml:"src"`
-	Dest string `yaml:"dest"`
+	Src      string `yaml:"src"`
+	Dest     string `yaml:"dest"`
 	pkg.ModuleInput
 }
 
@@ -46,13 +46,13 @@ func (o TemplateOutput) Changed() bool {
 	return o.OriginalContents != o.NewContents
 }
 
-func templateContentsToFile(src, dest string, c pkg.Context) (string, string, error) {
+func templateContentsToFile(src, dest string, c pkg.HostContext) (string, string, error) {
 	// Get contents from src
 	contents, err := c.ReadTemplateFile(src)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to read template file %s: %v", src, err)
 	}
-	templatedContents, err := c.TemplateString(contents)
+	templatedContents, err := pkg.TemplateString(contents, c.Facts.Add("Previous", c.Previous))
 	if err != nil {
 		return "", "", err
 	}
@@ -68,7 +68,7 @@ func templateContentsToFile(src, dest string, c pkg.Context) (string, string, er
 	return originalContents, templatedContents, nil
 }
 
-func (s TemplateModule) Execute(params interface{}, c pkg.Context) (interface{}, error) {
+func (s TemplateModule) Execute(params interface{}, c pkg.HostContext) (interface{}, error) {
 	p := params.(TemplateInput)
 	original, new, err := templateContentsToFile(p.Src, p.Dest, c)
 	if err != nil {
@@ -80,7 +80,7 @@ func (s TemplateModule) Execute(params interface{}, c pkg.Context) (interface{},
 	}, nil
 }
 
-func (s TemplateModule) Revert(params interface{}, c pkg.Context, previous interface{}) (interface{}, error) {
+func (s TemplateModule) Revert(params interface{}, c pkg.HostContext, previous interface{}) (interface{}, error) {
 	// TODO: delete if previously created?
 	p := params.(TemplateInput)
 	if previous != nil {

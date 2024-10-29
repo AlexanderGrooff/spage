@@ -39,7 +39,7 @@ func LoadInventory(path string) (*Inventory, error) {
 	return &inventory, nil
 }
 
-func (i Inventory) GetContextForHost(host Host) (Context, error) {
+func (i Inventory) GetContextForHost(host Host) (HostContext, error) {
 	facts := make(Facts)
 	// Apply vars in order of precedence: global, group, host
 	for k, v := range i.Vars {
@@ -48,7 +48,7 @@ func (i Inventory) GetContextForHost(host Host) (Context, error) {
 	for _, groupName := range i.Hosts[host.Host].Groups {
 		group, ok := i.Groups[groupName]
 		if !ok {
-			return Context{}, fmt.Errorf("could not find group %s in inventory", groupName)
+			return HostContext{}, fmt.Errorf("could not find group %s in inventory", groupName)
 		}
 		for k, v := range group.Vars {
 			facts[k] = v
@@ -61,12 +61,12 @@ func (i Inventory) GetContextForHost(host Host) (Context, error) {
 	if host.Host == "localhost" {
 		host.IsLocal = true
 	}
-	return Context{Facts: facts, Host: host, History: make(Facts)}, nil
+	return HostContext{Facts: facts, Host: host, History: make(Facts)}, nil
 }
 
-func (i Inventory) GetContextForRun() (map[string]Context, error) {
+func (i Inventory) GetContextForRun() (map[string]HostContext, error) {
 	var err error
-	contexts := make(map[string]Context)
+	contexts := make(map[string]HostContext)
 	for hostname, host := range i.Hosts {
 		contexts[hostname], err = i.GetContextForHost(host)
 		if err != nil {

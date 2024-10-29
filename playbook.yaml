@@ -20,4 +20,5 @@
 - name: crash
   shell:
     execute: exit 1
+    revert: "{{ .Previous.Command }}"
   after: place file
