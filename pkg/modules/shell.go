@@ -31,7 +31,7 @@ type ShellOutput struct {
 }
 
 func (i ShellInput) ToCode(indent int) string {
-	return fmt.Sprintf("modules.ShellInput{Execute: %q, Revert: %q},",
+	return fmt.Sprintf("modules.ShellInput{Execute: %q, Revert: %q}",
 		i.Execute,
 		i.Revert,
 	)

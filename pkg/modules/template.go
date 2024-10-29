@@ -31,7 +31,7 @@ type TemplateOutput struct {
 }
 
 func (i TemplateInput) ToCode(indent int) string {
-	return fmt.Sprintf("modules.TemplateInput{Src: %q, Dest: %q},",
+	return fmt.Sprintf("modules.TemplateInput{Src: %q, Dest: %q}",
 		i.Src,
 		i.Dest,
 	)
