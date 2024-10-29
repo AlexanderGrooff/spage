@@ -85,8 +85,10 @@ func (s TemplateModule) Revert(params interface{}, c pkg.Context, previous inter
 	p := params.(TemplateInput)
 	if previous != nil {
 		prev := previous.(TemplateOutput)
-		if err := c.WriteFile(p.Dest, prev.OriginalContents); err != nil {
-			return TemplateOutput{}, fmt.Errorf("failed to place back original contents in %s", p.Dest)
+		if prev.Changed() {
+			if err := c.WriteFile(p.Dest, prev.OriginalContents); err != nil {
+				return TemplateOutput{}, fmt.Errorf("failed to place back original contents in %s", p.Dest)
+			}
 		}
 		return TemplateOutput{OriginalContents: prev.NewContents, NewContents: prev.OriginalContents}, nil
 	}
