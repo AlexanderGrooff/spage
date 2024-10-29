@@ -38,7 +38,7 @@ func (i ShellInput) ToCode(indent int) string {
 }
 
 func (o ShellOutput) String() string {
-	return fmt.Sprintf("  cmd: %s\n  stdout: %s\n  stderr: %s\n", o.Command, o.Stdout, o.Stderr)
+	return fmt.Sprintf("  cmd: %q\n  stdout: %q\n  stderr: %q\n", o.Command, o.Stdout, o.Stderr)
 }
 
 func (o ShellOutput) Changed() bool {
@@ -59,7 +59,7 @@ func templateAndExecute(command string, c pkg.Context) (ShellOutput, error) {
 	}
 
 	if err != nil {
-		return output, fmt.Errorf("failed to execute command: %v", err)
+		return output, fmt.Errorf("failed to execute command: %w", err)
 	}
 
 	return output, nil

@@ -30,7 +30,7 @@ type TemplateOutput struct {
 }
 
 func (i TemplateInput) ToCode(indent int) string {
-	return fmt.Sprintf("modules.TemplateInput{Src: \"%s\", Dest: \"%s\"},",
+	return fmt.Sprintf("modules.TemplateInput{Src: %q, Dest: %q},",
 		i.Src,
 		i.Dest,
 	)
@@ -38,7 +38,7 @@ func (i TemplateInput) ToCode(indent int) string {
 
 func (o TemplateOutput) String() string {
 	// TODO: show diff
-	return fmt.Sprintf("  original: %s\n  new: %s", o.OriginalContents, o.NewContents)
+	return fmt.Sprintf("  original: %q\n  new: %q", o.OriginalContents, o.NewContents)
 }
 
 func (o TemplateOutput) Changed() bool {

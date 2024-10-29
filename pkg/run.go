@@ -28,13 +28,18 @@ func Execute(graph Graph, inventoryFile string) error {
 			// TODO: execute in parallel
 			for hostname, c := range contexts {
 				// TODO: execute in parallel
+
 				fmt.Printf("[%s - %s]:execute\n", hostname, task)
 				output, err := task.ExecuteModule(c)
 				if task.Register != "" {
-					fmt.Printf("Setting context %s::%s to %s\n", hostname, task.Register, output)
 					c.Facts[task.Register] = output
 				}
 				executed[executionLevel] = append(executed[executionLevel], task)
+				if output.Changed() {
+					fmt.Printf("\033[33m%s\033[0m\n", output.String())
+				} else {
+					fmt.Printf("\033[32m%s\033[0m\n", output.String())
+				}
 				if err != nil {
 					fmt.Printf("error executing '%s': %v\n\nREVERTING\n\n", task, err)
 
@@ -43,7 +48,6 @@ func Execute(graph Graph, inventoryFile string) error {
 					}
 					return fmt.Errorf("reverted all tasks")
 				}
-				fmt.Printf("%s\n", output.String())
 			}
 		}
 		fmt.Println()

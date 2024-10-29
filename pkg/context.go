@@ -53,12 +53,10 @@ func (c Context) ReadRemoteFile(filename string) (string, error) {
 }
 
 func (c Context) WriteLocalFile(filename string, data string) error {
-	fmt.Printf("Placing local file %s\n", filename)
 	return os.WriteFile(filename, []byte(data), 0644)
 }
 
 func (c Context) WriteRemoteFile(host, remotePath, data string) error {
-	fmt.Printf("Placing remote file %s on %s\n", remotePath, host)
 	tmpFile, err := os.CreateTemp("", "tempfile")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %v", err)
