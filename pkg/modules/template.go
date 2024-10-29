@@ -26,6 +26,7 @@ type TemplateInput struct {
 type TemplateOutput struct {
 	OriginalContents string
 	NewContents      string
+	// TODO: track if file was created
 	pkg.ModuleOutput
 }
 
@@ -42,7 +43,7 @@ func (o TemplateOutput) String() string {
 }
 
 func (o TemplateOutput) Changed() bool {
-	return o.OriginalContents == o.NewContents
+	return o.OriginalContents != o.NewContents
 }
 
 func templateContentsToFile(src, dest string, c pkg.Context) (string, string, error) {
@@ -60,7 +61,7 @@ func templateContentsToFile(src, dest string, c pkg.Context) (string, string, er
 	if c.Host.IsLocal {
 		originalContents, err = c.ReadLocalFile(dest)
 		if err != nil {
-			return "", "", err
+			return "", "", fmt.Errorf("failed to read original contents of %s: %s", dest, err)
 		}
 		if err := c.WriteLocalFile(dest, templatedContents); err != nil {
 			return "", "", fmt.Errorf("failed to write to local file %s: %v", dest, err)

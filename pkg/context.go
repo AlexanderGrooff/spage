@@ -39,6 +39,9 @@ func (c Context) ReadTemplateFile(filename string) (string, error) {
 func (c Context) ReadLocalFile(filename string) (string, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
 		return "", err
 	}
 	return string(data), nil

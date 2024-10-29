@@ -40,7 +40,7 @@ func (t Task) ExecuteModule(c Context) (ModuleOutput, error) {
 	}
 	moduleOutput, ok := output.(ModuleOutput)
 	if !ok {
-		return nil, fmt.Errorf("module %s did not return a valid ModuleOutput", t.Module)
+		return moduleOutput, fmt.Errorf("module %s did not return a valid ModuleOutput", t.Module)
 	}
 	return moduleOutput, nil
 }
