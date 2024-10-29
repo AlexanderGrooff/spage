@@ -30,7 +30,7 @@ type TemplateOutput struct {
 	pkg.ModuleOutput
 }
 
-func (i TemplateInput) ToCode(indent int) string {
+func (i TemplateInput) ToCode() string {
 	return fmt.Sprintf("modules.TemplateInput{Src: %q, Dest: %q}",
 		i.Src,
 		i.Dest,

@@ -30,7 +30,7 @@ type ShellOutput struct {
 	pkg.ModuleOutput
 }
 
-func (i ShellInput) ToCode(indent int) string {
+func (i ShellInput) ToCode() string {
 	return fmt.Sprintf("modules.ShellInput{Execute: %q, Revert: %q}",
 		i.Execute,
 		i.Revert,

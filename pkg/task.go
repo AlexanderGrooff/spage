@@ -21,7 +21,7 @@ func (t Task) ToCode(ident int) string {
 		t.Name,
 		t.Module,
 		t.Register,
-		t.Params.ToCode(ident+1),
+		t.Params.ToCode(),
 	)
 }
 

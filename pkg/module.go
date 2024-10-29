@@ -3,7 +3,7 @@ package pkg
 import "reflect"
 
 type ModuleInput interface {
-	ToCode(ident int) string
+	ToCode() string
 }
 type ModuleOutput interface {
 	String() string
