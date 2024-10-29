@@ -9,7 +9,7 @@ func Execute(graph Graph, inventoryFile string) error {
 	if inventoryFile == "" {
 		contexts = make(map[string]Context)
 		fmt.Printf("No inventory file specified. Assuming target is this machine\n")
-		contexts["localhost"] = Context{Host: Host{IsLocal: true, Host: "localhost"}}
+		contexts["localhost"] = Context{Host: Host{IsLocal: true, Host: "localhost"}, Facts: make(Facts), History: make(Facts)}
 	} else {
 		inventory, err := LoadInventory(inventoryFile)
 		if err != nil {
@@ -31,6 +31,7 @@ func Execute(graph Graph, inventoryFile string) error {
 
 				fmt.Printf("[%s - %s]:execute\n", hostname, task)
 				output, err := task.ExecuteModule(c)
+				c.History[task.Name] = output
 				if task.Register != "" {
 					c.Facts[task.Register] = output
 				}

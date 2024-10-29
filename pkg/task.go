@@ -50,7 +50,8 @@ func (t Task) RevertModule(c Context) (ModuleOutput, error) {
 	if !ok {
 		return nil, fmt.Errorf("module %s not found", t.Module)
 	}
-	output, err := module.Revert(t.Params, c)
+	previous := c.History[t.Name]
+	output, err := module.Revert(t.Params, c, previous)
 	if err != nil {
 		return nil, err
 	}

@@ -70,7 +70,7 @@ func (s ShellModule) Execute(params interface{}, c pkg.Context) (interface{}, er
 	return templateAndExecute(shellParams.Execute, c)
 }
 
-func (s ShellModule) Revert(params interface{}, c pkg.Context) (interface{}, error) {
+func (s ShellModule) Revert(params interface{}, c pkg.Context, previous interface{}) (interface{}, error) {
 	shellParams := params.(ShellInput)
 	return templateAndExecute(shellParams.Revert, c)
 }

@@ -13,8 +13,9 @@ import (
 
 type Facts map[string]interface{}
 type Context struct {
-	Host  Host
-	Facts Facts
+	Host    Host
+	Facts   Facts
+	History Facts
 }
 
 func (c Context) TemplateString(s string) (string, error) {
@@ -47,6 +48,13 @@ func (c Context) ReadLocalFile(filename string) (string, error) {
 	return string(data), nil
 }
 
+func (c Context) ReadFile(filename string) (string, error) {
+	if c.Host.IsLocal {
+		return c.ReadLocalFile(filename)
+	}
+	return c.ReadRemoteFile(filename)
+}
+
 func (c Context) ReadRemoteFile(filename string) (string, error) {
 	stdout, _, err := RunRemoteCommand(c.Host.Host, fmt.Sprintf("cat \"%s\"", filename))
 	if err != nil {
@@ -55,11 +63,18 @@ func (c Context) ReadRemoteFile(filename string) (string, error) {
 	return stdout, nil
 }
 
-func (c Context) WriteLocalFile(filename string, data string) error {
+func (c Context) WriteFile(filename, contents string) error {
+	if c.Host.IsLocal {
+		return WriteLocalFile(filename, contents)
+	}
+	return WriteRemoteFile(c.Host.Host, filename, contents)
+}
+
+func WriteLocalFile(filename string, data string) error {
 	return os.WriteFile(filename, []byte(data), 0644)
 }
 
-func (c Context) WriteRemoteFile(host, remotePath, data string) error {
+func WriteRemoteFile(host, remotePath, data string) error {
 	tmpFile, err := os.CreateTemp("", "tempfile")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %v", err)

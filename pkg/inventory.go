@@ -40,7 +40,7 @@ func LoadInventory(path string) (*Inventory, error) {
 }
 
 func (i Inventory) GetContextForHost(host Host) (Context, error) {
-	facts := make(map[string]interface{})
+	facts := make(Facts)
 	// Apply vars in order of precedence: global, group, host
 	for k, v := range i.Vars {
 		facts[k] = v
@@ -61,7 +61,7 @@ func (i Inventory) GetContextForHost(host Host) (Context, error) {
 	if host.Host == "localhost" {
 		host.IsLocal = true
 	}
-	return Context{Facts: facts, Host: host}, nil
+	return Context{Facts: facts, Host: host, History: make(Facts)}, nil
 }
 
 func (i Inventory) GetContextForRun() (map[string]Context, error) {

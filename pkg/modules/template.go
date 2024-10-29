@@ -57,24 +57,14 @@ func templateContentsToFile(src, dest string, c pkg.Context) (string, string, er
 		return "", "", err
 	}
 
-	var originalContents string
-	if c.Host.IsLocal {
-		originalContents, err = c.ReadLocalFile(dest)
-		if err != nil {
-			return "", "", fmt.Errorf("failed to read original contents of %s: %s", dest, err)
-		}
-		if err := c.WriteLocalFile(dest, templatedContents); err != nil {
-			return "", "", fmt.Errorf("failed to write to local file %s: %v", dest, err)
-		}
-	} else {
-		originalContents, err = c.ReadRemoteFile(dest)
-		if err != nil {
-			return "", "", err
-		}
-		if err := c.WriteRemoteFile(c.Host.Host, dest, templatedContents); err != nil {
-			return "", "", fmt.Errorf("failed to write remote file %s on host %s: %v", dest, c.Host.Host, err)
-		}
+	originalContents, err := c.ReadFile(dest)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read original contents of %s: %s", dest, err)
 	}
+	if err := c.WriteFile(dest, templatedContents); err != nil {
+		return "", "", fmt.Errorf("failed to write to file %s: %v", dest, err)
+	}
+
 	return originalContents, templatedContents, nil
 }
 
@@ -90,8 +80,17 @@ func (s TemplateModule) Execute(params interface{}, c pkg.Context) (interface{},
 	}, nil
 }
 
-func (s TemplateModule) Revert(params interface{}, c pkg.Context) (interface{}, error) {
-	// TODO: place back previous file contents
+func (s TemplateModule) Revert(params interface{}, c pkg.Context, previous interface{}) (interface{}, error) {
+	// TODO: delete if previously created?
+	p := params.(TemplateInput)
+	if previous != nil {
+		prev := previous.(TemplateOutput)
+		if err := c.WriteFile(p.Dest, prev.OriginalContents); err != nil {
+			return TemplateOutput{}, fmt.Errorf("failed to place back original contents in %s", p.Dest)
+		}
+		return TemplateOutput{OriginalContents: prev.NewContents, NewContents: prev.OriginalContents}, nil
+	}
+	fmt.Printf("Not reverting because previous result was %v", previous)
 	return TemplateOutput{}, nil
 }
 
