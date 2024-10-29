@@ -41,6 +41,10 @@ func (o ShellOutput) String() string {
 	return fmt.Sprintf("  cmd: %s\n  stdout: %s\n  stderr: %s\n", o.Command, o.Stdout, o.Stderr)
 }
 
+func (o ShellOutput) Changed() bool {
+	return true
+}
+
 func templateAndExecute(command string, c pkg.Context) (ShellOutput, error) {
 	var err error
 	templatedCmd, err := c.TemplateString(command)

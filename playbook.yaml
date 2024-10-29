@@ -14,5 +14,5 @@
 - name: place file
   template:
     src: example.tmpl
-    dest: a/tmp/test.txt
+    dest: /tmp/test.txt
   after: task 1

@@ -24,10 +24,8 @@ type TemplateInput struct {
 }
 
 type TemplateOutput struct {
-	ExitCode int    `yaml:"exit_code"`
-	Stdout   string `yaml:"stdout"`
-	Stderr   string `yaml:"stderr"`
-	Command  string `yaml:"command"`
+	OriginalContents string
+	NewContents      string
 	pkg.ModuleOutput
 }
 
@@ -40,35 +38,55 @@ func (i TemplateInput) ToCode(indent int) string {
 
 func (o TemplateOutput) String() string {
 	// TODO: show diff
-	return fmt.Sprintf("  cmd: %s\n  exitcode: %d\n  stdout: %s\n  stderr: %s\n", o.Command, o.ExitCode, o.Stdout, o.Stderr)
+	return fmt.Sprintf("  original: %s\n  new: %s", o.OriginalContents, o.NewContents)
 }
 
-func templateContentsToFile(src, dest string, c pkg.Context) error {
+func (o TemplateOutput) Changed() bool {
+	return o.OriginalContents == o.NewContents
+}
+
+func templateContentsToFile(src, dest string, c pkg.Context) (string, string, error) {
 	// Get contents from src
 	contents, err := c.ReadTemplateFile(src)
 	if err != nil {
-		return fmt.Errorf("failed to read template file %s: %v", src, err)
+		return "", "", fmt.Errorf("failed to read template file %s: %v", src, err)
 	}
 	templatedContents, err := c.TemplateString(contents)
 	if err != nil {
-		return err
+		return "", "", err
 	}
 
+	var originalContents string
 	if c.Host.IsLocal {
+		originalContents, err = c.ReadLocalFile(dest)
+		if err != nil {
+			return "", "", err
+		}
 		if err := c.WriteLocalFile(dest, templatedContents); err != nil {
-			return fmt.Errorf("failed to write to local file %s: %v", dest, err)
+			return "", "", fmt.Errorf("failed to write to local file %s: %v", dest, err)
+		}
+	} else {
+		originalContents, err = c.ReadRemoteFile(dest)
+		if err != nil {
+			return "", "", err
+		}
+		if err := c.WriteRemoteFile(c.Host.Host, dest, templatedContents); err != nil {
+			return "", "", fmt.Errorf("failed to write remote file %s on host %s: %v", dest, c.Host.Host, err)
 		}
 	}
-	if err := c.WriteRemoteFile(c.Host.Host, dest, templatedContents); err != nil {
-		return fmt.Errorf("failed to write remote file %s on host %s: %v", dest, c.Host.Host, err)
-	}
-	return nil
+	return originalContents, templatedContents, nil
 }
 
 func (s TemplateModule) Execute(params interface{}, c pkg.Context) (interface{}, error) {
 	p := params.(TemplateInput)
-	templateContentsToFile(p.Src, p.Dest, c)
-	return TemplateOutput{}, nil
+	original, new, err := templateContentsToFile(p.Src, p.Dest, c)
+	if err != nil {
+		return nil, err
+	}
+	return TemplateOutput{
+		OriginalContents: original,
+		NewContents:      new,
+	}, nil
 }
 
 func (s TemplateModule) Revert(params interface{}, c pkg.Context) (interface{}, error) {

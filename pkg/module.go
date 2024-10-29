@@ -7,6 +7,7 @@ type ModuleInput interface {
 }
 type ModuleOutput interface {
 	String() string
+	Changed() bool
 }
 
 type Module interface {

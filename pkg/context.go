@@ -3,11 +3,12 @@ package pkg
 import (
 	"bytes"
 	"fmt"
-	"golang.org/x/crypto/ssh"
 	"net"
 	"os"
 	"os/exec"
 	"text/template"
+
+	"golang.org/x/crypto/ssh"
 )
 
 type Facts map[string]interface{}
@@ -43,11 +44,21 @@ func (c Context) ReadLocalFile(filename string) (string, error) {
 	return string(data), nil
 }
 
+func (c Context) ReadRemoteFile(filename string) (string, error) {
+	stdout, _, err := RunRemoteCommand(c.Host.Host, fmt.Sprintf("cat \"%s\"", filename))
+	if err != nil {
+		return "", err
+	}
+	return stdout, nil
+}
+
 func (c Context) WriteLocalFile(filename string, data string) error {
+	fmt.Printf("Placing local file %s\n", filename)
 	return os.WriteFile(filename, []byte(data), 0644)
 }
 
 func (c Context) WriteRemoteFile(host, remotePath, data string) error {
+	fmt.Printf("Placing remote file %s on %s\n", remotePath, host)
 	tmpFile, err := os.CreateTemp("", "tempfile")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %v", err)

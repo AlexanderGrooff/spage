@@ -2,9 +2,10 @@ package pkg
 
 import (
 	"fmt"
-	"gopkg.in/yaml.v3"
 	"log"
 	"os"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Inventory struct {
@@ -58,6 +59,7 @@ func (i Inventory) GetContextForHost(host Host) (Context, error) {
 	}
 	// TODO: also compare hostnames? Or even CLI flag?
 	if host.Host == "localhost" {
+		fmt.Printf("Found host %s to be local\n", host)
 		host.IsLocal = true
 	}
 	return Context{Facts: facts, Host: host}, nil
