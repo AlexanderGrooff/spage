@@ -20,5 +20,5 @@
 - name: crash
   shell:
     execute: exit 1
-    revert: "{{ .Previous.Command }}"
+    revert: "echo 'Died after running {{ .Previous.Command }}'"
   after: place file

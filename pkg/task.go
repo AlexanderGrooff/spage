@@ -35,14 +35,11 @@ func (t Task) ExecuteModule(c HostContext) (ModuleOutput, error) {
 		return nil, fmt.Errorf("module %s not found", t.Module)
 	}
 	output, err := module.Execute(t.Params, c)
-	if err != nil {
-		return nil, err
-	}
 	moduleOutput, ok := output.(ModuleOutput)
 	if !ok {
-		return moduleOutput, fmt.Errorf("module %s did not return a valid ModuleOutput", t.Module)
+		return moduleOutput, fmt.Errorf("module %s did not return a valid ModuleOutput: %s", t.Module, err)
 	}
-	return moduleOutput, nil
+	return moduleOutput, err
 }
 
 func (t Task) RevertModule(c HostContext) (ModuleOutput, error) {
@@ -60,20 +57,4 @@ func (t Task) RevertModule(c HostContext) (ModuleOutput, error) {
 		return nil, fmt.Errorf("module %s did not return a valid ModuleOutput", t.Module)
 	}
 	return moduleOutput, nil
-}
-
-func PPrintOutput(output ModuleOutput, err error) {
-	if err != nil {
-		if output == nil {
-			fmt.Printf("  \033[31m%s\033[0m\n", err)
-		} else {
-			fmt.Printf("\033[31m%s\033[0m\n", output.String())
-		}
-	} else if output.Changed() {
-		// Yellow
-		fmt.Printf("\033[33m%s\033[0m\n", output.String())
-	} else {
-		// Green
-		fmt.Printf("\033[32m%s\033[0m\n", output.String())
-	}
 }

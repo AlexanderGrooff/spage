@@ -23,7 +23,7 @@ func Execute(graph Graph, inventoryFile string) error {
 
 	executed := make([][]Task, len(graph.Tasks))
 	for executionLevel, taskOnLevel := range graph.Tasks {
-		fmt.Printf("Starting execution level %d\n\n", executionLevel)
+		DebugOutput("Starting execution level %d\n", executionLevel)
 		for _, task := range taskOnLevel {
 			// TODO: execute in parallel
 			for hostname, c := range contexts {
@@ -39,7 +39,7 @@ func Execute(graph Graph, inventoryFile string) error {
 				PPrintOutput(output, err)
 
 				if err != nil {
-					fmt.Printf("error executing '%s': %v\n\nREVERTING\n\n", task, err)
+					DebugOutput("error executing '%s': %v\n\nREVERTING\n\n", task, err)
 
 					if err := RevertTasks(executed, contexts); err != nil {
 						return fmt.Errorf("run failed: %w", err)
@@ -48,10 +48,9 @@ func Execute(graph Graph, inventoryFile string) error {
 				}
 			}
 		}
-		fmt.Println()
 	}
 
-	fmt.Println("All tasks executed successfully")
+	DebugOutput("All tasks executed successfully")
 	return nil
 }
 
