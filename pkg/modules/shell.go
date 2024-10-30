@@ -74,6 +74,7 @@ func (s ShellModule) Revert(params interface{}, c pkg.HostContext, previous inte
 	} else {
 		prev = ShellOutput{}
 	}
+	// TODO: Why does this say previous cmd is "" if it errored?
 	return templateAndExecute(shellParams.Revert, c, prev)
 }
 
