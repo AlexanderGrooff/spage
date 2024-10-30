@@ -18,8 +18,8 @@ func (sm TemplateModule) OutputType() reflect.Type {
 }
 
 type TemplateInput struct {
-	Src      string `yaml:"src"`
-	Dest     string `yaml:"dest"`
+	Src  string `yaml:"src"`
+	Dest string `yaml:"dest"`
 	pkg.ModuleInput
 }
 
@@ -37,6 +37,19 @@ func (i TemplateInput) ToCode() string {
 	)
 }
 
+func (i TemplateInput) GetVariableUsage() []string {
+	usedVars := []string{}
+	// TODO: what if the filename itself is templated? Then we cannot read the file until we have context
+	template, err := pkg.ReadTemplateFile(i.Src)
+	if err == nil {
+		usedVars = append(usedVars, pkg.GetVariableUsageFromString(template)...)
+	}
+	// Get variables from filenames
+	usedVars = append(usedVars, pkg.GetVariableUsageFromString(i.Src)...)
+	usedVars = append(usedVars, pkg.GetVariableUsageFromString(i.Dest)...)
+	return usedVars
+}
+
 func (o TemplateOutput) String() string {
 	// TODO: show diff
 	return fmt.Sprintf("  original: %q\n  new: %q", o.OriginalContents, o.NewContents)
@@ -48,7 +61,7 @@ func (o TemplateOutput) Changed() bool {
 
 func templateContentsToFile(src, dest string, c pkg.HostContext) (string, string, error) {
 	// Get contents from src
-	contents, err := c.ReadTemplateFile(src)
+	contents, err := pkg.ReadTemplateFile(src)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to read template file %s: %v", src, err)
 	}

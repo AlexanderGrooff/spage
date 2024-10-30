@@ -58,3 +58,10 @@ func (t Task) RevertModule(c HostContext) (ModuleOutput, error) {
 	}
 	return moduleOutput, nil
 }
+
+func (t Task) GetVariableUsage() []string {
+	usedVars := []string{}
+		
+
+	return usedVars
+}

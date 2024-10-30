@@ -4,6 +4,7 @@ import "reflect"
 
 type ModuleInput interface {
 	ToCode() string
+	GetVariableUsage() []string
 }
 type ModuleOutput interface {
 	String() string

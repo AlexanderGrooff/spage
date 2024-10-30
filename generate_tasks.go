@@ -35,7 +35,10 @@ func main() {
 		log.Fatalf("Error parsing YAML: %v", err)
 	}
 
-	graph := pkg.NewGraph(tasks)
+	graph, err := pkg.NewGraph(tasks)
+	if err != nil {
+		log.Fatalf("Failed to generate graph: %s", err)
+	}
 
 	// Generate Go code
 	f, err := os.Create("generated/tasks.go")

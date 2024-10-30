@@ -15,7 +15,6 @@
   template:
     src: example.tmpl
     dest: /tmp/test.txt
-  after: task 1
 
 - name: crash
   shell:

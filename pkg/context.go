@@ -6,6 +6,8 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
+	"strings"
 	"text/template"
 
 	"golang.org/x/crypto/ssh"
@@ -31,11 +33,11 @@ type HostContext struct {
 	Previous interface{}
 }
 
-func (c HostContext) ReadTemplateFile(filename string) (string, error) {
-	return c.ReadLocalFile("templates/" + filename)
+func ReadTemplateFile(filename string) (string, error) {
+	return ReadLocalFile("templates/" + filename)
 }
 
-func (c HostContext) ReadLocalFile(filename string) (string, error) {
+func ReadLocalFile(filename string) (string, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -48,7 +50,7 @@ func (c HostContext) ReadLocalFile(filename string) (string, error) {
 
 func (c HostContext) ReadFile(filename string) (string, error) {
 	if c.Host.IsLocal {
-		return c.ReadLocalFile(filename)
+		return ReadLocalFile(filename)
 	}
 	return c.ReadRemoteFile(filename)
 }
@@ -163,4 +165,25 @@ func TemplateString(s string, additionalVars ...Facts) (string, error) {
 	}
 
 	return buf.String(), nil
+}
+
+func GetVariableUsageFromString(s string) []string {
+	re := regexp.MustCompile(`{{\s*([^{}\s]+)\s*}}`)
+	matches := re.FindAllStringSubmatch(s, -1)
+
+	var vars []string
+	for _, match := range matches {
+		vars = append(vars, GolangVariableToJinja(match[1]))
+	}
+	return vars
+}
+
+func GolangVariableToJinja(s string) string {
+	re := regexp.MustCompile(`\.(\w+)\b`)
+
+	match := re.FindStringSubmatch(s)
+	if len(match) > 1 {
+		return strings.ToLower(match[1])
+	}
+	return ""
 }
