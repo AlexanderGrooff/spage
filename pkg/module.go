@@ -5,6 +5,7 @@ import "reflect"
 type ModuleInput interface {
 	ToCode() string
 	GetVariableUsage() []string
+	Validate() error
 }
 type ModuleOutput interface {
 	String() string

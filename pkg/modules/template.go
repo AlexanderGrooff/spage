@@ -50,6 +50,16 @@ func (i TemplateInput) GetVariableUsage() []string {
 	return usedVars
 }
 
+func (i TemplateInput) Validate() error {
+	if i.Src == "" {
+		return fmt.Errorf("missing Src input")
+	}
+	if i.Dest == "" {
+		return fmt.Errorf("missing Dest input")
+	}
+	return nil
+}
+
 func (o TemplateOutput) String() string {
 	// TODO: show diff
 	return fmt.Sprintf("  original: %q\n  new: %q", o.OriginalContents, o.NewContents)
@@ -105,7 +115,7 @@ func (s TemplateModule) Revert(params interface{}, c pkg.HostContext, previous i
 		}
 		return TemplateOutput{OriginalContents: prev.NewContents, NewContents: prev.OriginalContents}, nil
 	}
-	fmt.Printf("Not reverting because previous result was %v", previous)
+	pkg.DebugOutput("Not reverting because previous result was %v", previous)
 	return TemplateOutput{}, nil
 }
 

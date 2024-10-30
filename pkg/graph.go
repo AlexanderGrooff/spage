@@ -22,6 +22,9 @@ func NewGraph(tasks []Task) (Graph, error) {
 	dependsOnVariables := map[string][]string{}
 	variableProvidedBy := map[string]string{}
 	for _, task := range tasks {
+		if err := task.Params.Validate(); err != nil {
+			return Graph{}, fmt.Errorf("task %q failed to validate: %s", task.Name, err)
+		}
 		taskNameMapping[task.Name] = task
 		fmt.Printf("Adding task %s to key %s: %s\n", task, task.Name, taskNameMapping[task.Name])
 		if task.Before != "" {

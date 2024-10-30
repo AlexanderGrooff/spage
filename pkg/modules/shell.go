@@ -41,6 +41,13 @@ func (i ShellInput) GetVariableUsage() []string {
 	return append(pkg.GetVariableUsageFromString(i.Execute), pkg.GetVariableUsageFromString(i.Revert)...)
 }
 
+func (i ShellInput) Validate() error {
+	if i.Execute == "" && i.Revert == "" {
+		return fmt.Errorf("missing both Execute and Revert params. At least one should be given")
+	}
+	return nil
+}
+
 func (o ShellOutput) String() string {
 	return fmt.Sprintf("  cmd: %q\n  stdout: %q\n  stderr: %q\n", o.Command, o.Stdout, o.Stderr)
 }
