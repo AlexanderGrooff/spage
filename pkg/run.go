@@ -21,11 +21,12 @@ func Execute(graph Graph, inventoryFile string) error {
 		}
 	}
 
-	executed := make([][]Task, len(graph.Tasks))
+	var executedOnHost []map[string][]Task
 	for executionLevel, taskOnLevel := range graph.Tasks {
 		DebugOutput("Starting execution level %d\n", executionLevel)
 		for _, task := range taskOnLevel {
 			// TODO: execute in parallel
+			executedOnHost = append(executedOnHost, make(map[string][]Task))
 			for hostname, c := range contexts {
 				// TODO: execute in parallel
 
@@ -35,13 +36,13 @@ func Execute(graph Graph, inventoryFile string) error {
 				if task.Register != "" {
 					c.Facts[task.Register] = output
 				}
-				executed[executionLevel] = append(executed[executionLevel], task)
+				executedOnHost[executionLevel][hostname] = append(executedOnHost[executionLevel][hostname], task)
 				PPrintOutput(output, err)
 
 				if err != nil {
 					DebugOutput("error executing '%s': %v\n\nREVERTING\n\n", task, err)
 
-					if err := RevertTasks(executed, contexts); err != nil {
+					if err := RevertTasks(executedOnHost, contexts); err != nil {
 						return fmt.Errorf("run failed: %w", err)
 					}
 					return fmt.Errorf("reverted all tasks")
@@ -54,12 +55,13 @@ func Execute(graph Graph, inventoryFile string) error {
 	return nil
 }
 
-func RevertTasks(taskLevels [][]Task, contexts map[string]HostContext) error {
+func RevertTasks(executedTasks []map[string][]Task, contexts map[string]HostContext) error {
 	// Revert all tasks per level in descending order
-	for j := len(taskLevels) - 1; j >= 0; j-- {
-		tasks := taskLevels[j]
-		for _, task := range tasks {
-			for hostname, c := range contexts {
+	for executionLevel := len(executedTasks) - 1; executionLevel >= 0; executionLevel-- {
+		for hostname, tasks := range executedTasks[executionLevel] {
+			// TODO: revert hosts in parallel per executionlevel
+			for _, task := range tasks {
+				c := contexts[hostname]
 				fmt.Printf("[%s - %s]:revert\n", hostname, task)
 				output, err := task.RevertModule(c)
 				PPrintOutput(output, err)
