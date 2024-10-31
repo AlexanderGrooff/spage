@@ -6,16 +6,17 @@ import (
 )
 
 func Execute(graph Graph, inventoryFile string) error {
-	var contexts map[string]HostContext
+	var contexts map[string]*HostContext
 	if inventoryFile == "" {
-		contexts = make(map[string]HostContext)
+		contexts = make(map[string]*HostContext)
 		fmt.Printf("No inventory file specified. Assuming target is this machine\n")
-		contexts["localhost"] = HostContext{Host: Host{IsLocal: true, Host: "localhost"}, Facts: make(Facts), History: make(map[string]ModuleOutput)}
+		contexts["localhost"] = &HostContext{Host: Host{Name: "localhost", IsLocal: true, Host: "localhost"}, Facts: make(Facts), History: make(map[string]ModuleOutput)}
 	} else {
 		inventory, err := LoadInventory(inventoryFile)
 		if err != nil {
 			return fmt.Errorf("failed to load inventory: %w", err)
 		}
+		DebugOutput("Getting contexts for run from inventory %+v", inventory)
 		contexts, err = inventory.GetContextForRun()
 		if err != nil {
 			return fmt.Errorf("failed to get contexts for run: %w", err)
@@ -33,8 +34,12 @@ func Execute(graph Graph, inventoryFile string) error {
 			executedOnHost = append(executedOnHost, make(map[string][]Task))
 
 			for _, c := range contexts {
+				// if executedOnHost[executionLevel][hostname] == nil {
+				// 	DebugOutput("Creating new slice for %q", hostname)
+				// 	executedOnHost[executionLevel][hostname] = []Task{}
+				// }
 				wg.Add(1)
-				go func(task Task, c HostContext) {
+				go func(task Task, c *HostContext) {
 					defer wg.Done()
 					ch <- task.ExecuteModule(c)
 				}(task, c)
@@ -48,7 +53,7 @@ func Execute(graph Graph, inventoryFile string) error {
 		// Process results
 		var errored bool
 		for result := range ch {
-			hostname := result.Context.Host.Host
+			hostname := result.Context.Host.Name
 			task := result.Task
 			c := result.Context
 			fmt.Printf("[%s - %s]:execute\n", c.Host.Host, task.Name)
@@ -76,13 +81,16 @@ func Execute(graph Graph, inventoryFile string) error {
 	return nil
 }
 
-func RevertTasks(executedTasks []map[string][]Task, contexts map[string]HostContext) error {
+func RevertTasks(executedTasks []map[string][]Task, contexts map[string]*HostContext) error {
 	// Revert all tasks per level in descending order
 	for executionLevel := len(executedTasks) - 1; executionLevel >= 0; executionLevel-- {
 		for hostname, tasks := range executedTasks[executionLevel] {
 			// TODO: revert hosts in parallel per executionlevel
 			for _, task := range tasks {
-				c := contexts[hostname]
+				c, ok := contexts[hostname]
+				if !ok {
+					return fmt.Errorf("context for %q not found", hostname)
+				}
 				tOutput := task.RevertModule(c)
 				PPrintOutput(tOutput.Output, tOutput.Error)
 				if tOutput.Error != nil {

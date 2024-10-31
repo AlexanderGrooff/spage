@@ -117,7 +117,6 @@ func TextToTasks(text []byte) ([]Task, error) {
 			continue
 		}
 		for k := range paramsBlock {
-			DebugOutput("Checking key %q in params", k)
 			if _, ok := structFields[k]; !ok {
 				errors = append(errors, fmt.Errorf("extra key %q found in params for task %q", k, task.Name))
 			}

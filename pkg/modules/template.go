@@ -69,7 +69,7 @@ func (o TemplateOutput) Changed() bool {
 	return o.OriginalContents != o.NewContents
 }
 
-func templateContentsToFile(src, dest string, c pkg.HostContext) (string, string, error) {
+func templateContentsToFile(src, dest string, c *pkg.HostContext) (string, string, error) {
 	// Get contents from src
 	contents, err := pkg.ReadTemplateFile(src)
 	if err != nil {
@@ -91,7 +91,7 @@ func templateContentsToFile(src, dest string, c pkg.HostContext) (string, string
 	return originalContents, templatedContents, nil
 }
 
-func (s TemplateModule) Execute(params pkg.ModuleInput, c pkg.HostContext) (pkg.ModuleOutput, error) {
+func (s TemplateModule) Execute(params pkg.ModuleInput, c *pkg.HostContext) (pkg.ModuleOutput, error) {
 	p := params.(TemplateInput)
 	original, new, err := templateContentsToFile(p.Src, p.Dest, c)
 	if err != nil {
@@ -103,7 +103,7 @@ func (s TemplateModule) Execute(params pkg.ModuleInput, c pkg.HostContext) (pkg.
 	}, nil
 }
 
-func (s TemplateModule) Revert(params pkg.ModuleInput, c pkg.HostContext, previous pkg.ModuleOutput) (pkg.ModuleOutput, error) {
+func (s TemplateModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput) (pkg.ModuleOutput, error) {
 	// TODO: delete if previously created?
 	p := params.(TemplateInput)
 	if previous != nil {

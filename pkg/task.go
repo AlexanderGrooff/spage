@@ -8,7 +8,7 @@ import (
 type TaskResult struct {
 	Output  ModuleOutput
 	Error   error
-	Context HostContext
+	Context *HostContext
 	Task    Task
 }
 
@@ -37,7 +37,7 @@ func (t Task) String() string {
 	return t.Name
 }
 
-func (t Task) ExecuteModule(c HostContext) TaskResult {
+func (t Task) ExecuteModule(c *HostContext) TaskResult {
 	r := TaskResult{Task: t, Context: c}
 	DebugOutput("Starting task %q on %q", t.Name, c.Host)
 	module, ok := GetModule(t.Module)
@@ -57,7 +57,7 @@ func (t Task) ExecuteModule(c HostContext) TaskResult {
 	return r
 }
 
-func (t Task) RevertModule(c HostContext) TaskResult {
+func (t Task) RevertModule(c *HostContext) TaskResult {
 	r := TaskResult{Task: t, Context: c}
 	fmt.Printf("[%s - %s]:revert\n", c.Host.Host, t.Name)
 	module, ok := GetModule(t.Module)

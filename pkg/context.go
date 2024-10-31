@@ -15,7 +15,7 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 )
 
-type Facts map[string]interface{}
+type Facts map[string]ModuleOutput
 
 func (f *Facts) Merge(other Facts) {
 	for key, value := range other {
@@ -23,15 +23,15 @@ func (f *Facts) Merge(other Facts) {
 	}
 }
 
-func (f *Facts) Add(k string, v interface{}) Facts {
+func (f *Facts) Add(k string, v ModuleOutput) Facts {
 	(*f)[k] = v
 	return *f
 }
 
 type HostContext struct {
-	Host     Host
-	Facts    Facts
-	History  map[string]ModuleOutput
+	Host    Host
+	Facts   Facts
+	History map[string]ModuleOutput
 }
 
 func ReadTemplateFile(filename string) (string, error) {
@@ -142,7 +142,6 @@ func RunRemoteCommand(host, command string) (string, string, error) {
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
-	DebugOutput("Starting SSH connection to %s:%s with config %v", user.Username, host, config)
 	client, err := ssh.Dial("tcp", net.JoinHostPort(host, "22"), config)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to dial host %s: %w", host, err)
