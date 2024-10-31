@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"fmt"
+	"sync"
 )
 
 func Execute(graph Graph, inventoryFile string) error {
@@ -22,32 +23,52 @@ func Execute(graph Graph, inventoryFile string) error {
 	}
 
 	var executedOnHost []map[string][]Task
-	for executionLevel, taskOnLevel := range graph.Tasks {
+	for executionLevel, tasksOnLevel := range graph.Tasks {
 		DebugOutput("Starting execution level %d\n", executionLevel)
-		for _, task := range taskOnLevel {
-			// TODO: execute in parallel
+		// Run all tasks of this level on all hosts in parallel, regardless of errors
+		numExpectedResults := len(tasksOnLevel) * len(contexts)
+		ch := make(chan TaskResult, numExpectedResults)
+		var wg sync.WaitGroup
+		for _, task := range tasksOnLevel {
 			executedOnHost = append(executedOnHost, make(map[string][]Task))
-			for hostname, c := range contexts {
-				// TODO: execute in parallel
 
-				fmt.Printf("[%s - %s]:execute\n", hostname, task)
-				output, err := task.ExecuteModule(c)
-				c.History[task.Name] = output
-				if task.Register != "" {
-					c.Facts[task.Register] = output
-				}
-				executedOnHost[executionLevel][hostname] = append(executedOnHost[executionLevel][hostname], task)
-				PPrintOutput(output, err)
-
-				if err != nil {
-					DebugOutput("error executing '%s': %v\n\nREVERTING\n\n", task, err)
-
-					if err := RevertTasks(executedOnHost, contexts); err != nil {
-						return fmt.Errorf("run failed: %w", err)
-					}
-					return fmt.Errorf("reverted all tasks")
-				}
+			for _, c := range contexts {
+				wg.Add(1)
+				go func(task Task, c HostContext) {
+					defer wg.Done()
+					ch <- task.ExecuteModule(c)
+				}(task, c)
 			}
+		}
+		go func() {
+			wg.Wait()
+			close(ch)
+		}()
+
+		// Process results
+		var errored bool
+		for result := range ch {
+			hostname := result.Context.Host.Host
+			task := result.Task
+			c := result.Context
+			fmt.Printf("[%s - %s]:execute\n", c.Host.Host, task.Name)
+			c.History[task.Name] = result.Output
+			if task.Register != "" {
+				c.Facts[task.Register] = result.Output
+			}
+			executedOnHost[executionLevel][hostname] = append(executedOnHost[executionLevel][hostname], task)
+			PPrintOutput(result.Output, result.Error)
+
+			if result.Error != nil {
+				DebugOutput("error executing '%s': %v\n\nREVERTING\n\n", task, result.Error)
+				errored = true
+			}
+		}
+		if errored {
+			if err := RevertTasks(executedOnHost, contexts); err != nil {
+				return fmt.Errorf("run failed: %w", err)
+			}
+			return fmt.Errorf("reverted all tasks")
 		}
 	}
 
@@ -62,11 +83,10 @@ func RevertTasks(executedTasks []map[string][]Task, contexts map[string]HostCont
 			// TODO: revert hosts in parallel per executionlevel
 			for _, task := range tasks {
 				c := contexts[hostname]
-				fmt.Printf("[%s - %s]:revert\n", hostname, task)
-				output, err := task.RevertModule(c)
-				PPrintOutput(output, err)
-				if err != nil {
-					return fmt.Errorf("failed to revert %s: %v\n", task, err)
+				tOutput := task.RevertModule(c)
+				PPrintOutput(tOutput.Output, tOutput.Error)
+				if tOutput.Error != nil {
+					return fmt.Errorf("failed to revert %s: %v\n", task, tOutput.Error)
 				}
 			}
 		}

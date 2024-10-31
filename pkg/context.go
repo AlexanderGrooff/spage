@@ -190,6 +190,7 @@ func TemplateString(s string, additionalVars ...Facts) (string, error) {
 }
 
 func GetVariableUsageFromString(s string) []string {
+	// TODO: this also catches templating functions/filters/keywords as variables, like 'range'.
 	re := regexp.MustCompile(`{{\s*([^{}\s]+)\s*}}`)
 	matches := re.FindAllStringSubmatch(s, -1)
 

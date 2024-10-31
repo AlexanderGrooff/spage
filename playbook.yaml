@@ -5,3 +5,10 @@
     revert: rm /tmp/test.txt
   register: graph
 
+- name: sleep a bit
+  shell:
+    execute: sleep 3
+
+- name: show graph
+  shell:
+    execute: echo "{{ .graph.Stdout }}"

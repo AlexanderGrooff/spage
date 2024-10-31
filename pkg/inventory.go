@@ -21,6 +21,10 @@ type Host struct {
 	IsLocal bool
 }
 
+func (h Host) String() string {
+	return h.Host
+}
+
 type Group struct {
 	Hosts []Host                 `yaml:"hosts"`
 	Vars  map[string]interface{} `yaml:"vars"`

@@ -4,6 +4,14 @@ import (
 	"fmt"
 )
 
+// Useful for having a single type to pass around in channels
+type TaskResult struct {
+	Output  ModuleOutput
+	Error   error
+	Context HostContext
+	Task    Task
+}
+
 type Task struct {
 	Name     string      `yaml:"name"`
 	Module   string      `yaml:"module"`
@@ -29,39 +37,48 @@ func (t Task) String() string {
 	return t.Name
 }
 
-func (t Task) ExecuteModule(c HostContext) (ModuleOutput, error) {
+func (t Task) ExecuteModule(c HostContext) TaskResult {
+	r := TaskResult{Task: t, Context: c}
+	DebugOutput("Starting task %q on %q", t.Name, c.Host)
 	module, ok := GetModule(t.Module)
 	if !ok {
-		return nil, fmt.Errorf("module %s not found", t.Module)
+		r.Error = fmt.Errorf("module %s not found", t.Module)
+		return r
 	}
 	output, err := module.Execute(t.Params, c)
+	r.Error = err
 	moduleOutput, ok := output.(ModuleOutput)
 	if !ok {
-		return moduleOutput, fmt.Errorf("module %s did not return a valid ModuleOutput: %s", t.Module, err)
+		r.Error = fmt.Errorf("module %s did not return a valid ModuleOutput", t.Module)
+	} else {
+		r.Output = moduleOutput
 	}
-	return moduleOutput, err
+	DebugOutput("Completed task %q on %q", t.Name, c.Host)
+	return r
 }
 
-func (t Task) RevertModule(c HostContext) (ModuleOutput, error) {
+func (t Task) RevertModule(c HostContext) TaskResult {
+	r := TaskResult{Task: t, Context: c}
+	fmt.Printf("[%s - %s]:revert\n", c.Host.Host, t.Name)
 	module, ok := GetModule(t.Module)
 	if !ok {
-		return nil, fmt.Errorf("module %s not found", t.Module)
+		r.Error = fmt.Errorf("module %s not found", t.Module)
+		return r
 	}
 	previous := c.History[t.Name]
 	output, err := module.Revert(t.Params, c, previous)
-	if err != nil {
-		return nil, err
-	}
+	r.Error = err
 	moduleOutput, ok := output.(ModuleOutput)
 	if !ok {
-		return nil, fmt.Errorf("module %s did not return a valid ModuleOutput", t.Module)
+		r.Error = fmt.Errorf("module %s did not return a valid ModuleOutput", t.Module)
+	} else {
+		r.Output = moduleOutput
 	}
-	return moduleOutput, nil
+	return r
 }
 
 func (t Task) GetVariableUsage() []string {
 	usedVars := []string{}
-		
 
 	return usedVars
 }
