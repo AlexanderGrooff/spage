@@ -9,17 +9,12 @@ go run main.go -i inventory.yaml
 TODO:
 
 - Add more modules
-- Validate module input
-- Implement task variables
-- Implement task dependencies
 - Implement task when
 - Implement validation step
-- Generate graph
-- Always run parallel
 - Add revert conditions `revert_when`
 - Make template variables case insensitive
-- Determine order of task based on variable usage
 - Should we compile assets (templates, files) along with the code?
+- Hook up host facts like release, os, etc.
 
 ## Differences between Spage and Ansible
 

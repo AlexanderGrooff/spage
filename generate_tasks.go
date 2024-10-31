@@ -47,7 +47,7 @@ func main() {
 	}
 	defer f.Close()
 
-	fmt.Printf("Compiling graph to code: %s", graph)
+	fmt.Printf("Compiling graph to code:\n%s", graph)
 
 	fmt.Fprintln(f, "package generated")
 	fmt.Fprintln(f)

@@ -15,6 +15,17 @@ type Graph struct {
 	Tasks      [][]Task
 }
 
+func (g Graph) String() string {
+	var b strings.Builder
+	for i, tasks := range g.Tasks {
+		fmt.Fprintf(&b, "- Step %d:\n", i)
+		for _, task := range tasks {
+			fmt.Fprintf(&b, "---- %s\n", task.Name)
+		}
+	}
+	return b.String()
+}
+
 func NewGraph(tasks []Task) (Graph, error) {
 	g := Graph{}
 	dependsOn := map[string][]string{}
