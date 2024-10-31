@@ -1,5 +1,5 @@
 ---
 - name: install packages
   yay:
-    packages:
+    name:
       - nomad

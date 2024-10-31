@@ -19,7 +19,8 @@ func (sm YayModule) OutputType() reflect.Type {
 }
 
 type YayInput struct {
-	Packages []string `yaml:"packages"`
+	Name  []string `yaml:"name"`
+	State string   `yaml:"state"`
 	pkg.ModuleInput
 }
 
@@ -32,18 +33,18 @@ type YayOutput struct {
 }
 
 func (i YayInput) ToCode() string {
-	return fmt.Sprintf("modules.YayInput{Packages: []string{%q}}",
-		strings.Join(i.Packages, ", "),
+	return fmt.Sprintf("modules.YayInput{Name: []string{%q}}",
+		strings.Join(i.Name, ", "),
 	)
 }
 
 func (i YayInput) GetVariableUsage() []string {
-	return pkg.GetVariableUsageFromString(strings.Join(i.Packages, " "))
+	return pkg.GetVariableUsageFromString(strings.Join(i.Name, " "))
 }
 
 func (i YayInput) Validate() error {
-	if len(i.Packages) == 0 {
-		return fmt.Errorf("missing Packages input")
+	if len(i.Name) == 0 {
+		return fmt.Errorf("missing Name input")
 	}
 	return nil
 }
@@ -103,9 +104,9 @@ func RemovePackages(packages []string, c *pkg.HostContext) (YayOutput, error) {
 			}, err
 		} else {
 			return YayOutput{
-				Removed:   presentPackages,
-				Stdout:    stdout,
-				Stderr:    stderr,
+				Removed: presentPackages,
+				Stdout:  stdout,
+				Stderr:  stderr,
 			}, nil
 		}
 	}
@@ -113,13 +114,23 @@ func RemovePackages(packages []string, c *pkg.HostContext) (YayOutput, error) {
 }
 
 func (s YayModule) Execute(params pkg.ModuleInput, c *pkg.HostContext) (pkg.ModuleOutput, error) {
-	packages := params.(YayInput).Packages
-	return InstallPackages(packages, c)
+	packages := params.(YayInput).Name
+	state := params.(YayInput).State
+	if state == "absent" {
+		return RemovePackages(packages, c)
+	} else {
+		return InstallPackages(packages, c)
+	}
 }
 
 func (s YayModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput) (pkg.ModuleOutput, error) {
 	previousPackages := previous.(YayOutput).Installed
-	return RemovePackages(previousPackages, c)
+	state := params.(YayInput).State
+	if state == "absent" {
+		return InstallPackages(previousPackages, c)
+	} else {
+		return RemovePackages(previousPackages, c)
+	}
 }
 
 func init() {
