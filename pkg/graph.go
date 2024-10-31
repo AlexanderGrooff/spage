@@ -21,6 +21,9 @@ func NewGraph(tasks []Task) (Graph, error) {
 	taskNameMapping := map[string]Task{}
 	dependsOnVariables := map[string][]string{}
 	variableProvidedBy := map[string]string{}
+	visited := map[string]bool{}
+	recStack := map[string]bool{}
+
 	for _, task := range tasks {
 		if err := task.Params.Validate(); err != nil {
 			return Graph{}, fmt.Errorf("task %q failed to validate: %s", task.Name, err)
@@ -32,13 +35,20 @@ func NewGraph(tasks []Task) (Graph, error) {
 		if task.After != "" {
 			dependsOn[task.Name] = append(dependsOn[task.Name], task.After)
 		}
-		// TODO: catch cyclic graph
 		if task.Register != "" {
 			variableProvidedBy[strings.ToLower(task.Register)] = task.Name
 		}
 		// Note: task cannot use its own variable
 		dependsOnVariables[task.Name] = task.Params.GetVariableUsage()
 	}
+
+	// Check for cycles
+	for taskName := range taskNameMapping {
+		if err := checkCycle(taskName, dependsOn, visited, recStack); err != nil {
+			return Graph{}, err
+		}
+	}
+
 	for taskName, vars := range dependsOnVariables {
 		for _, varName := range vars {
 			providingTask, ok := variableProvidedBy[varName]
@@ -84,4 +94,23 @@ func ResolveExecutionLevel(taskName string, dependsOn map[string][]string, execu
 		executedOnStep[taskName] = max(executedOnStep[taskName], executedOnStep[parentTaskName]+1)
 	}
 	return executedOnStep
+}
+
+func checkCycle(taskName string, dependsOn map[string][]string, visited, recStack map[string]bool) error {
+	if !visited[taskName] {
+		visited[taskName] = true
+		recStack[taskName] = true
+
+		for _, parentTaskName := range dependsOn[taskName] {
+			if !visited[parentTaskName] {
+				if err := checkCycle(parentTaskName, dependsOn, visited, recStack); err != nil {
+					return err
+				}
+			} else if recStack[parentTaskName] {
+				return fmt.Errorf("cyclic dependency detected involving task %q", taskName)
+			}
+		}
+	}
+	recStack[taskName] = false
+	return nil
 }

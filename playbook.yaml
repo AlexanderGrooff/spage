@@ -9,6 +9,7 @@
   shell:
     execute: echo "{{ .graph.Stdout }}"
     revert: echo "previously showed {{ .Previous.Stdout }}"
+  after: break
 
 - name: break
   shell:
