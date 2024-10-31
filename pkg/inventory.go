@@ -18,7 +18,7 @@ type Host struct {
 	Name    string
 	Host    string `yaml:"host"`
 	Vars    map[string]interface{}
-	Groups  []string `yaml:"groups"`
+	Groups  map[string]string `yaml:"groups"`
 	IsLocal bool
 }
 
@@ -27,7 +27,7 @@ func (h Host) String() string {
 }
 
 type Group struct {
-	Hosts []Host                 `yaml:"hosts"`
+	Hosts map[string]Host        `yaml:"hosts"`
 	Vars  map[string]interface{} `yaml:"vars"`
 }
 
@@ -37,9 +37,18 @@ func LoadInventory(path string) (*Inventory, error) {
 		log.Fatalf("Error reading YAML file: %v", err)
 	}
 	var inventory Inventory
+	inventory.Hosts = make(map[string]Host)
+	inventory.Groups = make(map[string]Group)
 	err = yaml.Unmarshal(data, &inventory)
 	if err != nil {
 		return nil, err
+	}
+	// Add hosts from groups to inventory
+	for _, group := range inventory.Groups {
+		for name, host := range group.Hosts {
+			host.Name = name
+			inventory.Hosts[name] = host
+		}
 	}
 	for name, host := range inventory.Hosts {
 		host.Name = name

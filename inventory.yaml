@@ -1,3 +1,5 @@
-all:
-  current_machine:
-    host: localhost
+groups:
+  nomad:
+    hosts:
+      current_machine:
+        host: localhost
