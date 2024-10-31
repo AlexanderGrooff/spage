@@ -62,7 +62,7 @@ func templateAndExecute(command string, c pkg.HostContext, prev ShellOutput) (Sh
 	if err != nil {
 		return ShellOutput{}, err
 	}
-	stdout, stderr, err := pkg.RunLocalCommand(templatedCmd)
+	stdout, stderr, err := c.RunCommand(templatedCmd)
 	output := ShellOutput{
 		Stdout:  stdout,
 		Stderr:  stderr,

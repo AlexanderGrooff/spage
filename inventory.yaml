@@ -1,3 +1,5 @@
 all:
   current_machine:
     host: localhost
+  theta:
+    host: theta

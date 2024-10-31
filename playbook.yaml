@@ -1,11 +1,7 @@
 ---
 - name: generate graph
   shell:
-    execute: curl -sSL https://mermaid-ascii.art/generate -d mermaid="graph LR\nA --> B"
+    execute: curl -sSL https://mermaid-ascii.art/generate -d mermaid="graph LR\nA --> B" | tee /tmp/test.txt
+    revert: rm /tmp/test.txt
   register: graph
-
-- name: write to file
-  template:
-    contents: "{{ .graph.Stdout }}"
-    dest: /tmp/test.txt
 

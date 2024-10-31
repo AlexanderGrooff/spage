@@ -6,11 +6,13 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"regexp"
 	"strings"
 	"text/template"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 type Facts map[string]interface{}
@@ -99,6 +101,13 @@ func WriteRemoteFile(host, remotePath, data string) error {
 	return nil
 }
 
+func (c HostContext) RunCommand(command string) (string, string, error) {
+	if c.Host.IsLocal {
+		return RunLocalCommand(command)
+	}
+	return RunRemoteCommand(c.Host.Host, command)
+}
+
 func RunLocalCommand(command string) (string, string, error) {
 	var stdout, stderr bytes.Buffer
 	var err error
@@ -115,13 +124,26 @@ func RunLocalCommand(command string) (string, string, error) {
 }
 
 func RunRemoteCommand(host, command string) (string, string, error) {
-	key, err := ssh.ParsePrivateKey([]byte("BLABLABLA"))
+	// Get active SSH keys from ssh-agent
+	socket := os.Getenv("SSH_AUTH_SOCK")
+	conn, err := net.Dial("unix", socket)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to open SSH_AUTH_SOCK: %v", err)
+	}
+	agentClient := agent.NewClient(conn)
+
+	user, err := user.Current()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get current user: %v", err)
+	}
 	config := &ssh.ClientConfig{
+		User: user.Username,
 		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(key),
+			ssh.PublicKeysCallback(agentClient.Signers),
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
+	DebugOutput("Starting SSH connection to %s:%s with config %v", user.Username, host, config)
 	client, err := ssh.Dial("tcp", net.JoinHostPort(host, "22"), config)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to dial host %s: %w", host, err)
