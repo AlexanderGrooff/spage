@@ -26,7 +26,6 @@ func NewGraph(tasks []Task) (Graph, error) {
 			return Graph{}, fmt.Errorf("task %q failed to validate: %s", task.Name, err)
 		}
 		taskNameMapping[task.Name] = task
-		fmt.Printf("Adding task %s to key %s: %s\n", task, task.Name, taskNameMapping[task.Name])
 		if task.Before != "" {
 			dependsOn[task.Before] = append(dependsOn[task.Before], task.Name)
 		}
@@ -40,7 +39,6 @@ func NewGraph(tasks []Task) (Graph, error) {
 		// Note: task cannot use its own variable
 		dependsOnVariables[task.Name] = task.Params.GetVariableUsage()
 	}
-	// TODO: loop over variable dependencies
 	for taskName, vars := range dependsOnVariables {
 		for _, varName := range vars {
 			providingTask, ok := variableProvidedBy[varName]
@@ -70,12 +68,8 @@ func NewGraph(tasks []Task) (Graph, error) {
 	g.Tasks = make([][]Task, maxExecutionLevel+1)
 	for taskName, executionLevel := range executedOnStep {
 		task := taskNameMapping[taskName]
-		fmt.Printf("%s on execution level %d\n", task, executionLevel)
 		g.Tasks[executionLevel] = append(g.Tasks[executionLevel], task)
 	}
-	fmt.Printf("Found dependencies: %s\n", dependsOn)
-	fmt.Printf("Found tasks: %s\n", taskNameMapping)
-	fmt.Printf("Found execution levels: %s\n", executedOnStep)
 
 	return g, nil
 }

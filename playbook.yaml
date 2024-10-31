@@ -4,11 +4,14 @@
     execute: curl -sSL https://mermaid-ascii.art/generate -d mermaid="graph LR\nA --> B" | tee /tmp/test.txt
     revert: rm /tmp/test.txt
   register: graph
+  banaan3: 123
 
 - name: sleep a bit
   shell:
     execute: sleep 3
+    banaan1: 123
 
 - name: show graph
   shell:
     execute: echo "{{ .graph.Stdout }}"
+    banaan2: 123

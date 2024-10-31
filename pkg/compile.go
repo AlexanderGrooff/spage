@@ -3,6 +3,7 @@ package pkg
 import (
 	"fmt"
 	"reflect"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -57,6 +58,8 @@ func TextToTasks(text []byte) ([]Task, error) {
 	}
 
 	var tasks []Task
+	var errors []error
+
 	for _, block := range yamlMap {
 		task := Task{
 			Name:     getStringFromMap(block, "name"),
@@ -77,27 +80,66 @@ func TextToTasks(text []byte) ([]Task, error) {
 					moduleParams = v
 					break
 				} else {
-					return nil, fmt.Errorf("unknown key %s in task %s", k, task.Name)
+					errors = append(errors, fmt.Errorf("unknown key %s in task %s", k, task.Name))
+					continue
 				}
 			}
 		}
 
-		fmt.Printf("Module: %v, params: %v\n", module, moduleParams)
-
 		// Convert back to yaml so we can unmarshal it into the correct type
 		paramsData, err := yaml.Marshal(moduleParams)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal params for module %s: %v", task.Module, moduleParams)
+			errors = append(errors, fmt.Errorf("failed to marshal params for module %s: %v", task.Module, moduleParams))
+			continue
 		}
 
 		// Now we can unmarshal the params into the correct type
 		params := reflect.New(module.InputType()).Interface()
 		if err := yaml.Unmarshal(paramsData, params); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal params for module %s: %v", task.Module, moduleParams)
+			errors = append(errors, fmt.Errorf("failed to unmarshal params for module %s: %v", task.Module, moduleParams))
+			continue
 		}
-		task.Params = params.(ModuleInput)
+
+		// Validate that there are no extra keys in the block
+		structType := module.InputType()
+		structFields := make(map[string]struct{})
+
+		// Collect field names from the struct
+		for i := 0; i < structType.NumField(); i++ {
+			field := structType.Field(i)
+			structFields[field.Tag.Get("yaml")] = struct{}{}
+		}
+
+		// Check for extra keys in the module block
+		paramsBlock, ok := block[task.Module].(map[string]interface{})
+		if !ok {
+			errors = append(errors, fmt.Errorf("params block is not a map for task %q: %v", task.Name, block[task.Module]))
+			continue
+		}
+		for k := range paramsBlock {
+			DebugOutput("Checking key %q in params", k)
+			if _, ok := structFields[k]; !ok {
+				errors = append(errors, fmt.Errorf("extra key %q found in params for task %q", k, task.Name))
+			}
+		}
+
+		// Ensure params is of the correct type using reflection
+		if typedParams, ok := params.(ModuleInput); ok {
+			task.Params = typedParams
+		} else {
+			errors = append(errors, fmt.Errorf("params do not implement ModuleInput for module %s", task.Module))
+			continue
+		}
 
 		tasks = append(tasks, task)
 	}
+	if len(errors) > 0 {
+		errorMessages := make([]string, len(errors))
+		for i, err := range errors {
+			errorMessages[i] = err.Error()
+		}
+		return nil, fmt.Errorf("encountered errors:\n%s", strings.Join(errorMessages, "\n"))
+	}
+
 	return tasks, nil
 }
