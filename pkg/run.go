@@ -10,7 +10,7 @@ func Execute(graph Graph, inventoryFile string) error {
 	if inventoryFile == "" {
 		contexts = make(map[string]HostContext)
 		fmt.Printf("No inventory file specified. Assuming target is this machine\n")
-		contexts["localhost"] = HostContext{Host: Host{IsLocal: true, Host: "localhost"}, Facts: make(Facts), History: make(Facts)}
+		contexts["localhost"] = HostContext{Host: Host{IsLocal: true, Host: "localhost"}, Facts: make(Facts), History: make(map[string]ModuleOutput)}
 	} else {
 		inventory, err := LoadInventory(inventoryFile)
 		if err != nil {

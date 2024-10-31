@@ -13,8 +13,8 @@ type ModuleOutput interface {
 }
 
 type Module interface {
-	Execute(params interface{}, c HostContext) (interface{}, error)
-	Revert(params interface{}, c HostContext, previous interface{}) (interface{}, error)
+	Execute(params ModuleInput, c HostContext) (ModuleOutput, error)
+	Revert(params ModuleInput, c HostContext, previous ModuleOutput) (ModuleOutput, error)
 	InputType() reflect.Type
 	OutputType() reflect.Type
 }

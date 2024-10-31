@@ -65,7 +65,7 @@ func (i Inventory) GetContextForHost(host Host) (HostContext, error) {
 	if host.Host == "localhost" {
 		host.IsLocal = true
 	}
-	return HostContext{Facts: facts, Host: host, History: make(Facts)}, nil
+	return HostContext{Facts: facts, Host: host, History: make(map[string]ModuleOutput)}, nil
 }
 
 func (i Inventory) GetContextForRun() (map[string]HostContext, error) {

@@ -31,8 +31,7 @@ func (f *Facts) Add(k string, v interface{}) Facts {
 type HostContext struct {
 	Host     Host
 	Facts    Facts
-	History  Facts
-	Previous interface{}
+	History  map[string]ModuleOutput
 }
 
 func ReadTemplateFile(filename string) (string, error) {

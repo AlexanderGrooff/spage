@@ -75,7 +75,7 @@ func templateContentsToFile(src, dest string, c pkg.HostContext) (string, string
 	if err != nil {
 		return "", "", fmt.Errorf("failed to read template file %s: %v", src, err)
 	}
-	templatedContents, err := pkg.TemplateString(contents, c.Facts.Add("Previous", c.Previous))
+	templatedContents, err := pkg.TemplateString(contents)
 	if err != nil {
 		return "", "", err
 	}
@@ -91,7 +91,7 @@ func templateContentsToFile(src, dest string, c pkg.HostContext) (string, string
 	return originalContents, templatedContents, nil
 }
 
-func (s TemplateModule) Execute(params interface{}, c pkg.HostContext) (interface{}, error) {
+func (s TemplateModule) Execute(params pkg.ModuleInput, c pkg.HostContext) (pkg.ModuleOutput, error) {
 	p := params.(TemplateInput)
 	original, new, err := templateContentsToFile(p.Src, p.Dest, c)
 	if err != nil {
@@ -103,7 +103,7 @@ func (s TemplateModule) Execute(params interface{}, c pkg.HostContext) (interfac
 	}, nil
 }
 
-func (s TemplateModule) Revert(params interface{}, c pkg.HostContext, previous interface{}) (interface{}, error) {
+func (s TemplateModule) Revert(params pkg.ModuleInput, c pkg.HostContext, previous pkg.ModuleOutput) (pkg.ModuleOutput, error) {
 	// TODO: delete if previously created?
 	p := params.(TemplateInput)
 	if previous != nil {

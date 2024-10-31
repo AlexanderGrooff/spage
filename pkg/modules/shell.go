@@ -72,12 +72,12 @@ func templateAndExecute(command string, c pkg.HostContext, prev ShellOutput) (Sh
 	return output, err
 }
 
-func (s ShellModule) Execute(params interface{}, c pkg.HostContext) (interface{}, error) {
+func (s ShellModule) Execute(params pkg.ModuleInput, c pkg.HostContext) (pkg.ModuleOutput, error) {
 	shellParams := params.(ShellInput)
 	return templateAndExecute(shellParams.Execute, c, ShellOutput{})
 }
 
-func (s ShellModule) Revert(params interface{}, c pkg.HostContext, previous interface{}) (interface{}, error) {
+func (s ShellModule) Revert(params pkg.ModuleInput, c pkg.HostContext, previous pkg.ModuleOutput) (pkg.ModuleOutput, error) {
 	shellParams := params.(ShellInput)
 	var prev ShellOutput
 	if previous != nil {
