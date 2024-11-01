@@ -25,13 +25,14 @@ type Task struct {
 }
 
 func (t Task) ToCode(ident int) string {
-	return fmt.Sprintf("%s{Name: %q, Module: %q, Register: %q, Params: %s, RunAs: %q},\n",
+	return fmt.Sprintf("%s{Name: %q, Module: %q, Register: %q, Params: %s, RunAs: %q, When: %q},\n",
 		Indent(ident),
 		t.Name,
 		t.Module,
 		t.Register,
 		t.Params.ToCode(),
 		t.RunAs,
+		t.When,
 	)
 }
 
@@ -39,8 +40,24 @@ func (t Task) String() string {
 	return t.Name
 }
 
+func (t Task) ShouldExecute(c *HostContext) bool {
+	if t.When != "" {
+		templatedWhen, err := TemplateString(t.When, c.Facts)
+		DebugOutput("Evaluating when condition %q: %q", t.When, templatedWhen)
+		if err != nil {
+			DebugOutput("Error evaluating when condition %q: %s", t.When, err)
+			return false
+		}
+	}
+	return true
+}
+
 func (t Task) ExecuteModule(c *HostContext) TaskResult {
 	r := TaskResult{Task: t, Context: c}
+	if !t.ShouldExecute(c) {
+		DebugOutput("Skipping execution of task %q on %q", t.Name, c.Host)
+		return r
+	}
 	DebugOutput("Starting task %q on %q", t.Name, c.Host)
 	module, ok := GetModule(t.Module)
 	if !ok {
@@ -55,6 +72,10 @@ func (t Task) ExecuteModule(c *HostContext) TaskResult {
 func (t Task) RevertModule(c *HostContext) TaskResult {
 	r := TaskResult{Task: t, Context: c}
 	fmt.Printf("[%s - %s]:revert\n", c.Host, t.Name)
+	if !t.ShouldExecute(c) {
+		DebugOutput("Skipping revert of task %q on %q", t.Name, c.Host)
+		return r
+	}
 	module, ok := GetModule(t.Module)
 	if !ok {
 		r.Error = fmt.Errorf("module %s not found", t.Module)

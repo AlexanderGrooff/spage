@@ -8,9 +8,8 @@ import (
 	"os/exec"
 	"os/user"
 	"regexp"
-	"strings"
-	"text/template"
 
+	"github.com/flosch/pongo2"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -26,6 +25,14 @@ func (f *Facts) Merge(other Facts) {
 func (f *Facts) Add(k string, v ModuleOutput) Facts {
 	(*f)[k] = v
 	return *f
+}
+
+func (f Facts) ToJinja2() pongo2.Context {
+	ctx := pongo2.Context{}
+	for k, v := range f {
+		ctx[k] = v
+	}
+	return ctx
 }
 
 type HostContext struct {
@@ -177,7 +184,8 @@ func RunRemoteCommand(host, command, username string) (string, string, error) {
 }
 
 func TemplateString(s string, additionalVars ...Facts) (string, error) {
-	tmpl, err := template.New("tmpl").Parse(s)
+	// Create a new pongo2 template
+	tmpl, err := pongo2.FromString(s)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse template: %v", err)
 	}
@@ -188,8 +196,7 @@ func TemplateString(s string, additionalVars ...Facts) (string, error) {
 	}
 
 	var buf bytes.Buffer
-	err = tmpl.Execute(&buf, allVars)
-	if err != nil {
+	if err := tmpl.ExecuteWriter(allVars.ToJinja2(), &buf); err != nil {
 		return "", fmt.Errorf("failed to execute template: %v", err)
 	}
 
@@ -197,23 +204,13 @@ func TemplateString(s string, additionalVars ...Facts) (string, error) {
 }
 
 func GetVariableUsageFromString(s string) []string {
-	// TODO: this also catches templating functions/filters/keywords as variables, like 'range'.
+	// TODO: this catches everything between the brackets, but we only want variables
 	re := regexp.MustCompile(`{{\s*([^{}\s]+)\s*}}`)
 	matches := re.FindAllStringSubmatch(s, -1)
 
 	var vars []string
 	for _, match := range matches {
-		vars = append(vars, GolangVariableToJinja(match[1]))
+		vars = append(vars, match[1])
 	}
 	return vars
-}
-
-func GolangVariableToJinja(s string) string {
-	re := regexp.MustCompile(`\.(\w+)\b`)
-
-	match := re.FindStringSubmatch(s)
-	if len(match) > 1 {
-		return strings.ToLower(match[1])
-	}
-	return ""
 }

@@ -12,13 +12,18 @@
     dest: /tmp/yay
   register: yay_git
 
-- name: install yay
+- name: test condition
   shell:
-    execute: cd {{ .yay_git.Dest }} && makepkg -si --noconfirm
+    execute: echo "{{ yay_git.dest }}"
 
-- name: install packages
-  yay:
-    name:
-      - nomad
-    state: present
-  after: install yay
+# - name: install yay
+#   shell:
+#     execute: cd {{ .yay_git.Dest }} && makepkg -si --noconfirm
+#   when: "{{ .yay_git.changed() }}"
+
+# - name: install packages
+#   yay:
+#     name:
+#       - nomad
+#     state: present
+#   after: install yay

@@ -7,7 +7,10 @@ require (
 	golang.org/x/crypto v0.28.0
 )
 
-require golang.org/x/sys v0.26.0 // indirect
+require (
+	github.com/flosch/pongo2 v0.0.0-20200913210552-0d938eb266f3 // indirect
+	golang.org/x/sys v0.26.0 // indirect
+)
 
 require (
 	github.com/inconshreveable/mousetrap v1.0.0 // indirect
