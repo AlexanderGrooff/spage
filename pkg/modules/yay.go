@@ -58,7 +58,7 @@ func (o YayOutput) String() string {
 }
 
 func (o YayOutput) Changed() bool {
-	return len(o.Installed) > 0
+	return len(o.Installed) > 0 || len(o.Removed) > 0
 }
 
 func IsPackageInstalled(packageName string, c *pkg.HostContext, runAs string) bool {

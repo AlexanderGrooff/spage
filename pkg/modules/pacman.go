@@ -58,7 +58,7 @@ func (o PacmanOutput) String() string {
 }
 
 func (o PacmanOutput) Changed() bool {
-	return len(o.Installed) > 0
+	return len(o.Installed) > 0 || len(o.Removed) > 0
 }
 
 func (m PacmanModule) IsPackageInstalled(packageName string, c *pkg.HostContext, runAs string) bool {
