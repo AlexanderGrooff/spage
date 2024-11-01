@@ -1,9 +1,20 @@
 ---
-- name: install yay
+- name: basic packages
   pacman:
     name:
-      - yay
-    state: present
+      - git
+      - man-db
+  run_as: root
+
+- name: git clone yay
+  git:
+    repo: https://aur.archlinux.org/yay.git
+    dest: /tmp/yay
+  register: yay_git
+
+- name: install yay
+  shell:
+    execute: cd {{ .yay_git.Dest }} && makepkg -si --noconfirm
 
 - name: install packages
   yay:

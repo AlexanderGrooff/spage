@@ -55,6 +55,7 @@ func TextToTasks(text []byte) ([]Task, error) {
 		"after",
 		"when",
 		"register",
+		"run_as",
 	}
 
 	var tasks []Task
@@ -68,6 +69,7 @@ func TextToTasks(text []byte) ([]Task, error) {
 			After:    getStringFromMap(block, "after"),
 			When:     getStringFromMap(block, "when"),
 			Register: getStringFromMap(block, "register"),
+			RunAs:    getStringFromMap(block, "run_as"),
 		}
 
 		var module Module

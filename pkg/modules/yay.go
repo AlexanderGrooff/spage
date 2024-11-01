@@ -33,8 +33,12 @@ type YayOutput struct {
 }
 
 func (i YayInput) ToCode() string {
-	return fmt.Sprintf("modules.YayInput{Name: []string{%q}}",
-		strings.Join(i.Name, ", "),
+	quotedStrings := make([]string, len(i.Name))
+	for idx, name := range i.Name {
+		quotedStrings[idx] = fmt.Sprintf("%q", name)
+	}
+	return fmt.Sprintf("modules.YayInput{Name: []string{%s}}",
+		strings.Join(quotedStrings, ", "),
 	)
 }
 
@@ -57,20 +61,20 @@ func (o YayOutput) Changed() bool {
 	return len(o.Installed) > 0
 }
 
-func IsPackageInstalled(packageName string, c *pkg.HostContext) bool {
-	_, _, err := c.RunCommand(fmt.Sprintf("yay -Qi %s", packageName))
+func IsPackageInstalled(packageName string, c *pkg.HostContext, runAs string) bool {
+	_, _, err := c.RunCommand(fmt.Sprintf("yay -Qi %s", packageName), runAs)
 	return err == nil
 }
 
-func (m YayModule) InstallPackages(packages []string, c *pkg.HostContext) (YayOutput, error) {
+func (m YayModule) InstallPackages(packages []string, c *pkg.HostContext, runAs string) (YayOutput, error) {
 	missingPackages := []string{}
 	for _, packageName := range packages {
-		if !IsPackageInstalled(packageName, c) {
+		if !IsPackageInstalled(packageName, c, runAs) {
 			missingPackages = append(missingPackages, packageName)
 		}
 	}
 	if len(missingPackages) > 0 {
-		stdout, stderr, err := c.RunCommand(fmt.Sprintf("yay -S --noconfirm %s", strings.Join(missingPackages, " ")))
+		stdout, stderr, err := c.RunCommand(fmt.Sprintf("yay -S --noconfirm %s", strings.Join(missingPackages, " ")), runAs)
 		if err != nil {
 			return YayOutput{
 				Stdout: stdout,
@@ -88,15 +92,15 @@ func (m YayModule) InstallPackages(packages []string, c *pkg.HostContext) (YayOu
 	return YayOutput{}, nil
 }
 
-func (m YayModule) RemovePackages(packages []string, c *pkg.HostContext) (YayOutput, error) {
+func (m YayModule) RemovePackages(packages []string, c *pkg.HostContext, runAs string) (YayOutput, error) {
 	presentPackages := []string{}
 	for _, packageName := range packages {
-		if IsPackageInstalled(packageName, c) {
+		if IsPackageInstalled(packageName, c, runAs) {
 			presentPackages = append(presentPackages, packageName)
 		}
 	}
 	if len(presentPackages) > 0 {
-		stdout, stderr, err := c.RunCommand(fmt.Sprintf("yay -Rns --noconfirm %s", strings.Join(presentPackages, " ")))
+		stdout, stderr, err := c.RunCommand(fmt.Sprintf("yay -Rns --noconfirm %s", strings.Join(presentPackages, " ")), runAs)
 		if err != nil {
 			return YayOutput{
 				Stdout: stdout,
@@ -113,23 +117,23 @@ func (m YayModule) RemovePackages(packages []string, c *pkg.HostContext) (YayOut
 	return YayOutput{}, nil
 }
 
-func (m YayModule) Execute(params pkg.ModuleInput, c *pkg.HostContext) (pkg.ModuleOutput, error) {
+func (m YayModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
 	packages := params.(YayInput).Name
 	state := params.(YayInput).State
 	if state == "absent" {
-		return m.RemovePackages(packages, c)
+		return m.RemovePackages(packages, c, runAs)
 	} else {
-		return m.InstallPackages(packages, c)
+		return m.InstallPackages(packages, c, runAs)
 	}
 }
 
-func (m YayModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput) (pkg.ModuleOutput, error) {
+func (m YayModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
 	previousPackages := previous.(YayOutput).Installed
 	state := params.(YayInput).State
 	if state == "absent" {
-		return m.InstallPackages(previousPackages, c)
+		return m.InstallPackages(previousPackages, c, runAs)
 	} else {
-		return m.RemovePackages(previousPackages, c)
+		return m.RemovePackages(previousPackages, c, runAs)
 	}
 }
 

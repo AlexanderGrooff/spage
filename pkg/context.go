@@ -49,22 +49,22 @@ func ReadLocalFile(filename string) (string, error) {
 	return string(data), nil
 }
 
-func (c HostContext) ReadFile(filename string) (string, error) {
+func (c HostContext) ReadFile(filename string, username string) (string, error) {
 	if c.Host.IsLocal {
 		return ReadLocalFile(filename)
 	}
-	return c.ReadRemoteFile(filename)
+	return c.ReadRemoteFile(filename, username)
 }
 
-func (c HostContext) ReadRemoteFile(filename string) (string, error) {
-	stdout, _, err := RunRemoteCommand(c.Host.Host, fmt.Sprintf("cat \"%s\"", filename))
+func (c HostContext) ReadRemoteFile(filename string, username string) (string, error) {
+	stdout, _, err := RunRemoteCommand(c.Host.Host, fmt.Sprintf("cat \"%s\"", filename), username)
 	if err != nil {
 		return "", err
 	}
 	return stdout, nil
 }
 
-func (c HostContext) WriteFile(filename, contents string) error {
+func (c HostContext) WriteFile(filename, contents, username string) error {
 	if c.Host.IsLocal {
 		return WriteLocalFile(filename, contents)
 	}
@@ -100,17 +100,24 @@ func WriteRemoteFile(host, remotePath, data string) error {
 	return nil
 }
 
-func (c HostContext) RunCommand(command string) (string, string, error) {
-	if c.Host.IsLocal {
-		return RunLocalCommand(command)
+func (c HostContext) RunCommand(command, username string) (string, string, error) {
+	if username == "" {
+		user, err := user.Current()
+		if err != nil {
+			return "", "", fmt.Errorf("failed to get current user: %v", err)
+		}
+		username = user.Username
 	}
-	return RunRemoteCommand(c.Host.Host, command)
+	if c.Host.IsLocal {
+		return RunLocalCommand(command, username)
+	}
+	return RunRemoteCommand(c.Host.Host, command, username)
 }
 
-func RunLocalCommand(command string) (string, string, error) {
+func RunLocalCommand(command, username string) (string, string, error) {
 	var stdout, stderr bytes.Buffer
 	var err error
-	cmd := exec.Command("bash", "-c", command)
+	cmd := exec.Command("sudo", "-nu", username, "bash", "-c", command)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -122,7 +129,7 @@ func RunLocalCommand(command string) (string, string, error) {
 	return stdout.String(), stderr.String(), nil
 }
 
-func RunRemoteCommand(host, command string) (string, string, error) {
+func RunRemoteCommand(host, command, username string) (string, string, error) {
 	// Get active SSH keys from ssh-agent
 	socket := os.Getenv("SSH_AUTH_SOCK")
 	conn, err := net.Dial("unix", socket)
@@ -130,11 +137,12 @@ func RunRemoteCommand(host, command string) (string, string, error) {
 		return "", "", fmt.Errorf("failed to open SSH_AUTH_SOCK: %v", err)
 	}
 	agentClient := agent.NewClient(conn)
-
 	user, err := user.Current()
 	if err != nil {
 		return "", "", fmt.Errorf("failed to get current user: %v", err)
 	}
+	// SSH as the current user
+	// TODO: fetch ssh from config/strategy
 	config := &ssh.ClientConfig{
 		User: user.Username,
 		Auth: []ssh.AuthMethod{
@@ -161,7 +169,8 @@ func RunRemoteCommand(host, command string) (string, string, error) {
 	var stdout, stderr bytes.Buffer
 	session.Stdout = &stdout
 	session.Stderr = &stderr
-	if err := session.Run(command); err != nil {
+	cmdAsUser := fmt.Sprintf("sudo -nu %s bash -c %q", username, command)
+	if err := session.Run(cmdAsUser); err != nil {
 		return stdout.String(), stderr.String(), fmt.Errorf("failed to run '%v' on host %s: %w", command, host, err)
 	}
 	return stdout.String(), stderr.String(), nil

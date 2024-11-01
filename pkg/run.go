@@ -56,7 +56,7 @@ func Execute(graph Graph, inventoryFile string) error {
 			hostname := result.Context.Host.Name
 			task := result.Task
 			c := result.Context
-			fmt.Printf("[%s - %s]:execute\n", c.Host.Host, task.Name)
+			fmt.Printf("[%s - %s]:execute\n", c.Host, task.Name)
 			c.History[task.Name] = result.Output
 			if task.Register != "" {
 				c.Facts[task.Register] = result.Output

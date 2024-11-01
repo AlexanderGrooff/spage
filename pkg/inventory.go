@@ -52,7 +52,6 @@ func LoadInventory(path string) (*Inventory, error) {
 	}
 	for name, host := range inventory.Hosts {
 		host.Name = name
-		DebugOutput("Setting name for host %q to %q", name, host.Name)
 		inventory.Hosts[name] = host
 	}
 	return &inventory, nil

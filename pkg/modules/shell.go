@@ -56,13 +56,13 @@ func (o ShellOutput) Changed() bool {
 	return true
 }
 
-func (m ShellModule) templateAndExecute(command string, c *pkg.HostContext, prev ShellOutput) (ShellOutput, error) {
+func (m ShellModule) templateAndExecute(command string, c *pkg.HostContext, prev ShellOutput, runAs string) (ShellOutput, error) {
 	var err error
 	templatedCmd, err := pkg.TemplateString(command, c.Facts.Add("Previous", prev))
 	if err != nil {
 		return ShellOutput{}, err
 	}
-	stdout, stderr, err := c.RunCommand(templatedCmd)
+	stdout, stderr, err := c.RunCommand(templatedCmd, runAs)
 	output := ShellOutput{
 		Stdout:  stdout,
 		Stderr:  stderr,
@@ -72,12 +72,12 @@ func (m ShellModule) templateAndExecute(command string, c *pkg.HostContext, prev
 	return output, err
 }
 
-func (m ShellModule) Execute(params pkg.ModuleInput, c *pkg.HostContext) (pkg.ModuleOutput, error) {
+func (m ShellModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
 	shellParams := params.(ShellInput)
-	return m.templateAndExecute(shellParams.Execute, c, ShellOutput{})
+	return m.templateAndExecute(shellParams.Execute, c, ShellOutput{}, runAs)
 }
 
-func (m ShellModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput) (pkg.ModuleOutput, error) {
+func (m ShellModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
 	shellParams := params.(ShellInput)
 	var prev ShellOutput
 	if previous != nil {
@@ -85,7 +85,7 @@ func (m ShellModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous
 	} else {
 		prev = ShellOutput{}
 	}
-	return m.templateAndExecute(shellParams.Revert, c, prev)
+	return m.templateAndExecute(shellParams.Revert, c, prev, runAs)
 }
 
 func init() {

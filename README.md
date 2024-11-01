@@ -13,6 +13,7 @@ TODO:
 - Implement validation step
 - Add revert conditions `revert_when`
 - Make template variables case insensitive
+- Allow variables to not start with a dot
 - Should we compile assets (templates, files) along with the code?
 - Hook up host facts like release, os, etc.
 

@@ -69,7 +69,7 @@ func (o TemplateOutput) Changed() bool {
 	return o.OriginalContents != o.NewContents
 }
 
-func (m TemplateModule) templateContentsToFile(src, dest string, c *pkg.HostContext) (string, string, error) {
+func (m TemplateModule) templateContentsToFile(src, dest string, c *pkg.HostContext, runAs string) (string, string, error) {
 	// Get contents from src
 	contents, err := pkg.ReadTemplateFile(src)
 	if err != nil {
@@ -80,20 +80,20 @@ func (m TemplateModule) templateContentsToFile(src, dest string, c *pkg.HostCont
 		return "", "", err
 	}
 
-	originalContents, err := c.ReadFile(dest)
+	originalContents, err := c.ReadFile(dest, runAs)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to read original contents of %s: %s", dest, err)
 	}
-	if err := c.WriteFile(dest, templatedContents); err != nil {
+	if err := c.WriteFile(dest, templatedContents, runAs); err != nil {
 		return "", "", fmt.Errorf("failed to write to file %s: %v", dest, err)
 	}
 
 	return originalContents, templatedContents, nil
 }
 
-func (m TemplateModule) Execute(params pkg.ModuleInput, c *pkg.HostContext) (pkg.ModuleOutput, error) {
+func (m TemplateModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
 	p := params.(TemplateInput)
-	original, new, err := m.templateContentsToFile(p.Src, p.Dest, c)
+	original, new, err := m.templateContentsToFile(p.Src, p.Dest, c, runAs)
 	if err != nil {
 		return nil, err
 	}
@@ -103,13 +103,13 @@ func (m TemplateModule) Execute(params pkg.ModuleInput, c *pkg.HostContext) (pkg
 	}, nil
 }
 
-func (m TemplateModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput) (pkg.ModuleOutput, error) {
+func (m TemplateModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
 	// TODO: delete if previously created?
 	p := params.(TemplateInput)
 	if previous != nil {
 		prev := previous.(TemplateOutput)
 		if prev.Changed() {
-			if err := c.WriteFile(p.Dest, prev.OriginalContents); err != nil {
+			if err := c.WriteFile(p.Dest, prev.OriginalContents, runAs); err != nil {
 				return TemplateOutput{}, fmt.Errorf("failed to place back original contents in %s", p.Dest)
 			}
 		}

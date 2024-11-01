@@ -21,15 +21,17 @@ type Task struct {
 	After    string      `yaml:"after"`
 	When     string      `yaml:"when"`
 	Register string      `yaml:"register"`
+	RunAs    string      `yaml:"run_as"`
 }
 
 func (t Task) ToCode(ident int) string {
-	return fmt.Sprintf("%s{Name: %q, Module: %q, Register: %q, Params: %s,},\n",
+	return fmt.Sprintf("%s{Name: %q, Module: %q, Register: %q, Params: %s, RunAs: %q},\n",
 		Indent(ident),
 		t.Name,
 		t.Module,
 		t.Register,
 		t.Params.ToCode(),
+		t.RunAs,
 	)
 }
 
@@ -45,35 +47,21 @@ func (t Task) ExecuteModule(c *HostContext) TaskResult {
 		r.Error = fmt.Errorf("module %s not found", t.Module)
 		return r
 	}
-	output, err := module.Execute(t.Params, c)
-	r.Error = err
-	moduleOutput, ok := output.(ModuleOutput)
-	if !ok {
-		r.Error = fmt.Errorf("module %s did not return a valid ModuleOutput", t.Module)
-	} else {
-		r.Output = moduleOutput
-	}
+	r.Output, r.Error = module.Execute(t.Params, c, t.RunAs)
 	DebugOutput("Completed task %q on %q", t.Name, c.Host)
 	return r
 }
 
 func (t Task) RevertModule(c *HostContext) TaskResult {
 	r := TaskResult{Task: t, Context: c}
-	fmt.Printf("[%s - %s]:revert\n", c.Host.Host, t.Name)
+	fmt.Printf("[%s - %s]:revert\n", c.Host, t.Name)
 	module, ok := GetModule(t.Module)
 	if !ok {
 		r.Error = fmt.Errorf("module %s not found", t.Module)
 		return r
 	}
 	previous := c.History[t.Name]
-	output, err := module.Revert(t.Params, c, previous)
-	r.Error = err
-	moduleOutput, ok := output.(ModuleOutput)
-	if !ok {
-		r.Error = fmt.Errorf("module %s did not return a valid ModuleOutput", t.Module)
-	} else {
-		r.Output = moduleOutput
-	}
+	r.Output, r.Error = module.Revert(t.Params, c, previous, t.RunAs)
 	return r
 }
 
