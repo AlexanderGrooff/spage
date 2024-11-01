@@ -1,5 +1,13 @@
 ---
+- name: install yay
+  pacman:
+    name:
+      - yay
+    state: present
+
 - name: install packages
   yay:
     name:
       - nomad
+    state: present
+  after: install yay

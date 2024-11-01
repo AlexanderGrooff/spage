@@ -62,7 +62,7 @@ func IsPackageInstalled(packageName string, c *pkg.HostContext) bool {
 	return err == nil
 }
 
-func InstallPackages(packages []string, c *pkg.HostContext) (YayOutput, error) {
+func (m YayModule) InstallPackages(packages []string, c *pkg.HostContext) (YayOutput, error) {
 	missingPackages := []string{}
 	for _, packageName := range packages {
 		if !IsPackageInstalled(packageName, c) {
@@ -88,7 +88,7 @@ func InstallPackages(packages []string, c *pkg.HostContext) (YayOutput, error) {
 	return YayOutput{}, nil
 }
 
-func RemovePackages(packages []string, c *pkg.HostContext) (YayOutput, error) {
+func (m YayModule) RemovePackages(packages []string, c *pkg.HostContext) (YayOutput, error) {
 	presentPackages := []string{}
 	for _, packageName := range packages {
 		if IsPackageInstalled(packageName, c) {
@@ -113,23 +113,23 @@ func RemovePackages(packages []string, c *pkg.HostContext) (YayOutput, error) {
 	return YayOutput{}, nil
 }
 
-func (s YayModule) Execute(params pkg.ModuleInput, c *pkg.HostContext) (pkg.ModuleOutput, error) {
+func (m YayModule) Execute(params pkg.ModuleInput, c *pkg.HostContext) (pkg.ModuleOutput, error) {
 	packages := params.(YayInput).Name
 	state := params.(YayInput).State
 	if state == "absent" {
-		return RemovePackages(packages, c)
+		return m.RemovePackages(packages, c)
 	} else {
-		return InstallPackages(packages, c)
+		return m.InstallPackages(packages, c)
 	}
 }
 
-func (s YayModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput) (pkg.ModuleOutput, error) {
+func (m YayModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput) (pkg.ModuleOutput, error) {
 	previousPackages := previous.(YayOutput).Installed
 	state := params.(YayInput).State
 	if state == "absent" {
-		return InstallPackages(previousPackages, c)
+		return m.InstallPackages(previousPackages, c)
 	} else {
-		return RemovePackages(previousPackages, c)
+		return m.RemovePackages(previousPackages, c)
 	}
 }
 
