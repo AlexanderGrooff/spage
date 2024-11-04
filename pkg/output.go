@@ -13,6 +13,8 @@ func PPrintOutput(output ModuleOutput, err error) {
 		} else {
 			fmt.Printf("\033[31m%s\033[0m\n", output.String())
 		}
+	} else if output == nil {
+		fmt.Printf("  \033[34mSkipped\033[0m\n")
 	} else if output.Changed() {
 		// Yellow
 		fmt.Printf("\033[33m%s\033[0m\n", output.String())

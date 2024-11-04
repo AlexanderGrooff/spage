@@ -2,6 +2,8 @@ package pkg
 
 import (
 	"fmt"
+
+	"github.com/flosch/pongo2"
 )
 
 // Useful for having a single type to pass around in channels
@@ -43,11 +45,17 @@ func (t Task) String() string {
 func (t Task) ShouldExecute(c *HostContext) bool {
 	if t.When != "" {
 		templatedWhen, err := TemplateString(t.When, c.Facts)
-		DebugOutput("Evaluating when condition %q: %q", t.When, templatedWhen)
+		pythonResult := pongo2.AsValue(templatedWhen)
+		DebugOutput("Evaluating when condition %q: %q, %v", t.When, templatedWhen, pythonResult.IsTrue())
 		if err != nil {
 			DebugOutput("Error evaluating when condition %q: %s", t.When, err)
 			return false
 		}
+		// TODO: this is a hack to handle the fact that pongo2 returns a python boolean as a string
+		if pythonResult.String() == "False" || pythonResult.String() == "None" {
+			return false
+		}
+		return pythonResult.IsTrue()
 	}
 	return true
 }

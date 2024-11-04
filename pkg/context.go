@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"reflect"
 	"regexp"
 
 	"github.com/flosch/pongo2"
@@ -27,10 +28,27 @@ func (f *Facts) Add(k string, v ModuleOutput) Facts {
 	return *f
 }
 
+func ToJinja2(o ModuleOutput) pongo2.Context {
+	ctx := pongo2.Context{
+		"changed": o.Changed(),
+	}
+	// Add all fields from the ModuleOutput struct
+	v := reflect.ValueOf(o)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	t := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		field := t.Field(i)
+		ctx[field.Name] = v.Field(i).Interface()
+	}
+	return ctx
+}
+
 func (f Facts) ToJinja2() pongo2.Context {
 	ctx := pongo2.Context{}
 	for k, v := range f {
-		ctx[k] = v
+		ctx[k] = ToJinja2(v)
 	}
 	return ctx
 }
@@ -193,6 +211,9 @@ func TemplateString(s string, additionalVars ...Facts) (string, error) {
 	for _, v := range additionalVars {
 		allVars.Merge(v)
 	}
+
+	DebugOutput("Template: %q", s)
+	DebugOutput("Variables: %v", allVars.ToJinja2())
 
 	var buf bytes.Buffer
 	if err := tmpl.ExecuteWriter(allVars.ToJinja2(), &buf); err != nil {
