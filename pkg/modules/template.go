@@ -42,11 +42,11 @@ func (i TemplateInput) GetVariableUsage() []string {
 	// TODO: what if the filename itself is templated? Then we cannot read the file until we have context
 	template, err := pkg.ReadTemplateFile(i.Src)
 	if err == nil {
-		usedVars = append(usedVars, pkg.GetVariableUsageFromString(template)...)
+		usedVars = append(usedVars, pkg.GetVariableUsageFromTemplate(template)...)
 	}
 	// Get variables from filenames
-	usedVars = append(usedVars, pkg.GetVariableUsageFromString(i.Src)...)
-	usedVars = append(usedVars, pkg.GetVariableUsageFromString(i.Dest)...)
+	usedVars = append(usedVars, pkg.GetVariableUsageFromTemplate(i.Src)...)
+	usedVars = append(usedVars, pkg.GetVariableUsageFromTemplate(i.Dest)...)
 	return usedVars
 }
 

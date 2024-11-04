@@ -43,7 +43,7 @@ func (i YayInput) ToCode() string {
 }
 
 func (i YayInput) GetVariableUsage() []string {
-	return pkg.GetVariableUsageFromString(strings.Join(i.Name, " "))
+	return pkg.GetVariableUsageFromTemplate(strings.Join(i.Name, " "))
 }
 
 func (i YayInput) Validate() error {

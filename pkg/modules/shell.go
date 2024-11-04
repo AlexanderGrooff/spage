@@ -38,7 +38,7 @@ func (i ShellInput) ToCode() string {
 }
 
 func (i ShellInput) GetVariableUsage() []string {
-	return append(pkg.GetVariableUsageFromString(i.Execute), pkg.GetVariableUsageFromString(i.Revert)...)
+	return append(pkg.GetVariableUsageFromTemplate(i.Execute), pkg.GetVariableUsageFromTemplate(i.Revert)...)
 }
 
 func (i ShellInput) Validate() error {

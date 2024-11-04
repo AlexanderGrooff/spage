@@ -41,9 +41,9 @@ func (i GitInput) ToCode() string {
 }
 func (i GitInput) GetVariableUsage() []string {
 	appendVars := func(vars []string, str string) []string {
-		return append(vars, pkg.GetVariableUsageFromString(str)...)
+		return append(vars, pkg.GetVariableUsageFromTemplate(str)...)
 	}
-	vars := pkg.GetVariableUsageFromString(i.Repo)
+	vars := pkg.GetVariableUsageFromTemplate(i.Repo)
 	vars = appendVars(vars, i.Dest)
 	vars = appendVars(vars, i.Version)
 	return vars

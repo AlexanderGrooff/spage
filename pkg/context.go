@@ -144,14 +144,14 @@ func RunRemoteCommand(host, command, username string) (string, string, error) {
 		return "", "", fmt.Errorf("failed to open SSH_AUTH_SOCK: %v", err)
 	}
 	agentClient := agent.NewClient(conn)
-	user, err := user.Current()
+	currentUser, err := user.Current()
 	if err != nil {
 		return "", "", fmt.Errorf("failed to get current user: %v", err)
 	}
 	// SSH as the current user
 	// TODO: fetch ssh from config/strategy
 	config := &ssh.ClientConfig{
-		User: user.Username,
+		User: currentUser.Username,
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeysCallback(agentClient.Signers),
 		},
@@ -184,7 +184,6 @@ func RunRemoteCommand(host, command, username string) (string, string, error) {
 }
 
 func TemplateString(s string, additionalVars ...Facts) (string, error) {
-	// Create a new pongo2 template
 	tmpl, err := pongo2.FromString(s)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse template: %v", err)
@@ -203,14 +202,37 @@ func TemplateString(s string, additionalVars ...Facts) (string, error) {
 	return buf.String(), nil
 }
 
-func GetVariableUsageFromString(s string) []string {
-	// TODO: this catches everything between the brackets, but we only want variables
-	re := regexp.MustCompile(`{{\s*([^{}\s]+)\s*}}`)
-	matches := re.FindAllStringSubmatch(s, -1)
+func getVariablesFromJinjaString(jinjaString string) []string {
+	// TODO: this parses the string within jinja brackets. Add the rest of the Jinja grammar
+	filterApplication := regexp.MustCompile(`(.+) | (.+)`)
+	attributeVariable := regexp.MustCompile(`(.+)\.(.+)`)
+
+	var vars []string
+	if filterApplication.MatchString(jinjaString) {
+		DebugOutput("Found Jinja filter %v", jinjaString)
+		for _, match := range filterApplication.FindAllStringSubmatch(jinjaString, -1) {
+			vars = append(vars, getVariablesFromJinjaString(match[1])...)
+		}
+		return vars
+	}
+	if attributeVariable.MatchString(jinjaString) {
+		DebugOutput("Found Jinja subattribute %v", jinjaString)
+		for _, match := range attributeVariable.FindAllStringSubmatch(jinjaString, -1) {
+			vars = append(vars, getVariablesFromJinjaString(match[1])...)
+		}
+		return vars
+	}
+	return append(vars, jinjaString)
+}
+
+func GetVariableUsageFromTemplate(s string) []string {
+	everythingBetweenBrackets := regexp.MustCompile(`{{\s*([^{}\s]+)\s*}}`)
+	matches := everythingBetweenBrackets.FindAllStringSubmatch(s, -1)
 
 	var vars []string
 	for _, match := range matches {
-		vars = append(vars, match[1])
+		jinjaVariables := getVariablesFromJinjaString(match[1])
+		vars = append(vars, jinjaVariables...)
 	}
 	return vars
 }

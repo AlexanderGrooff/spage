@@ -43,7 +43,7 @@ func (i PacmanInput) ToCode() string {
 }
 
 func (i PacmanInput) GetVariableUsage() []string {
-	return pkg.GetVariableUsageFromString(strings.Join(i.Name, " "))
+	return pkg.GetVariableUsageFromTemplate(strings.Join(i.Name, " "))
 }
 
 func (i PacmanInput) Validate() error {
