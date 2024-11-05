@@ -50,16 +50,20 @@ func LoadInventory(path string) (*Inventory, error) {
 	}
 	for groupName, group := range inventory.Groups {
 		for name, host := range group.Hosts {
+			if inventory.Hosts[name] != nil {
+				DebugOutput("Host %q already in inventory", name)
+				for k, v := range group.Vars {
+					inventory.Hosts[name].Vars[k] = v
+				}
+				continue
+			}
 			DebugOutput("Adding host %q to inventory from group %q", name, groupName)
 			host.Name = name
 			if host.Vars == nil {
 				host.Vars = make(map[string]interface{})
 			}
 
-			if inventory.Hosts[name] == nil {
-				inventory.Hosts[name] = host
-
-			}
+			inventory.Hosts[name] = host
 			for k, v := range group.Vars {
 				inventory.Hosts[name].Vars[k] = v
 			}
