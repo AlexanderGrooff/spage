@@ -32,9 +32,10 @@ func (s SystemdState) Equal(other SystemdState) bool {
 }
 
 type SystemdInput struct {
-	Name    string `yaml:"name"`
-	State   string `yaml:"state"`
-	Enabled bool   `yaml:"enabled"`
+	Name         string `yaml:"name"`
+	State        string `yaml:"state"`
+	Enabled      bool   `yaml:"enabled"`
+	DaemonReload bool   `yaml:"daemon_reload"`
 	pkg.ModuleInput
 }
 
@@ -45,10 +46,11 @@ type SystemdOutput struct {
 }
 
 func (i SystemdInput) ToCode() string {
-	return fmt.Sprintf("modules.SystemdInput{Name: %q, State: %q, Enabled: %v}",
+	return fmt.Sprintf("modules.SystemdInput{Name: %q, State: %q, Enabled: %v, DaemonReload: %v}",
 		i.Name,
 		i.State,
 		i.Enabled,
+		i.DaemonReload,
 	)
 }
 
@@ -77,7 +79,7 @@ func (o SystemdOutput) Changed() bool {
 func (m SystemdModule) getCurrentState(name string, c *pkg.HostContext, runAs string) (SystemdState, error) {
 	stdout, _, err := c.RunCommand(fmt.Sprintf("systemctl is-enabled %s", name), runAs)
 	if err != nil {
-		return SystemdState{}, err
+		return SystemdState{Enabled: false}, nil
 	}
 	return SystemdState{Enabled: strings.TrimSpace(stdout) == "enabled"}, nil
 }
@@ -102,26 +104,41 @@ func (m SystemdModule) Disable(name string, c *pkg.HostContext, runAs string) er
 	return err
 }
 
+func (m SystemdModule) DaemonReload(c *pkg.HostContext, runAs string) error {
+	_, _, err := c.RunCommand("systemctl daemon-reload", runAs)
+	return err
+}
+
 func (m SystemdModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
 	systemdParams := params.(SystemdInput)
 	stateBeforeExecute, err := m.getCurrentState(systemdParams.Name, c, runAs)
-	currentState := SystemdState{}
 	if err != nil {
-		return nil, err
+		return SystemdOutput{}, err
+	}
+	if systemdParams.DaemonReload {
+		err := m.DaemonReload(c, runAs)
+		if err != nil {
+			return SystemdOutput{}, err
+		}
 	}
 	if systemdParams.Enabled && !stateBeforeExecute.Enabled {
 		err := m.Enable(systemdParams.Name, c, runAs)
 		if err != nil {
-			return nil, err
+			return SystemdOutput{}, err
 		}
-		currentState.Enabled = true
 	}
 	if systemdParams.State == "started" && !stateBeforeExecute.Started {
 		err := m.Start(systemdParams.Name, c, runAs)
 		if err != nil {
-			return nil, err
+			return SystemdOutput{}, err
 		}
-		currentState.Started = true
+	}
+	currentState, err := m.getCurrentState(systemdParams.Name, c, runAs)
+	if err != nil {
+		return SystemdOutput{}, err
+	}
+	if systemdParams.State == "started" && !currentState.Started {
+		return SystemdOutput{}, fmt.Errorf("failed to start service %q", systemdParams.Name)
 	}
 	return SystemdOutput{
 		PreviousState: stateBeforeExecute,
@@ -134,17 +151,23 @@ func (m SystemdModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previo
 	originalState := previous.(SystemdOutput).PreviousState
 	stateBeforeRevert, err := m.getCurrentState(systemdParams.Name, c, runAs)
 	if err != nil {
-		return nil, err
+		return SystemdOutput{}, err
+	}
+	if systemdParams.DaemonReload {
+		err := m.DaemonReload(c, runAs)
+		if err != nil {
+			return SystemdOutput{}, err
+		}
 	}
 	if systemdParams.Enabled && !originalState.Enabled {
 		err := m.Disable(systemdParams.Name, c, runAs)
 		if err != nil {
-			return nil, err
+			return SystemdOutput{}, err
 		}
 	}
 	stateAfterRevert, err := m.getCurrentState(systemdParams.Name, c, runAs)
 	if err != nil {
-		return nil, err
+		return SystemdOutput{}, err
 	}
 	return SystemdOutput{
 		PreviousState: stateBeforeRevert,
