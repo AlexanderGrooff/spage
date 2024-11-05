@@ -56,5 +56,5 @@ func main() {
 	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/pkg/modules"`)
 	fmt.Fprintln(f, ")")
 	fmt.Fprintln(f)
-	fmt.Fprintln(f, graph.ToCode())
+	fmt.Fprintf(f, graph.ToCode())
 }
