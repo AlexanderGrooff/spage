@@ -75,7 +75,7 @@ func (m TemplateModule) templateContentsToFile(src, dest string, c *pkg.HostCont
 	if err != nil {
 		return "", "", fmt.Errorf("failed to read template file %s: %v", src, err)
 	}
-	templatedContents, err := pkg.TemplateString(contents)
+	templatedContents, err := pkg.TemplateString(contents, c.Facts)
 	if err != nil {
 		return "", "", err
 	}
