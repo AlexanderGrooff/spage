@@ -6,21 +6,25 @@ import (
 )
 
 func Execute(graph Graph, inventoryFile string) error {
-	var contexts map[string]*HostContext
+	var inventory *Inventory
+	var err error
 	if inventoryFile == "" {
-		contexts = make(map[string]*HostContext)
 		fmt.Printf("No inventory file specified. Assuming target is this machine\n")
-		contexts["localhost"] = &HostContext{Host: Host{Name: "localhost", IsLocal: true, Host: "localhost"}, Facts: make(Facts), History: make(map[string]ModuleOutput)}
+		inventory = &Inventory{Hosts: map[string]*Host{"localhost": {Name: "localhost", IsLocal: true, Host: "localhost"}}}
 	} else {
-		inventory, err := LoadInventory(inventoryFile)
+		inventory, err = LoadInventory(inventoryFile)
 		if err != nil {
 			return fmt.Errorf("failed to load inventory: %w", err)
 		}
 		DebugOutput("Getting contexts for run from inventory %+v", inventory)
-		contexts, err = inventory.GetContextForRun()
-		if err != nil {
-			return fmt.Errorf("failed to get contexts for run: %w", err)
-		}
+	}
+
+	if err := graph.CheckInventoryForRequiredInputs(inventory); err != nil {
+		return fmt.Errorf("failed to check inventory for required inputs: %w", err)
+	}
+	contexts, err := inventory.GetContextForRun()
+	if err != nil {
+		return fmt.Errorf("failed to get contexts for run: %w", err)
 	}
 
 	var executedOnHost []map[string][]Task
@@ -59,7 +63,7 @@ func Execute(graph Graph, inventoryFile string) error {
 			fmt.Printf("[%s - %s]:execute\n", c.Host, task.Name)
 			c.History[task.Name] = result.Output
 			if task.Register != "" {
-				c.Facts[task.Register] = result.Output
+				c.Facts[task.Register] = OutputToFacts(result.Output)
 			}
 			executedOnHost[executionLevel][hostname] = append(executedOnHost[executionLevel][hostname], task)
 			PPrintOutput(result.Output, result.Error)

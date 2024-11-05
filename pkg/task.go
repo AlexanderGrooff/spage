@@ -93,9 +93,3 @@ func (t Task) RevertModule(c *HostContext) TaskResult {
 	r.Output, r.Error = module.Revert(t.Params, c, previous, t.RunAs)
 	return r
 }
-
-func (t Task) GetVariableUsage() []string {
-	usedVars := []string{}
-
-	return usedVars
-}

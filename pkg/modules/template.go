@@ -80,10 +80,7 @@ func (m TemplateModule) templateContentsToFile(src, dest string, c *pkg.HostCont
 		return "", "", err
 	}
 
-	originalContents, err := c.ReadFile(dest, runAs)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to read original contents of %s: %s", dest, err)
-	}
+	originalContents, _ := c.ReadFile(dest, runAs)
 	if err := c.WriteFile(dest, templatedContents, runAs); err != nil {
 		return "", "", fmt.Errorf("failed to write to file %s: %v", dest, err)
 	}

@@ -3,19 +3,15 @@ package pkg
 import (
 	"bytes"
 	"fmt"
-	"net"
 	"os"
-	"os/exec"
 	"os/user"
-	"reflect"
 	"regexp"
 
 	"github.com/flosch/pongo2"
-	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/agent"
 )
 
-type Facts map[string]ModuleOutput
+type History map[string]ModuleOutput
+type Facts map[string]interface{}
 
 func (f *Facts) Merge(other Facts) {
 	for key, value := range other {
@@ -28,35 +24,19 @@ func (f *Facts) Add(k string, v ModuleOutput) Facts {
 	return *f
 }
 
-func ToJinja2(o ModuleOutput) pongo2.Context {
-	ctx := pongo2.Context{
-		"changed": o.Changed(),
-	}
-	// Add all fields from the ModuleOutput struct
-	v := reflect.ValueOf(o)
-	if v.Kind() == reflect.Ptr {
-		v = v.Elem()
-	}
-	t := v.Type()
-	for i := 0; i < v.NumField(); i++ {
-		field := t.Field(i)
-		ctx[field.Name] = v.Field(i).Interface()
-	}
-	return ctx
-}
-
 func (f Facts) ToJinja2() pongo2.Context {
+	// TODO: handle Changed()
 	ctx := pongo2.Context{}
 	for k, v := range f {
-		ctx[k] = ToJinja2(v)
+		ctx[k] = v
 	}
 	return ctx
 }
 
 type HostContext struct {
-	Host    Host
+	Host    *Host
 	Facts   Facts
-	History map[string]ModuleOutput
+	History History
 }
 
 func ReadTemplateFile(filename string) (string, error) {
@@ -93,36 +73,7 @@ func (c HostContext) WriteFile(filename, contents, username string) error {
 	if c.Host.IsLocal {
 		return WriteLocalFile(filename, contents)
 	}
-	return WriteRemoteFile(c.Host.Host, filename, contents)
-}
-
-func WriteLocalFile(filename string, data string) error {
-	return os.WriteFile(filename, []byte(data), 0644)
-}
-
-func WriteRemoteFile(host, remotePath, data string) error {
-	tmpFile, err := os.CreateTemp("", "tempfile")
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %v", err)
-	}
-	defer os.Remove(tmpFile.Name())
-
-	if _, err := tmpFile.Write([]byte(data)); err != nil {
-		return fmt.Errorf("failed to write to temp file: %v", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("failed to close temp file: %v", err)
-	}
-
-	cmd := exec.Command("scp", tmpFile.Name(), fmt.Sprintf("%s:%s", host, remotePath))
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to execute scp command: %v, %s", err, stderr.String())
-	}
-
-	return nil
+	return WriteRemoteFile(c.Host.Host, filename, contents, username)
 }
 
 func (c HostContext) RunCommand(command, username string) (string, string, error) {
@@ -139,68 +90,6 @@ func (c HostContext) RunCommand(command, username string) (string, string, error
 	return RunRemoteCommand(c.Host.Host, command, username)
 }
 
-func RunLocalCommand(command, username string) (string, string, error) {
-	var stdout, stderr bytes.Buffer
-	var err error
-	cmd := exec.Command("sudo", "-nu", username, "bash", "-c", command)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
-	if err != nil {
-		return stdout.String(), stderr.String(), fmt.Errorf("failed to execute command %q: %v", command, err)
-	}
-
-	return stdout.String(), stderr.String(), nil
-}
-
-func RunRemoteCommand(host, command, username string) (string, string, error) {
-	// Get active SSH keys from ssh-agent
-	socket := os.Getenv("SSH_AUTH_SOCK")
-	conn, err := net.Dial("unix", socket)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to open SSH_AUTH_SOCK: %v", err)
-	}
-	agentClient := agent.NewClient(conn)
-	currentUser, err := user.Current()
-	if err != nil {
-		return "", "", fmt.Errorf("failed to get current user: %v", err)
-	}
-	// SSH as the current user
-	// TODO: fetch ssh from config/strategy
-	config := &ssh.ClientConfig{
-		User: currentUser.Username,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeysCallback(agentClient.Signers),
-		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	}
-	client, err := ssh.Dial("tcp", net.JoinHostPort(host, "22"), config)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to dial host %s: %w", host, err)
-	}
-	defer client.Close()
-
-	// Each ClientConn can support multiple interactive sessions,
-	// represented by a Session. It's one session per command.
-	session, err := client.NewSession()
-	if err != nil {
-		return "", "", fmt.Errorf("failed to create ssh session to %s: %w", host, err)
-	}
-	defer session.Close()
-
-	// Once a Session is created, you can execute a single command on
-	// the remote side using the Run method.
-	var stdout, stderr bytes.Buffer
-	session.Stdout = &stdout
-	session.Stderr = &stderr
-	cmdAsUser := fmt.Sprintf("sudo -nu %s bash -c %q", username, command)
-	if err := session.Run(cmdAsUser); err != nil {
-		return stdout.String(), stderr.String(), fmt.Errorf("failed to run '%v' on host %s: %w", command, host, err)
-	}
-	return stdout.String(), stderr.String(), nil
-}
-
 func TemplateString(s string, additionalVars ...Facts) (string, error) {
 	tmpl, err := pongo2.FromString(s)
 	if err != nil {
@@ -214,7 +103,6 @@ func TemplateString(s string, additionalVars ...Facts) (string, error) {
 
 	DebugOutput("Template: %q", s)
 	DebugOutput("Variables: %v", allVars.ToJinja2())
-
 	var buf bytes.Buffer
 	if err := tmpl.ExecuteWriter(allVars.ToJinja2(), &buf); err != nil {
 		return "", fmt.Errorf("failed to execute template: %v", err)

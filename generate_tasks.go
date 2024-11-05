@@ -56,17 +56,5 @@ func main() {
 	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/pkg/modules"`)
 	fmt.Fprintln(f, ")")
 	fmt.Fprintln(f)
-	fmt.Fprintln(f, "var Graph = pkg.Graph{")
-	fmt.Fprintf(f, "%sTasks: [][]pkg.Task{\n", pkg.Indent(1))
-
-	for _, taskExecutionLevel := range graph.Tasks {
-		fmt.Fprintf(f, "%s[]pkg.Task{\n", pkg.Indent(2))
-		for _, task := range taskExecutionLevel {
-			fmt.Fprintf(f, "%s", task.ToCode(3))
-		}
-		fmt.Fprintf(f, "%s},\n", pkg.Indent(2))
-	}
-
-	fmt.Fprintf(f, "%s},\n", pkg.Indent(1))
-	fmt.Fprintln(f, "}")
+	fmt.Fprintln(f, graph.ToCode())
 }

@@ -11,8 +11,8 @@ var SpecialVars = []string{
 }
 
 type Graph struct {
-	Sequential bool
-	Tasks      [][]Task
+	RequiredInputs []string
+	Tasks          [][]Task
 }
 
 func (g Graph) String() string {
@@ -23,11 +23,38 @@ func (g Graph) String() string {
 			fmt.Fprintf(&b, "---- %s\n", task.Name)
 		}
 	}
+	fmt.Fprintf(&b, "Required inputs:\n")
+	for _, input := range g.RequiredInputs {
+		fmt.Fprintf(&b, "  - %s\n", input)
+	}
 	return b.String()
 }
 
+func (g Graph) ToCode() string {
+	var f strings.Builder
+	fmt.Fprintln(&f, "var Graph = pkg.Graph{")
+	fmt.Fprintf(&f, "%sRequiredInputs: []string{\n", Indent(1))
+	for _, input := range g.RequiredInputs {
+		fmt.Fprintf(&f, "%s  %q,\n", Indent(2), input)
+	}
+	fmt.Fprintf(&f, "%s},\n", Indent(1))
+	fmt.Fprintf(&f, "%sTasks: [][]pkg.Task{\n", Indent(1))
+
+	for _, taskExecutionLevel := range g.Tasks {
+		fmt.Fprintf(&f, "%s[]pkg.Task{\n", Indent(2))
+		for _, task := range taskExecutionLevel {
+			fmt.Fprintf(&f, "%s", task.ToCode(3))
+		}
+		fmt.Fprintf(&f, "%s},\n", Indent(2))
+	}
+
+	fmt.Fprintf(&f, "%s},\n", Indent(1))
+	fmt.Fprintln(&f, "}")
+	return f.String()
+}
+
 func NewGraph(tasks []Task) (Graph, error) {
-	g := Graph{}
+	g := Graph{RequiredInputs: []string{}}
 	dependsOn := map[string][]string{}
 	taskNameMapping := map[string]Task{}
 	dependsOnVariables := map[string][]string{}
@@ -65,7 +92,8 @@ func NewGraph(tasks []Task) (Graph, error) {
 			providingTask, ok := variableProvidedBy[varName]
 			if !ok {
 				if !containsInSlice(SpecialVars, varName) {
-					return Graph{}, fmt.Errorf("no task found that provides variable %q for task %q", varName, taskName)
+					DebugOutput("no task found that provides variable %q for task %q", varName, taskName)
+					g.RequiredInputs = append(g.RequiredInputs, varName)
 				}
 			} else {
 				DebugOutput("Found that task %q depends on %q for variable %q", taskName, providingTask, varName)
@@ -123,5 +151,18 @@ func checkCycle(taskName string, dependsOn map[string][]string, visited, recStac
 		}
 	}
 	recStack[taskName] = false
+	return nil
+}
+
+func (g Graph) CheckInventoryForRequiredInputs(inventory *Inventory) error {
+	DebugOutput("Checking inventory for required inputs %+v", inventory)
+	for _, host := range inventory.Hosts {
+		for _, input := range g.RequiredInputs {
+			DebugOutput("Checking if required input %q is present in inventory for host %q", input, host.Name)
+			if _, ok := host.Vars[input]; !ok {
+				return fmt.Errorf("required input %q not found in inventory for host %q", input, host.Name)
+			}
+		}
+	}
 	return nil
 }
