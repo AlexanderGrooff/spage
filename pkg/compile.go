@@ -74,6 +74,7 @@ func TextToTasks(text []byte) ([]Task, error) {
 
 		var module Module
 		var moduleParams interface{}
+		var errored bool
 		for k, v := range block {
 			if !containsInSlice(arguments, k) {
 				if m, ok := GetModule(k); ok {
@@ -82,10 +83,13 @@ func TextToTasks(text []byte) ([]Task, error) {
 					moduleParams = v
 					break
 				} else {
-					errors = append(errors, fmt.Errorf("unknown key %s in task %s", k, task.Name))
-					continue
+					errors = append(errors, fmt.Errorf("unknown key %q in task %q", k, task.Name))
+					errored = true
 				}
 			}
+		}
+		if errored {
+			continue
 		}
 
 		// Convert back to yaml so we can unmarshal it into the correct type
