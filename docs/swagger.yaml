@@ -62,16 +62,11 @@ paths:
     get:
       description: Download a specific version of a binary file
       parameters:
-      - description: Binary name
+      - description: Binary ID
         in: path
-        name: name
+        name: id
         required: true
-        type: string
-      - description: Binary version (with or without 'v' prefix)
-        in: path
-        name: version
-        required: true
-        type: string
+        type: integer
       produces:
       - application/octet-stream
       responses:
@@ -109,4 +104,22 @@ paths:
       summary: List grouped binaries
       tags:
       - binaries
+  /generate:
+    post:
+      description: Generate a binary from a playbook
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/web.ErrorResponse'
+      summary: Generate binary from playbook
+      tags:
+      - generate
 swagger: "2.0"

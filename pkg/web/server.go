@@ -108,13 +108,13 @@ func (s *Server) Start() {
 	router.Run(":8080")
 }
 
-// @Summary     List all binaries
-// @Description Get a list of all generated binaries
-// @Tags        binaries
+// @Summary     Generate binary from playbook
+// @Description Generate a binary from a playbook
+// @Tags        generate
 // @Produce     json
-// @Success     200 {object} []BinaryResponse
+// @Success     200 {object} map[string]interface{}
 // @Failure     500 {object} ErrorResponse
-// @Router      /binaries [get]
+// @Router      /generate [post]
 func (s *Server) handleGenerate(c *gin.Context) {
 	var content []byte
 	var err error
@@ -187,7 +187,7 @@ func (s *Server) handleListBinaries(c *gin.Context) {
 		responses[i] = BinaryToResponse(bin)
 	}
 
-	c.JSON(http.StatusOK, gin.H{"binaries": responses})
+	c.JSON(http.StatusOK, responses)
 }
 
 // @Summary     List grouped binaries
@@ -216,15 +216,14 @@ func (s *Server) handleListBinariesGrouped(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"binaryGroups": responses})
+	c.JSON(http.StatusOK, responses)
 }
 
 // @Summary     Download specific binary version
 // @Description Download a specific version of a binary file
 // @Tags        binaries
 // @Produce     octet-stream
-// @Param       name path string true "Binary name"
-// @Param       version path string true "Binary version (with or without 'v' prefix)"
+// @Param       id path int true "Binary ID"
 // @Success     200 {file} binary
 // @Failure     404 {object} ErrorResponse
 // @Failure     500 {object} ErrorResponse

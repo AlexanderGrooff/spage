@@ -85,16 +85,9 @@ const docTemplate = `{
                 "summary": "Download specific binary version",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Binary name",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Binary version (with or without 'v' prefix)",
-                        "name": "version",
+                        "type": "integer",
+                        "description": "Binary ID",
+                        "name": "id",
                         "in": "path",
                         "required": true
                     }
@@ -110,6 +103,33 @@ const docTemplate = `{
                         "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/web.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/web.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/generate": {
+            "post": {
+                "description": "Generate a binary from a playbook",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "generate"
+                ],
+                "summary": "Generate binary from playbook",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "500": {
