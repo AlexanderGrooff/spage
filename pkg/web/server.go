@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/AlexanderGrooff/spage/pkg/database"
@@ -14,18 +13,6 @@ import (
 type Server struct {
 	db        *database.DB
 	generator *generator.Generator
-}
-
-type BinaryInfo struct {
-	Name      string    `json:"name"`
-	Version   string    `json:"version"`
-	CreatedAt time.Time `json:"created_at"`
-	Path      string    `json:"path"`
-}
-
-type BinaryGroup struct {
-	Name     string       `json:"name"`
-	Versions []BinaryInfo `json:"versions"`
 }
 
 func NewServer(db *database.DB) *Server {
@@ -39,34 +26,14 @@ func (s *Server) Start() {
 	// Initialize Gin router
 	router := gin.Default()
 
-	// Load templates from the templates directory
-	router.LoadHTMLGlob("web/templates/*")
-
-	// Define homepage route
-	router.GET("/", func(c *gin.Context) {
-		binaryGroups, err := s.db.ListBinariesGrouped()
-		if err != nil {
-			c.HTML(http.StatusInternalServerError, "index.html", gin.H{
-				"title": "Homepage",
-				"error": fmt.Sprintf("Failed to list binaries: %s", err),
-			})
-			return
-		}
-
-		c.HTML(http.StatusOK, "index.html", gin.H{
-			"title":        "Homepage",
-			"binaryGroups": binaryGroups,
-		})
-	})
-
-	// Define generate endpoint
-	router.POST("/generate", s.handleGenerate)
-
-	// Add new endpoint to list binaries
-	router.GET("/binaries", s.handleListBinaries)
-
-	// Add download endpoint
-	router.GET("/download/:filename", s.handleDownload)
+	// API routes
+	api := router.Group("/api")
+	{
+		api.GET("/binaries", s.handleListBinaries)
+		api.GET("/binaries/grouped", s.handleListBinariesGrouped)
+		api.POST("/generate", s.handleGenerate)
+		api.GET("/download/:filename", s.handleDownload)
+	}
 
 	// Run the server
 	router.Run(":8080")
@@ -154,4 +121,15 @@ func (s *Server) handleDownload(c *gin.Context) {
 
 	// Serve the file
 	c.File(filename)
+}
+
+// New handler for grouped binaries
+func (s *Server) handleListBinariesGrouped(c *gin.Context) {
+	binaryGroups, err := s.db.ListBinariesGrouped()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to list binaries: %s", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"binaryGroups": binaryGroups})
 } 

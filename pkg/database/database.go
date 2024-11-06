@@ -1,10 +1,12 @@
 package database
 
 import (
+	"fmt"
+	"sort"
+	"time"
+
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"sort"
-	"fmt"
 )
 
 type Binary struct {
@@ -17,6 +19,18 @@ type Binary struct {
 
 type DB struct {
 	*gorm.DB
+}
+
+type BinaryInfo struct {
+	Name      string    `json:"name"`
+	Version   string    `json:"version"`
+	CreatedAt time.Time `json:"created_at"`
+	Path      string    `json:"path"`
+}
+
+type BinaryGroup struct {
+	Name     string       `json:"name"`
+	Versions []BinaryInfo `json:"versions"`
 }
 
 func NewDB(dataSourceName string) (*DB, error) {
@@ -82,7 +96,7 @@ func (db *DB) BinaryExists(filename string) (bool, error) {
 	return count > 0, err
 }
 
-func (db *DB) ListBinariesGrouped() ([]web.BinaryGroup, error) {
+func (db *DB) ListBinariesGrouped() ([]BinaryGroup, error) {
 	var binaries []Binary
 	err := db.Order("name, version desc").Find(&binaries).Error
 	if err != nil {
@@ -90,9 +104,9 @@ func (db *DB) ListBinariesGrouped() ([]web.BinaryGroup, error) {
 	}
 
 	// Group binaries by name
-	groupMap := make(map[string][]web.BinaryInfo)
+	groupMap := make(map[string][]BinaryInfo)
 	for _, bin := range binaries {
-		info := web.BinaryInfo{
+		info := BinaryInfo{
 			Name:      bin.Name,
 			Version:   fmt.Sprintf("v%d", bin.Version),
 			CreatedAt: bin.CreatedAt,
@@ -102,9 +116,9 @@ func (db *DB) ListBinariesGrouped() ([]web.BinaryGroup, error) {
 	}
 
 	// Convert map to slice of BinaryGroup
-	var groups []web.BinaryGroup
+	var groups []BinaryGroup
 	for name, versions := range groupMap {
-		groups = append(groups, web.BinaryGroup{
+		groups = append(groups, BinaryGroup{
 			Name:     name,
 			Versions: versions,
 		})
