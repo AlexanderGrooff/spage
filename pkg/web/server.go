@@ -4,11 +4,35 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/AlexanderGrooff/spage/pkg/database"
 	"github.com/AlexanderGrooff/spage/pkg/generator"
+	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"     // swagger embed files
+	ginSwagger "github.com/swaggo/gin-swagger" // gin-swagger middleware
+
+	docs "github.com/AlexanderGrooff/spage/docs" // This will be auto-generated
+	_ "gorm.io/driver/sqlite"
+	_ "gorm.io/gorm"
 )
+
+// BinaryResponse represents the API response model for a binary
+// @Description Binary file information
+type BinaryResponse struct {
+	ID        uint      `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Name      string    `json:"name"`
+	Version   string    `json:"version"`
+	Path      string    `json:"path"`
+}
+
+// ErrorResponse represents the API error response model
+// @Description Error response from the API
+type ErrorResponse struct {
+	Error string `json:"error"`
+}
 
 type Server struct {
 	db        *database.DB
@@ -22,12 +46,16 @@ func NewServer(db *database.DB) *Server {
 	}
 }
 
+// @title           Spage API
+// @version         1.0
+// @description     API for generating and managing binary files from playbooks
+// @BasePath  /api
 func (s *Server) Start() {
 	// Initialize Gin router
 	router := gin.Default()
 
 	// API routes
-	api := router.Group("/api")
+	api := router.Group("/api/v1")
 	{
 		api.GET("/binaries", s.handleListBinaries)
 		api.GET("/binaries/grouped", s.handleListBinariesGrouped)
@@ -35,10 +63,21 @@ func (s *Server) Start() {
 		api.GET("/download/:filename", s.handleDownload)
 	}
 
+	// Swagger documentation
+	docs.SwaggerInfo.BasePath = "/api/v1"
+	router.GET("/docs/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
 	// Run the server
 	router.Run(":8080")
 }
 
+// @Summary     List all binaries
+// @Description Get a list of all generated binaries
+// @Tags        binaries
+// @Produce     json
+// @Success     200 {object} []BinaryResponse
+// @Failure     500 {object} ErrorResponse
+// @Router      /binaries [get]
 func (s *Server) handleGenerate(c *gin.Context) {
 	var content []byte
 	var err error
@@ -91,6 +130,13 @@ func (s *Server) handleGenerate(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Tasks generated successfully", "binaryPath": binaryPath})
 }
 
+// @Summary     List all binaries
+// @Description Get a list of all generated binaries
+// @Tags        binaries
+// @Produce     json
+// @Success     200 {object} []BinaryResponse
+// @Failure     500 {object} ErrorResponse
+// @Router      /binaries [get]
 func (s *Server) handleListBinaries(c *gin.Context) {
 	binaries, err := s.db.ListBinaries()
 	if err != nil {
@@ -98,12 +144,34 @@ func (s *Server) handleListBinaries(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"binaries": binaries})
+	// Convert database.Binary to BinaryResponse
+	responses := make([]BinaryResponse, len(binaries))
+	for i, bin := range binaries {
+		responses[i] = BinaryResponse{
+			ID:        bin.ID,
+			CreatedAt: bin.CreatedAt,
+			UpdatedAt: bin.UpdatedAt,
+			Name:      bin.Name,
+			Version:   fmt.Sprintf("v%d", bin.Version),
+			Path:      bin.Path,
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"binaries": responses})
 }
 
+// @Summary     Download binary
+// @Description Download a generated binary file
+// @Tags        binaries
+// @Produce     octet-stream
+// @Param       filename path string true "Binary filename"
+// @Success     200 {file} binary
+// @Failure     404 {object} ErrorResponse
+// @Failure     500 {object} ErrorResponse
+// @Router      /download/{filename} [get]
 func (s *Server) handleDownload(c *gin.Context) {
 	filename := c.Param("filename")
-	
+
 	// Verify the file exists in the database
 	exists, err := s.db.BinaryExists(filename)
 	if err != nil {
@@ -123,7 +191,13 @@ func (s *Server) handleDownload(c *gin.Context) {
 	c.File(filename)
 }
 
-// New handler for grouped binaries
+// @Summary     List grouped binaries
+// @Description Get a list of binaries grouped by name
+// @Tags        binaries
+// @Produce     json
+// @Success     200 {object} map[string][]database.BinaryGroup
+// @Failure     500 {object} ErrorResponse
+// @Router      /binaries/grouped [get]
 func (s *Server) handleListBinariesGrouped(c *gin.Context) {
 	binaryGroups, err := s.db.ListBinariesGrouped()
 	if err != nil {
@@ -132,4 +206,4 @@ func (s *Server) handleListBinariesGrouped(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"binaryGroups": binaryGroups})
-} 
+}

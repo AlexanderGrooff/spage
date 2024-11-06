@@ -1,0 +1,118 @@
+basePath: /api
+definitions:
+  database.BinaryGroup:
+    properties:
+      name:
+        type: string
+      versions:
+        items:
+          $ref: '#/definitions/database.BinaryInfo'
+        type: array
+    type: object
+  database.BinaryInfo:
+    properties:
+      created_at:
+        type: string
+      name:
+        type: string
+      path:
+        type: string
+      version:
+        type: string
+    type: object
+  web.BinaryResponse:
+    description: Binary file information
+    properties:
+      created_at:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+      path:
+        type: string
+      updated_at:
+        type: string
+      version:
+        type: string
+    type: object
+  web.ErrorResponse:
+    description: Error response from the API
+    properties:
+      error:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: API for generating and managing binary files from playbooks
+  title: Spage API
+  version: "1.0"
+paths:
+  /binaries:
+    get:
+      description: Get a list of all generated binaries
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/web.BinaryResponse'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/web.ErrorResponse'
+      summary: List all binaries
+      tags:
+      - binaries
+  /binaries/grouped:
+    get:
+      description: Get a list of binaries grouped by name
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/database.BinaryGroup'
+              type: array
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/web.ErrorResponse'
+      summary: List grouped binaries
+      tags:
+      - binaries
+  /download/{filename}:
+    get:
+      description: Download a generated binary file
+      parameters:
+      - description: Binary filename
+        in: path
+        name: filename
+        required: true
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/web.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/web.ErrorResponse'
+      summary: Download binary
+      tags:
+      - binaries
+swagger: "2.0"
