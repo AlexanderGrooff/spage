@@ -1,24 +1,13 @@
 basePath: /api
 definitions:
-  database.BinaryGroup:
+  web.BinaryGroupResponse:
     properties:
       name:
         type: string
       versions:
         items:
-          $ref: '#/definitions/database.BinaryInfo'
+          $ref: '#/definitions/web.BinaryResponse'
         type: array
-    type: object
-  database.BinaryInfo:
-    properties:
-      created_at:
-        type: string
-      name:
-        type: string
-      path:
-        type: string
-      version:
-        type: string
     type: object
   web.BinaryResponse:
     description: Binary file information
@@ -67,34 +56,18 @@ paths:
       summary: List all binaries
       tags:
       - binaries
-  /binaries/grouped:
+  /binaries/{id}/download:
     get:
-      description: Get a list of binaries grouped by name
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              items:
-                $ref: '#/definitions/database.BinaryGroup'
-              type: array
-            type: object
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/web.ErrorResponse'
-      summary: List grouped binaries
-      tags:
-      - binaries
-  /download/{filename}:
-    get:
-      description: Download a generated binary file
+      description: Download a specific version of a binary file
       parameters:
-      - description: Binary filename
+      - description: Binary name
         in: path
-        name: filename
+        name: name
+        required: true
+        type: string
+      - description: Binary version (with or without 'v' prefix)
+        in: path
+        name: version
         required: true
         type: string
       produces:
@@ -112,7 +85,26 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/web.ErrorResponse'
-      summary: Download binary
+      summary: Download specific binary version
+      tags:
+      - binaries
+  /binaries/grouped:
+    get:
+      description: Get a list of binaries grouped by name
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/web.BinaryGroupResponse'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/web.ErrorResponse'
+      summary: List grouped binaries
       tags:
       - binaries
 swagger: "2.0"

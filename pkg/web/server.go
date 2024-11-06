@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/AlexanderGrooff/spage/pkg/database"
@@ -28,6 +29,22 @@ type BinaryResponse struct {
 	Name      string    `json:"name"`
 	Version   string    `json:"version"`
 	Path      string    `json:"path"`
+}
+
+func BinaryToResponse(b database.Binary) BinaryResponse {
+	return BinaryResponse{
+		ID:        b.ID,
+		CreatedAt: b.CreatedAt,
+		UpdatedAt: b.UpdatedAt,
+		Name:      b.Name,
+		Version:   fmt.Sprintf("v%d", b.Version),
+		Path:      b.Path,
+	}
+}
+
+type BinaryGroupResponse struct {
+	Name     string           `json:"name"`
+	Versions []BinaryResponse `json:"versions"`
 }
 
 // ErrorResponse represents the API error response model
@@ -68,8 +85,8 @@ func (s *Server) Start() {
 	{
 		api.GET("/binaries", s.handleListBinaries)
 		api.GET("/binaries/grouped", s.handleListBinariesGrouped)
+		api.GET("/binaries/:id/download", s.handleDownload)
 		api.POST("/generate", s.handleGenerate)
-		api.GET("/download/:filename", s.handleDownload)
 	}
 
 	// Swagger documentation
@@ -165,55 +182,17 @@ func (s *Server) handleListBinaries(c *gin.Context) {
 	// Convert database.Binary to BinaryResponse
 	responses := make([]BinaryResponse, len(binaries))
 	for i, bin := range binaries {
-		responses[i] = BinaryResponse{
-			ID:        bin.ID,
-			CreatedAt: bin.CreatedAt,
-			UpdatedAt: bin.UpdatedAt,
-			Name:      bin.Name,
-			Version:   fmt.Sprintf("v%d", bin.Version),
-			Path:      bin.Path,
-		}
+		responses[i] = BinaryToResponse(bin)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"binaries": responses})
-}
-
-// @Summary     Download binary
-// @Description Download a generated binary file
-// @Tags        binaries
-// @Produce     octet-stream
-// @Param       filename path string true "Binary filename"
-// @Success     200 {file} binary
-// @Failure     404 {object} ErrorResponse
-// @Failure     500 {object} ErrorResponse
-// @Router      /download/{filename} [get]
-func (s *Server) handleDownload(c *gin.Context) {
-	filename := c.Param("filename")
-
-	// Verify the file exists in the database
-	exists, err := s.db.BinaryExists(filename)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to check binary: %s", err)})
-		return
-	}
-	if !exists {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Binary not found"})
-		return
-	}
-
-	// Set Content-Disposition header for download
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
-	c.Header("Content-Type", "application/octet-stream")
-
-	// Serve the file
-	c.File(filename)
 }
 
 // @Summary     List grouped binaries
 // @Description Get a list of binaries grouped by name
 // @Tags        binaries
 // @Produce     json
-// @Success     200 {object} map[string][]database.BinaryGroup
+// @Success     200 {object} []BinaryGroupResponse
 // @Failure     500 {object} ErrorResponse
 // @Router      /binaries/grouped [get]
 func (s *Server) handleListBinariesGrouped(c *gin.Context) {
@@ -223,5 +202,53 @@ func (s *Server) handleListBinariesGrouped(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"binaryGroups": binaryGroups})
+	responses := make([]BinaryGroupResponse, len(binaryGroups))
+	for i, group := range binaryGroups {
+		versions := make([]BinaryResponse, len(group.Versions))
+		for j, version := range group.Versions {
+			versions[j] = BinaryToResponse(version)
+		}
+		responses[i] = BinaryGroupResponse{
+			Name:     group.Name,
+			Versions: versions,
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"binaryGroups": responses})
+}
+
+// @Summary     Download specific binary version
+// @Description Download a specific version of a binary file
+// @Tags        binaries
+// @Produce     octet-stream
+// @Param       name path string true "Binary name"
+// @Param       version path string true "Binary version (with or without 'v' prefix)"
+// @Success     200 {file} binary
+// @Failure     404 {object} ErrorResponse
+// @Failure     500 {object} ErrorResponse
+// @Router      /binaries/{id}/download [get]
+func (s *Server) handleDownload(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid binary ID: %s", err)})
+		return
+	}
+
+	// Get the binary path from the database
+	binaryPath, err := s.db.GetBinaryPathById(uint(id))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get binary: %s", err)})
+		return
+	}
+	if binaryPath == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Binary version not found"})
+		return
+	}
+
+	// Set Content-Disposition header for download
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", binaryPath))
+	c.Header("Content-Type", "application/octet-stream")
+
+	// Serve the file
+	c.File(binaryPath)
 }

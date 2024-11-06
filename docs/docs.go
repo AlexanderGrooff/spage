@@ -58,12 +58,9 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "array",
-                                "items": {
-                                    "$ref": "#/definitions/database.BinaryGroup"
-                                }
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/web.BinaryGroupResponse"
                             }
                         }
                     },
@@ -76,21 +73,28 @@ const docTemplate = `{
                 }
             }
         },
-        "/download/{filename}": {
+        "/binaries/{id}/download": {
             "get": {
-                "description": "Download a generated binary file",
+                "description": "Download a specific version of a binary file",
                 "produces": [
                     "application/octet-stream"
                 ],
                 "tags": [
                     "binaries"
                 ],
-                "summary": "Download binary",
+                "summary": "Download specific binary version",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Binary filename",
-                        "name": "filename",
+                        "description": "Binary name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Binary version (with or without 'v' prefix)",
+                        "name": "version",
                         "in": "path",
                         "required": true
                     }
@@ -119,7 +123,7 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "database.BinaryGroup": {
+        "web.BinaryGroupResponse": {
             "type": "object",
             "properties": {
                 "name": {
@@ -128,25 +132,8 @@ const docTemplate = `{
                 "versions": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/database.BinaryInfo"
+                        "$ref": "#/definitions/web.BinaryResponse"
                     }
-                }
-            }
-        },
-        "database.BinaryInfo": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "path": {
-                    "type": "string"
-                },
-                "version": {
-                    "type": "string"
                 }
             }
         },

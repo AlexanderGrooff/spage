@@ -1,10 +1,6 @@
 package database
 
 import (
-	"fmt"
-	"sort"
-	"time"
-
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -21,16 +17,9 @@ type DB struct {
 	*gorm.DB
 }
 
-type BinaryInfo struct {
-	Name      string    `json:"name"`
-	Version   string    `json:"version"`
-	CreatedAt time.Time `json:"created_at"`
-	Path      string    `json:"path"`
-}
-
 type BinaryGroup struct {
-	Name     string       `json:"name"`
-	Versions []BinaryInfo `json:"versions"`
+	Name     string   `json:"name"`
+	Versions []Binary `json:"versions"`
 }
 
 func NewDB(dataSourceName string) (*DB, error) {
@@ -51,7 +40,7 @@ func NewDB(dataSourceName string) (*DB, error) {
 func (db *DB) StoreBinary(name string, path string, playbook []byte) error {
 	var latestBinary Binary
 	result := db.Where("name = ?", name).Order("version desc").First(&latestBinary)
-	
+
 	nextVersion := 1
 	if result.Error == nil {
 		nextVersion = latestBinary.Version + 1
@@ -70,6 +59,18 @@ func (db *DB) GetBinaryVersions(name string) ([]Binary, error) {
 	var binaries []Binary
 	err := db.Where("name = ?", name).Order("version desc").Find(&binaries).Error
 	return binaries, err
+}
+
+func (db *DB) GetBinaryVersionsById(id uint) ([]Binary, error) {
+	var binaries []Binary
+	err := db.Where("id = ?", id).Order("version desc").Find(&binaries).Error
+	return binaries, err
+}
+
+func (db *DB) GetBinaryPathById(id uint) (string, error) {
+	var binary Binary
+	err := db.Where("id = ?", id).First(&binary).Error
+	return binary.Path, err
 }
 
 func (db *DB) GetBinaryVersion(name string, version int) (*Binary, error) {
@@ -97,37 +98,24 @@ func (db *DB) BinaryExists(filename string) (bool, error) {
 }
 
 func (db *DB) ListBinariesGrouped() ([]BinaryGroup, error) {
-	var binaries []Binary
-	err := db.Order("name, version desc").Find(&binaries).Error
-	if err != nil {
+	// First get distinct binary names
+	var names []string
+	if err := db.Model(&Binary{}).Distinct("name").Order("name").Pluck("name", &names).Error; err != nil {
 		return nil, err
 	}
 
-	// Group binaries by name
-	groupMap := make(map[string][]BinaryInfo)
-	for _, bin := range binaries {
-		info := BinaryInfo{
-			Name:      bin.Name,
-			Version:   fmt.Sprintf("v%d", bin.Version),
-			CreatedAt: bin.CreatedAt,
-			Path:      bin.Path,
+	// For each name, get all versions
+	groups := make([]BinaryGroup, len(names))
+	for i, name := range names {
+		var versions []Binary
+		if err := db.Where("name = ?", name).Order("version desc").Find(&versions).Error; err != nil {
+			return nil, err
 		}
-		groupMap[bin.Name] = append(groupMap[bin.Name], info)
-	}
-
-	// Convert map to slice of BinaryGroup
-	var groups []BinaryGroup
-	for name, versions := range groupMap {
-		groups = append(groups, BinaryGroup{
+		groups[i] = BinaryGroup{
 			Name:     name,
 			Versions: versions,
-		})
+		}
 	}
-
-	// Sort groups by name
-	sort.Slice(groups, func(i, j int) bool {
-		return groups[i].Name < groups[j].Name
-	})
 
 	return groups, nil
 }
