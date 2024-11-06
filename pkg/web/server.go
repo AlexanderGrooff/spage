@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/AlexanderGrooff/spage/pkg/database"
 	"github.com/AlexanderGrooff/spage/pkg/generator"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"     // swagger embed files
 	ginSwagger "github.com/swaggo/gin-swagger" // gin-swagger middleware
@@ -54,6 +56,13 @@ func (s *Server) Start() {
 	// Initialize Gin router
 	router := gin.Default()
 
+	// Add CORS middleware
+	config := cors.DefaultConfig()
+	config.AllowOrigins = []string{"http://localhost:3000"} // Allow Next.js dev server
+	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+	config.AllowHeaders = []string{"Origin", "Content-Type", "Accept"}
+	router.Use(cors.New(config))
+
 	// API routes
 	api := router.Group("/api/v1")
 	{
@@ -66,6 +75,15 @@ func (s *Server) Start() {
 	// Swagger documentation
 	docs.SwaggerInfo.BasePath = "/api/v1"
 	router.GET("/docs/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	router.GET("/openapi.json", func(c *gin.Context) {
+		doc := docs.SwaggerInfo.ReadDoc()
+		var jsonDoc interface{}
+		if err := json.Unmarshal([]byte(doc), &jsonDoc); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse OpenAPI document"})
+			return
+		}
+		c.JSON(http.StatusOK, jsonDoc)
+	})
 
 	// Run the server
 	router.Run(":8080")
