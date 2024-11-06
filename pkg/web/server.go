@@ -29,6 +29,7 @@ type BinaryResponse struct {
 	Name      string    `json:"name"`
 	Version   string    `json:"version"`
 	Path      string    `json:"path"`
+	Playbook  string    `json:"playbook"`
 }
 
 func BinaryToResponse(b database.Binary) BinaryResponse {
@@ -39,6 +40,7 @@ func BinaryToResponse(b database.Binary) BinaryResponse {
 		Name:      b.Name,
 		Version:   fmt.Sprintf("v%d", b.Version),
 		Path:      b.Path,
+		Playbook:  string(b.Playbook),
 	}
 }
 

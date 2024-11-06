@@ -20,6 +20,8 @@ definitions:
         type: string
       path:
         type: string
+      playbook:
+        type: string
       updated_at:
         type: string
       version:

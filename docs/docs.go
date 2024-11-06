@@ -153,6 +153,9 @@ const docTemplate = `{
                 "path": {
                     "type": "string"
                 },
+                "playbook": {
+                    "type": "string"
+                },
                 "updated_at": {
                     "type": "string"
                 },
