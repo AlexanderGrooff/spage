@@ -20,7 +20,12 @@ func NewGenerator(db *database.DB) *Generator {
 	}
 }
 
-func (g *Generator) GenerateBinary(playbookPath, outputPath string) (string, error) {
+func (g *Generator) GenerateBinary(playbookPath, outputName string) (string, error) {
+	// Check if output name is provided
+	if outputName == "" {
+		return "", fmt.Errorf("output name is required")
+	}
+
 	// Create a temporary directory for building
 	tmpDir, err := os.MkdirTemp("", "spage-build-*")
 	if err != nil {
@@ -57,25 +62,37 @@ func (g *Generator) GenerateBinary(playbookPath, outputPath string) (string, err
 	}
 
 	// Build binary
+	outputPath := filepath.Join(tmpDir, outputName)
 	cmd = exec.Command("go", "build", "-o", outputPath)
 	cmd.Dir = tmpDir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("failed to build binary: %s: %w", output, err)
 	}
-	fmt.Printf("Built binary in %s\n", filepath.Join(tmpDir, outputPath))
+	fmt.Printf("Built binary in %s\n", outputPath)
 
 	// Read the playbook content
 	playbookContent, err := os.ReadFile(playbookPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read playbook: %w", err)
 	}
-
-	binaryPath := filepath.Join(tmpDir, outputPath)
 	
-	// Store binary information in database
-	if err := g.db.StoreBinary(binaryPath, playbookContent); err != nil {
+	// Store binary information in database with versioning
+	if err := g.db.StoreBinary(outputName, outputPath, playbookContent); err != nil {
 		return "", fmt.Errorf("failed to store binary in database: %w", err)
 	}
 
-	return binaryPath, nil
-} 
+	return outputPath, nil
+}
+
+// New helper methods for the generator
+func (g *Generator) GetBinaryVersions(name string) ([]database.Binary, error) {
+	return g.db.GetBinaryVersions(name)
+}
+
+func (g *Generator) GetBinaryVersion(name string, version int) (*database.Binary, error) {
+	return g.db.GetBinaryVersion(name, version)
+}
+
+func (g *Generator) GetLatestBinary(name string) (*database.Binary, error) {
+	return g.db.GetLatestBinary(name)
+}

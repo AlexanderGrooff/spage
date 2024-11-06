@@ -2,8 +2,145 @@
 <html>
 <head>
     <title>{{ .title }}</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .error {
+            background-color: #ffebee;
+            color: #c62828;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+
+        .binary-group {
+            margin-bottom: 40px;
+        }
+
+        .group-title {
+            font-size: 1.4em;
+            color: #333;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #2196F3;
+        }
+
+        .binary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            padding: 0 0 20px 0;
+        }
+
+        .binary-card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: transform 0.2s;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .binary-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+
+        .binary-name {
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-bottom: 10px;
+            word-break: break-all;
+            color: #2196F3;
+        }
+
+        .binary-version {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 8px;
+        }
+
+        .binary-created {
+            font-size: 0.85em;
+            color: #888;
+            margin-bottom: 15px;
+        }
+
+        .binary-actions {
+            margin-top: auto;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+        }
+
+        .download-link {
+            display: inline-block;
+            padding: 8px 16px;
+            background-color: #2196F3;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        }
+
+        .download-link:hover {
+            background-color: #1976D2;
+        }
+
+        .no-binaries {
+            text-align: center;
+            padding: 40px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .version-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            background-color: #e3f2fd;
+            color: #1976D2;
+            border-radius: 4px;
+            font-size: 0.85em;
+            margin-bottom: 8px;
+        }
+    </style>
 </head>
 <body>
-    <h1>Welcome to {{ .title }}</h1>
+    <h1>{{ .title }}</h1>
+    
+    {{if .error}}
+    <div class="error">
+        {{ .error }}
+    </div>
+    {{end}}
+
+    <h2>Generated Binaries</h2>
+    {{if .binaryGroups}}
+        {{range .binaryGroups}}
+        <div class="binary-group">
+            <h3 class="group-title">{{.Name}}</h3>
+            <div class="binary-grid">
+            {{range .Versions}}
+                <div class="binary-card">
+                    <div class="version-badge">{{.Version}}</div>
+                    <div class="binary-created">Created: {{.CreatedAt.Format "Jan 02, 2006 15:04:05"}}</div>
+                    <div class="binary-actions">
+                        <a href="/download/{{.Path}}" class="download-link">Download</a>
+                    </div>
+                </div>
+            {{end}}
+            </div>
+        </div>
+        {{end}}
+    {{else}}
+        <div class="no-binaries">
+            <p>No binaries generated yet.</p>
+        </div>
+    {{end}}
 </body>
 </html> 

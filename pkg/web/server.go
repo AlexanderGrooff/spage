@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/AlexanderGrooff/spage/pkg/database"
@@ -13,6 +14,18 @@ import (
 type Server struct {
 	db        *database.DB
 	generator *generator.Generator
+}
+
+type BinaryInfo struct {
+	Name      string    `json:"name"`
+	Version   string    `json:"version"`
+	CreatedAt time.Time `json:"created_at"`
+	Path      string    `json:"path"`
+}
+
+type BinaryGroup struct {
+	Name     string       `json:"name"`
+	Versions []BinaryInfo `json:"versions"`
 }
 
 func NewServer(db *database.DB) *Server {
@@ -31,8 +44,18 @@ func (s *Server) Start() {
 
 	// Define homepage route
 	router.GET("/", func(c *gin.Context) {
+		binaryGroups, err := s.db.ListBinariesGrouped()
+		if err != nil {
+			c.HTML(http.StatusInternalServerError, "index.html", gin.H{
+				"title": "Homepage",
+				"error": fmt.Sprintf("Failed to list binaries: %s", err),
+			})
+			return
+		}
+
 		c.HTML(http.StatusOK, "index.html", gin.H{
-			"title": "Homepage",
+			"title":        "Homepage",
+			"binaryGroups": binaryGroups,
 		})
 	})
 
@@ -41,6 +64,9 @@ func (s *Server) Start() {
 
 	// Add new endpoint to list binaries
 	router.GET("/binaries", s.handleListBinaries)
+
+	// Add download endpoint
+	router.GET("/download/:filename", s.handleDownload)
 
 	// Run the server
 	router.Run(":8080")
@@ -106,4 +132,26 @@ func (s *Server) handleListBinaries(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"binaries": binaries})
+}
+
+func (s *Server) handleDownload(c *gin.Context) {
+	filename := c.Param("filename")
+	
+	// Verify the file exists in the database
+	exists, err := s.db.BinaryExists(filename)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to check binary: %s", err)})
+		return
+	}
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Binary not found"})
+		return
+	}
+
+	// Set Content-Disposition header for download
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+	c.Header("Content-Type", "application/octet-stream")
+
+	// Serve the file
+	c.File(filename)
 } 
