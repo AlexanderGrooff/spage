@@ -15,7 +15,7 @@ import (
 	swaggerFiles "github.com/swaggo/files"     // swagger embed files
 	ginSwagger "github.com/swaggo/gin-swagger" // gin-swagger middleware
 
-	docs "github.com/AlexanderGrooff/spage/docs" // This will be auto-generated
+	"github.com/AlexanderGrooff/spage/docs" // This will be auto-generated
 	_ "gorm.io/driver/sqlite"
 	_ "gorm.io/gorm"
 )

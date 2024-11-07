@@ -19,7 +19,7 @@ var (
 	playbookFile  string
 	outputFile    string
 	inventoryFile string
-	db *database.DB
+	db            *database.DB
 )
 
 var rootCmd = &cobra.Command{

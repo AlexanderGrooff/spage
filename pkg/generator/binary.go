@@ -35,12 +35,13 @@ func (g *Generator) GenerateBinary(playbookPath, outputName string) (string, err
 
 	// Copy necessary files to temp directory
 	files := []string{
+		"docs",
+		"generate_tasks.go",
+		"generated",
 		"go.mod",
 		"go.sum",
 		"main.go",
 		"pkg",
-		"generated",
-		"generate_tasks.go",
 	}
 
 	for _, file := range files {
@@ -75,7 +76,7 @@ func (g *Generator) GenerateBinary(playbookPath, outputName string) (string, err
 	if err != nil {
 		return "", fmt.Errorf("failed to read playbook: %w", err)
 	}
-	
+
 	// Store binary information in database with versioning
 	if err := g.db.StoreBinary(outputName, outputPath, playbookContent); err != nil {
 		return "", fmt.Errorf("failed to store binary in database: %w", err)
