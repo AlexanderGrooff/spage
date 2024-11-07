@@ -104,13 +104,20 @@ func (s *Server) Start() {
 		c.JSON(http.StatusOK, jsonDoc)
 	})
 
+	// Get port from environment variable or default to 8080
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
 	// Run the server
-	router.Run(":8080")
+	router.Run(":" + port)
 }
 
 // @Summary     Generate binary from playbook
 // @Description Generate a binary from a playbook
 // @Tags        generate
+// @Param       playbook body string true "Playbook content"
 // @Produce     json
 // @Success     200 {object} map[string]interface{}
 // @Failure     500 {object} ErrorResponse

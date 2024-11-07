@@ -107,6 +107,13 @@ paths:
   /generate:
     post:
       description: Generate a binary from a playbook
+      parameters:
+      - description: Playbook content
+        in: body
+        name: playbook
+        required: true
+        schema:
+          type: string
       produces:
       - application/json
       responses:

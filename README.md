@@ -9,6 +9,10 @@ go run main.go -i inventory.yaml
 swag init -g pkg/web/server.go
 go run main.go web
 # Go to http://localhost:8080/docs/index.html
+
+# Development with hot reload
+go install github.com/cosmtrek/air@latest
+air
 ```
 
 TODO:

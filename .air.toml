@@ -1,0 +1,19 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "swag init -g pkg/web/server.go && go build -o ./tmp/main ."
+  bin = "./tmp/main web"
+  delay = 1000 # ms
+  exclude_dir = ["assets", "tmp", "vendor", "docs"]
+  include_ext = ["go", "tpl", "tmpl", "html", "yaml", "json"]
+  exclude_regex = ["_test\\.go"]
+
+[log]
+  time = false
+
+[color]
+  main = "magenta"
+  watcher = "cyan"
+  build = "yellow"
+  runner = "green"

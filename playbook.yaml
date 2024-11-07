@@ -17,6 +17,6 @@
     execute: cd {{ yay_git.Dest }} && makepkg -si --noconfirm
   when: "{{ yay_git.Changed }}"
 
-- name: nomad
-  include:
-    path: nomad.yaml
+# - name: nomad
+#   include:
+#     path: nomad.yaml
