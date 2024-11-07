@@ -5,6 +5,26 @@ import (
 	"sync"
 )
 
+// getTasks returns all tasks from a GraphNode, handling both TaskList and Graph types
+func getTasks(node GraphNode) []Task {
+	switch n := node.(type) {
+	case TaskNode:
+		return []Task{n.Task}
+	case Graph:
+		var tasks []Task
+		for _, level := range n.Tasks {
+			for _, node := range level {
+				tasks = append(tasks, getTasks(node)...)
+			}
+		}
+		return tasks
+	case Task:
+		return []Task{n}
+	default:
+		return nil
+	}
+}
+
 func Execute(graph Graph, inventoryFile string) error {
 	var inventory *Inventory
 	var err error
@@ -28,20 +48,21 @@ func Execute(graph Graph, inventoryFile string) error {
 	}
 
 	var executedOnHost []map[string][]Task
-	for executionLevel, tasksOnLevel := range graph.Tasks {
+	for executionLevel, nodes := range graph.Tasks {
 		DebugOutput("Starting execution level %d\n", executionLevel)
+		var tasks []Task
+		for _, node := range nodes {
+			tasks = append(tasks, getTasks(node)...)
+		}
 		// Run all tasks of this level on all hosts in parallel, regardless of errors
-		numExpectedResults := len(tasksOnLevel) * len(contexts)
+		numExpectedResults := len(tasks) * len(contexts)
 		ch := make(chan TaskResult, numExpectedResults)
 		var wg sync.WaitGroup
-		for _, task := range tasksOnLevel {
-			executedOnHost = append(executedOnHost, make(map[string][]Task))
 
+		executedOnHost = append(executedOnHost, make(map[string][]Task))
+
+		for _, task := range tasks {
 			for _, c := range contexts {
-				// if executedOnHost[executionLevel][hostname] == nil {
-				// 	DebugOutput("Creating new slice for %q", hostname)
-				// 	executedOnHost[executionLevel][hostname] = []Task{}
-				// }
 				wg.Add(1)
 				go func(task Task, c *HostContext) {
 					defer wg.Done()

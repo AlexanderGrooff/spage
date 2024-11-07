@@ -16,7 +16,7 @@ func Indent(n int) string {
 }
 
 func containsInMap(m map[string]interface{}, item string) bool {
-	for k, _ := range m {
+	for k := range m {
 		if k == item {
 			return true
 		}
@@ -40,9 +40,7 @@ func getStringFromMap(m map[string]interface{}, key string) string {
 	return ""
 }
 
-func TextToTasks(text []byte) ([]Task, error) {
-	// Unmarshalling the yaml directly into []Task doesn't work because the params field
-	// has a dynamic type based on the kind of module that is being used.
+func TextToGraphNodes(text []byte) ([]GraphNode, error) {
 	var yamlMap []map[string]interface{}
 	err := yaml.Unmarshal([]byte(text), &yamlMap)
 	if err != nil {
@@ -58,7 +56,7 @@ func TextToTasks(text []byte) ([]Task, error) {
 		"run_as",
 	}
 
-	var tasks []Task
+	var tasks []GraphNode
 	var errors []error
 
 	for _, block := range yamlMap {
@@ -136,32 +134,25 @@ func TextToTasks(text []byte) ([]Task, error) {
 			continue
 		}
 
-		// Handle include module results
+		// Handle include module during compilation
 		if task.Module == "include" {
-			includeModule, ok := GetModule("include")
+			path, ok := paramsBlock["path"].(string)
 			if !ok {
-				errors = append(errors, fmt.Errorf("include module not found"))
+				errors = append(errors, fmt.Errorf("include module requires a path"))
 				continue
 			}
-
-			ctx := &HostContext{Facts: make(Facts)} // Empty context for initial include
-			// Need to dereference the pointer but avoid importing the concrete type
-			paramsVal := reflect.ValueOf(task.Params).Elem().Interface().(ModuleInput)
-			output, err := includeModule.Execute(paramsVal, ctx, task.RunAs)
+			nestedGraph, err := NewGraphFromFile(path)
 			if err != nil {
-				errors = append(errors, fmt.Errorf("failed to include tasks from %v: %v", task.Params, err))
+				errors = append(errors, fmt.Errorf("failed to parse included graph from %s: %v", path, err))
 				continue
 			}
-
-			o := OutputToFacts(output)
-			includedTasks := o["Tasks"].([]Task)
-			DebugOutput("Included tasks %v from output %v", includedTasks, output)
-			tasks = append(tasks, includedTasks...)
+			tasks = append(tasks, nestedGraph)
 			continue
 		}
 
 		tasks = append(tasks, task)
 	}
+
 	if len(errors) > 0 {
 		errorMessages := make([]string, len(errors))
 		for i, err := range errors {

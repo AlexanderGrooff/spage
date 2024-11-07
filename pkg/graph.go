@@ -11,17 +11,23 @@ var SpecialVars = []string{
 	"previous", // Provided in 'revert' context
 }
 
+// GraphNode represents either a list of tasks or a nested graph
+type GraphNode interface {
+	String() string
+	ToCode() string
+}
+
 type Graph struct {
 	RequiredInputs []string
-	Tasks          [][]Task
+	Tasks          [][]GraphNode
 }
 
 func (g Graph) String() string {
 	var b strings.Builder
-	for i, tasks := range g.Tasks {
+	for i, node := range g.Tasks {
 		fmt.Fprintf(&b, "- Step %d:\n", i)
-		for _, task := range tasks {
-			fmt.Fprintf(&b, "---- %s\n", task.Name)
+		for _, task := range node {
+			fmt.Fprintf(&b, "  - %s\n", task.String())
 		}
 	}
 	fmt.Fprintf(&b, "Required inputs:\n")
@@ -39,14 +45,14 @@ func (g Graph) ToCode() string {
 		fmt.Fprintf(&f, "%s  %q,\n", Indent(2), input)
 	}
 	fmt.Fprintf(&f, "%s},\n", Indent(1))
-	fmt.Fprintf(&f, "%sTasks: [][]pkg.Task{\n", Indent(1))
+	fmt.Fprintf(&f, "%sTasks: [][]pkg.GraphNode{\n", Indent(1))
 
-	for _, taskExecutionLevel := range g.Tasks {
-		fmt.Fprintf(&f, "%s[]pkg.Task{\n", Indent(2))
-		for _, task := range taskExecutionLevel {
-			fmt.Fprintf(&f, "%s", task.ToCode(3))
+	for _, node := range g.Tasks {
+		fmt.Fprintf(&f, "%s  []pkg.GraphNode{\n", Indent(2))
+		for _, task := range node {
+			fmt.Fprintf(&f, "%s    %s", Indent(3), task.ToCode())
 		}
-		fmt.Fprintf(&f, "%s},\n", Indent(2))
+		fmt.Fprintf(&f, "%s  },\n", Indent(2))
 	}
 
 	fmt.Fprintf(&f, "%s},\n", Indent(1))
@@ -62,7 +68,7 @@ func NewGraphFromFile(path string) (Graph, error) {
 	}
 
 	// Parse YAML
-	tasks, err := TextToTasks(data)
+	tasks, err := TextToGraphNodes(data)
 	if err != nil {
 		return Graph{}, fmt.Errorf("error parsing YAML: %v", err)
 	}
@@ -74,31 +80,73 @@ func NewGraphFromFile(path string) (Graph, error) {
 	return graph, nil
 }
 
-func NewGraph(tasks []Task) (Graph, error) {
+// TaskNode represents a single task in the graph
+type TaskNode struct {
+	Task
+}
+
+func (t TaskNode) String() string {
+	return t.Task.String()
+}
+
+func (t TaskNode) ToCode() string {
+	return t.Task.ToCode()
+}
+
+func NewGraph(nodes []GraphNode) (Graph, error) {
 	g := Graph{RequiredInputs: []string{}}
 	dependsOn := map[string][]string{}
-	taskNameMapping := map[string]Task{}
+	taskNameMapping := map[string]TaskNode{}
 	dependsOnVariables := map[string][]string{}
 	variableProvidedBy := map[string]string{}
 	visited := map[string]bool{}
 	recStack := map[string]bool{}
 
-	for _, task := range tasks {
-		if err := task.Params.Validate(); err != nil {
-			return Graph{}, fmt.Errorf("task %q failed to validate: %s", task.Name, err)
+	// First, flatten all nested graphs and collect tasks
+	var processTasks func(node GraphNode) error
+	processTasks = func(node GraphNode) error {
+		switch n := node.(type) {
+		case TaskNode:
+			DebugOutput("Processing node %T %q %q: %+v", node, n.Name, n.Module, n.Params)
+			if n.Params == nil {
+				DebugOutput("Task %q has no params, skipping", n.Name)
+				return nil
+			}
+			taskNameMapping[n.Name] = n
+			if n.Before != "" {
+				dependsOn[n.Before] = append(dependsOn[n.Before], n.Name)
+			}
+			if n.After != "" {
+				dependsOn[n.Name] = append(dependsOn[n.Name], n.After)
+			}
+			if n.Register != "" {
+				variableProvidedBy[strings.ToLower(n.Register)] = n.Name
+			}
+			dependsOnVariables[n.Name] = n.Params.GetVariableUsage()
+		case Graph:
+			for _, subNode := range n.Tasks {
+				for _, node := range subNode {
+					if err := processTasks(node); err != nil {
+						return err
+					}
+				}
+			}
+			g.RequiredInputs = append(g.RequiredInputs, n.RequiredInputs...)
+		case Task:
+			// Convert Task to TaskNode and process it
+			taskNode := TaskNode{Task: n}
+			return processTasks(taskNode)
+		default:
+			return fmt.Errorf("unknown node type: %T", node)
 		}
-		taskNameMapping[task.Name] = task
-		if task.Before != "" {
-			dependsOn[task.Before] = append(dependsOn[task.Before], task.Name)
+		return nil
+	}
+
+	// Process all nodes
+	for _, node := range nodes {
+		if err := processTasks(node); err != nil {
+			return Graph{}, err
 		}
-		if task.After != "" {
-			dependsOn[task.Name] = append(dependsOn[task.Name], task.After)
-		}
-		if task.Register != "" {
-			variableProvidedBy[strings.ToLower(task.Register)] = task.Name
-		}
-		// Note: task cannot use its own variable
-		dependsOnVariables[task.Name] = task.Params.GetVariableUsage()
 	}
 
 	// Check for cycles
@@ -108,6 +156,7 @@ func NewGraph(tasks []Task) (Graph, error) {
 		}
 	}
 
+	// Process variable dependencies
 	for taskName, vars := range dependsOnVariables {
 		for _, varName := range vars {
 			providingTask, ok := variableProvidedBy[varName]
@@ -124,7 +173,7 @@ func NewGraph(tasks []Task) (Graph, error) {
 	}
 
 	executedOnStep := map[string]int{}
-	for taskName, _ := range taskNameMapping {
+	for taskName := range taskNameMapping {
 		executedOnStep = ResolveExecutionLevel(taskName, dependsOn, executedOnStep)
 		if len(executedOnStep) == len(taskNameMapping) {
 			break
@@ -135,7 +184,11 @@ func NewGraph(tasks []Task) (Graph, error) {
 		maxExecutionLevel = max(maxExecutionLevel, executionLevel)
 	}
 
-	g.Tasks = make([][]Task, maxExecutionLevel+1)
+	g.Tasks = make([][]GraphNode, maxExecutionLevel+1)
+	for i := range g.Tasks {
+		g.Tasks[i] = []GraphNode{}
+	}
+
 	for taskName, executionLevel := range executedOnStep {
 		task := taskNameMapping[taskName]
 		g.Tasks[executionLevel] = append(g.Tasks[executionLevel], task)

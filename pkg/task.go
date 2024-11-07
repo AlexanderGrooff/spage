@@ -26,9 +26,8 @@ type Task struct {
 	RunAs    string      `yaml:"run_as"`
 }
 
-func (t Task) ToCode(ident int) string {
-	return fmt.Sprintf("%s{Name: %q, Module: %q, Register: %q, Params: %s, RunAs: %q, When: %q},\n",
-		Indent(ident),
+func (t Task) ToCode() string {
+	return fmt.Sprintf("pkg.Task{Name: %q, Module: %q, Register: %q, Params: %s, RunAs: %q, When: %q},\n",
 		t.Name,
 		t.Module,
 		t.Register,

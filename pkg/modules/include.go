@@ -2,7 +2,6 @@ package modules
 
 import (
 	"fmt"
-	"os"
 	"reflect"
 
 	"github.com/AlexanderGrooff/spage/pkg"
@@ -24,7 +23,6 @@ type IncludeInput struct {
 }
 
 type IncludeOutput struct {
-	Tasks []pkg.Task
 	pkg.ModuleOutput
 }
 
@@ -45,38 +43,19 @@ func (i IncludeInput) Validate() error {
 }
 
 func (o IncludeOutput) String() string {
-	return fmt.Sprintf("Included %d tasks", len(o.Tasks))
+	return "Include processed during compilation"
 }
 
 func (o IncludeOutput) Changed() bool {
-	return false // Include module doesn't modify anything directly
+	return false
 }
 
 func (m IncludeModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
-	p := params.(IncludeInput)
-
-	// Template the path if it contains variables
-	path, err := pkg.TemplateString(p.Path, c.Facts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to template path %q: %v", p.Path, err)
-	}
-
-	// Read and parse the included playbook
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("error reading YAML file: %v", err)
-	}
-	tasks, err := pkg.TextToTasks([]byte(data))
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse included playbook %s: %v", path, err)
-	}
-
-	pkg.DebugOutput("Found %d tasks in included playbook %s", len(tasks), path)
-	return IncludeOutput{Tasks: tasks}, nil
+	// Include is handled during compilation, so this should never be called
+	return IncludeOutput{}, fmt.Errorf("include module should not be executed")
 }
 
 func (m IncludeModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
-	// Include module doesn't need to revert anything
 	return IncludeOutput{}, nil
 }
 
