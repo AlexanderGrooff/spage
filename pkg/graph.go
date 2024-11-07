@@ -124,6 +124,7 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 			}
 			dependsOnVariables[n.Name] = n.Params.GetVariableUsage()
 		case Graph:
+			DebugOutput("Processing nested graph %q", n)
 			for _, subNode := range n.Tasks {
 				for _, node := range subNode {
 					if err := processTasks(node); err != nil {
@@ -131,7 +132,11 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 					}
 				}
 			}
-			g.RequiredInputs = append(g.RequiredInputs, n.RequiredInputs...)
+			for _, input := range n.RequiredInputs {
+				if !containsInSlice(g.RequiredInputs, input) {
+					g.RequiredInputs = append(g.RequiredInputs, input)
+				}
+			}
 		case Task:
 			// Convert Task to TaskNode and process it
 			taskNode := TaskNode{Task: n}
@@ -163,7 +168,9 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 			if !ok {
 				if !containsInSlice(SpecialVars, varName) {
 					DebugOutput("no task found that provides variable %q for task %q", varName, taskName)
-					g.RequiredInputs = append(g.RequiredInputs, varName)
+					if !containsInSlice(g.RequiredInputs, varName) {
+						g.RequiredInputs = append(g.RequiredInputs, varName)
+					}
 				}
 			} else {
 				DebugOutput("Found that task %q depends on %q for variable %q", taskName, providingTask, varName)
