@@ -101,8 +101,6 @@ func TemplateString(s string, additionalVars ...Facts) (string, error) {
 		allVars.Merge(v)
 	}
 
-	DebugOutput("Template: %q", s)
-	DebugOutput("Variables: %v", allVars.ToJinja2())
 	var buf bytes.Buffer
 	if err := tmpl.ExecuteWriter(allVars.ToJinja2(), &buf); err != nil {
 		return "", fmt.Errorf("failed to execute template: %v", err)

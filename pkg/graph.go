@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -51,6 +52,26 @@ func (g Graph) ToCode() string {
 	fmt.Fprintf(&f, "%s},\n", Indent(1))
 	fmt.Fprintln(&f, "}")
 	return f.String()
+}
+
+func NewGraphFromFile(path string) (Graph, error) {
+	// Read YAML file
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Graph{}, fmt.Errorf("error reading YAML file: %v", err)
+	}
+
+	// Parse YAML
+	tasks, err := TextToTasks(data)
+	if err != nil {
+		return Graph{}, fmt.Errorf("error parsing YAML: %v", err)
+	}
+
+	graph, err := NewGraph(tasks)
+	if err != nil {
+		return Graph{}, fmt.Errorf("failed to generate graph: %s", err)
+	}
+	return graph, nil
 }
 
 func NewGraph(tasks []Task) (Graph, error) {

@@ -1,0 +1,43 @@
+---
+
+- name: install packages
+  yay:
+    name:
+      - nomad
+    state: present
+  after: install yay
+  register: yay_packages
+
+- name: install nomad service
+  template:
+    src: nomad.service.j2
+    dest: /etc/systemd/system/nomad.service
+  register: nomad_service
+  after: install packages
+  run_as: root
+
+- name: install nomad server config
+  template:
+    src: nomad_server.hcl.j2
+    dest: /etc/nomad.d/server.hcl
+  when: "{{ nomad_role == 'server' }}"
+  after: install packages
+  run_as: root
+
+- name: install nomad client config
+  template:
+    src: nomad_client.hcl.j2
+    dest: /etc/nomad.d/client.hcl
+  when: "{{ nomad_role == 'client' }}"
+  after: install packages
+  run_as: root
+
+- name: enable nomad service
+  systemd:
+    name: nomad
+    enabled: true
+    state: started
+    daemon_reload: true
+  # when: "{{ nomad_service.Changed }}"
+  after: install nomad service
+  run_as: root

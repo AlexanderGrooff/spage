@@ -136,6 +136,30 @@ func TextToTasks(text []byte) ([]Task, error) {
 			continue
 		}
 
+		// Handle include module results
+		if task.Module == "include" {
+			includeModule, ok := GetModule("include")
+			if !ok {
+				errors = append(errors, fmt.Errorf("include module not found"))
+				continue
+			}
+
+			ctx := &HostContext{Facts: make(Facts)} // Empty context for initial include
+			// Need to dereference the pointer but avoid importing the concrete type
+			paramsVal := reflect.ValueOf(task.Params).Elem().Interface().(ModuleInput)
+			output, err := includeModule.Execute(paramsVal, ctx, task.RunAs)
+			if err != nil {
+				errors = append(errors, fmt.Errorf("failed to include tasks from %v: %v", task.Params, err))
+				continue
+			}
+
+			o := OutputToFacts(output)
+			includedTasks := o["Tasks"].([]Task)
+			DebugOutput("Included tasks %v from output %v", includedTasks, output)
+			tasks = append(tasks, includedTasks...)
+			continue
+		}
+
 		tasks = append(tasks, task)
 	}
 	if len(errors) > 0 {

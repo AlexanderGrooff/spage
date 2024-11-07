@@ -6,7 +6,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 
@@ -22,20 +21,7 @@ func main() {
 	if *yamlFile == "" {
 		log.Fatal("Please provide a YAML file path using the -file flag")
 	}
-
-	// Read YAML file
-	data, err := ioutil.ReadFile(*yamlFile)
-	if err != nil {
-		log.Fatalf("Error reading YAML file: %v", err)
-	}
-
-	// Parse YAML
-	tasks, err := pkg.TextToTasks(data)
-	if err != nil {
-		log.Fatalf("Error parsing YAML: %v", err)
-	}
-
-	graph, err := pkg.NewGraph(tasks)
+	graph, err := pkg.NewGraphFromFile(*yamlFile)
 	if err != nil {
 		log.Fatalf("Failed to generate graph: %s", err)
 	}
