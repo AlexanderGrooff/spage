@@ -108,6 +108,12 @@ paths:
     post:
       description: Generate a binary from a playbook
       parameters:
+      - description: Binary name
+        in: body
+        name: name
+        required: true
+        schema:
+          type: string
       - description: Playbook content
         in: body
         name: playbook

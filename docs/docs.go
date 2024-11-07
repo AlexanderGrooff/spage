@@ -126,6 +126,15 @@ const docTemplate = `{
                 "summary": "Generate binary from playbook",
                 "parameters": [
                     {
+                        "description": "Binary name",
+                        "name": "name",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
                         "description": "Playbook content",
                         "name": "playbook",
                         "in": "body",

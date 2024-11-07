@@ -117,6 +117,7 @@ func (s *Server) Start() {
 // @Summary     Generate binary from playbook
 // @Description Generate a binary from a playbook
 // @Tags        generate
+// @Param       name body string true "Binary name"
 // @Param       playbook body string true "Playbook content"
 // @Produce     json
 // @Success     200 {object} map[string]interface{}
@@ -125,7 +126,7 @@ func (s *Server) Start() {
 func (s *Server) handleGenerate(c *gin.Context) {
 	var content []byte
 	var err error
-
+	var name string
 	contentType := c.GetHeader("Content-Type")
 
 	// Handle different content types
@@ -133,20 +134,27 @@ func (s *Server) handleGenerate(c *gin.Context) {
 	case "application/json":
 		var payload struct {
 			Content string `json:"content"`
+			Name    string `json:"name"`
 		}
 		if err := c.BindJSON(&payload); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Failed to parse JSON: %s", err)})
 			return
 		}
 		content = []byte(payload.Content)
-	case "application/yaml", "text/yaml":
+		name = payload.Name
+	case "application/yaml", "text/yaml", "text/plain", "":
 		content, err = c.GetRawData()
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Failed to read request body: %s", err)})
 			return
 		}
+		name = c.Query("name")
+		if name == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Name parameter is required"})
+			return
+		}
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported Content-Type. Use application/json or application/yaml"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Unsupported Content-Type '%s'. Use application/json, application/yaml, or text/plain", contentType)})
 		return
 	}
 
@@ -165,7 +173,7 @@ func (s *Server) handleGenerate(c *gin.Context) {
 	}
 
 	// Run go generate with the playbook file
-	binaryPath, err := s.generator.GenerateBinary(tmpFile.Name(), "spage")
+	binaryPath, err := s.generator.GenerateBinary(tmpFile.Name(), name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to generate tasks: %s", err)})
 		return
