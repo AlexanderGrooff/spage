@@ -5,7 +5,6 @@
     name:
       - nomad
     state: present
-  after: install yay
   register: yay_packages
 
 - name: install nomad service
@@ -38,6 +37,6 @@
     enabled: true
     state: started
     daemon_reload: true
-  # when: "{{ nomad_service.Changed }}"
+  when: "{{ nomad_service.Changed }}"
   after: install nomad service
   run_as: root

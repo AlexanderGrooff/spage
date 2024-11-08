@@ -63,7 +63,7 @@ func (g *Generator) GenerateGraphFromPlaybook(playbookPath string, outputDir str
 		}
 	}
 	// Generate tasks
-	cmd := exec.Command("go", "generate")
+	cmd := exec.Command("go", "run", "generate_tasks.go", "-file", playbookPath)
 	cmd.Dir = outputDir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("failed to generate tasks: %s: %w", output, err)

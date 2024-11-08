@@ -39,10 +39,10 @@ func NewDB(dataSourceName string) (*DB, error) {
 
 func (db *DB) StoreBinary(name string, path string, playbook []byte) error {
 	var latestBinary Binary
-	result := db.Where("name = ?", name).Order("version desc").First(&latestBinary)
-
 	nextVersion := 1
-	if result.Error == nil {
+
+	// TODO: suppress "record not found" if there is no latest binary
+	if err := db.Where("name = ?", name).Order("version desc").Take(&latestBinary).Error; err == nil {
 		nextVersion = latestBinary.Version + 1
 	}
 
