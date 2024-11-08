@@ -1,6 +1,8 @@
 package web
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -297,9 +299,20 @@ func (s *Server) handleDownload(c *gin.Context) {
 		return
 	}
 
-	// Set Content-Disposition header for download
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", binaryPath))
+	// Calculate file hash
+	fileContent, err := os.ReadFile(binaryPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to read binary: %s", err)})
+		return
+	}
+	hash := sha256.Sum256(fileContent)
+	c.Header("X-Checksum-Sha256", hex.EncodeToString(hash[:]))
+
+	// Add headers for executable permission
 	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", binaryPath))
+	c.Header("Content-Transfer-Encoding", "binary")
+	c.Header("X-Content-Type-Options", "nosniff")
 
 	// Serve the file
 	c.File(binaryPath)
