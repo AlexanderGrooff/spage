@@ -163,3 +163,68 @@ func TextToGraphNodes(text []byte) ([]GraphNode, error) {
 
 	return tasks, nil
 }
+
+func CompilePlaybookForHost(graph Graph, inventoryFile, hostname string) (Graph, error) {
+	inventory, err := LoadInventory(inventoryFile)
+	if err != nil {
+		return Graph{}, fmt.Errorf("failed to load inventory: %w", err)
+	}
+	host, ok := inventory.Hosts[hostname]
+	if !ok {
+		return Graph{}, fmt.Errorf("host not found in inventory: %s", hostname)
+	}
+
+	return CompileGraphForHost(graph, *host)
+}
+
+// Compile the graph for a specific host by replacing variables with host-specific values.
+// This is useful for generating a binary for a specific host, where it can be used directly
+// without the need of an inventory file. It's as simple as downloading the binary and running it.
+func CompileGraphForHost(graph Graph, host Host) (Graph, error) {
+	// Create a copy of the graph to avoid modifying the original
+	compiledGraph := Graph{
+		RequiredInputs: graph.RequiredInputs,
+		Tasks:          make([][]GraphNode, len(graph.Tasks)),
+	}
+
+	// Replace variables in each task with host-specific values
+	for i, taskLayer := range graph.Tasks {
+		compiledGraph.Tasks[i] = make([]GraphNode, len(taskLayer))
+		for j, node := range taskLayer {
+			switch n := node.(type) {
+			case Task:
+				// Replace variables in task fields
+				task := n
+				// Get the value struct of the task
+				v := reflect.ValueOf(&task).Elem()
+
+				// Iterate through all fields of the task
+				for i := 0; i < v.NumField(); i++ {
+					field := v.Field(i)
+					// Only process string fields
+					if field.Kind() == reflect.String {
+						// Get the string value and template it
+						strVal := field.String()
+						if templated, err := TemplateString(strVal, host.Vars); err == nil {
+							field.SetString(templated)
+						}
+					}
+				}
+
+				// TODO: Template the params from inventory into the tasks if they exist
+				compiledGraph.Tasks[i][j] = task
+			case Graph:
+				// Recursively compile nested graphs
+				compiledNestedGraph, err := CompileGraphForHost(n, host)
+				if err != nil {
+					return Graph{}, fmt.Errorf("failed to compile nested graph: %w", err)
+				}
+				compiledGraph.Tasks[i][j] = compiledNestedGraph
+			default:
+				return Graph{}, fmt.Errorf("unknown node type: %T", node)
+			}
+		}
+	}
+
+	return compiledGraph, nil
+}

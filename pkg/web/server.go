@@ -89,6 +89,7 @@ func (s *Server) Start() {
 		api.GET("/binaries/grouped", s.handleListBinariesGrouped)
 		api.GET("/binaries/:id/download", s.handleDownload)
 		api.POST("/generate", s.handleGenerate)
+		api.POST("/generate/host/:id/:hostname", s.handleGenerateForHost)
 	}
 
 	// Swagger documentation
@@ -173,13 +174,48 @@ func (s *Server) handleGenerate(c *gin.Context) {
 	}
 
 	// Run go generate with the playbook file
-	binaryPath, err := s.generator.GenerateBinary(tmpFile.Name(), name)
+	graph, err := s.generator.GenerateGraphFromPlaybook(tmpFile.Name(), "")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to generate tasks: %s", err)})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Tasks generated successfully", "binaryPath": binaryPath})
+	c.JSON(http.StatusOK, gin.H{"message": "Graph generated successfully", "graph": graph})
+}
+
+// @Summary     Generate binary for host
+// @Description Generate a binary for a specific host
+// @Tags        generate
+// @Param       id path int true "Binary ID"
+// @Param       hostname path string true "Host name"
+// @Produce     json
+// @Success     200 {object} map[string]interface{}
+// @Failure     500 {object} ErrorResponse
+// @Router      /generate/host/{id}/{hostname} [post]
+func (s *Server) handleGenerateForHost(c *gin.Context) {
+	// id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	// if err != nil {
+	// 	c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid binary ID: %s", err)})
+	// 	return
+	// }
+
+	// binary, err := s.db.GetBinary(uint(id))
+	// if err != nil {
+	// 	c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get binary: %s", err)})
+	// 	return
+	// }
+	// graph, err := pkg.NewGraphFromPlaybook(binary.Playbook)
+	// if err != nil {
+	// 	c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to parse playbook: %s", err)})
+	// 	return
+	// }
+	// binaryPath, err := s.generator.BuildBinaryFromGraphForHost(&graph, binary.Name, "inventory.yaml", c.Param("hostname"))
+	// if err != nil {
+	// 	c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to generate tasks: %s", err)})
+	// 	return
+	// }
+	// c.JSON(http.StatusOK, gin.H{"message": "Tasks generated successfully", "binaryPath": binaryPath})
+	c.JSON(http.StatusOK, gin.H{"message": "TBD"})
 }
 
 // @Summary     List all binaries

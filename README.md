@@ -1,9 +1,12 @@
 ```bash
 go generate
 # OR
-go run generate_tasks.go -file task.yaml
+go run . generate -p playbook.yaml
 
+# Run across an inventory
 go run main.go -i inventory.yaml
+# Or compile for a specific host and run
+go run main.go -i inventory.yaml -H host1
 
 # Run the web server
 swag init -g pkg/web/server.go

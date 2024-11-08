@@ -55,16 +55,16 @@ func (db *DB) StoreBinary(name string, path string, playbook []byte) error {
 	return db.Create(&binary).Error
 }
 
-func (db *DB) GetBinaryVersions(name string) ([]Binary, error) {
+func (db *DB) GetBinaryByName(name string) ([]Binary, error) {
 	var binaries []Binary
 	err := db.Where("name = ?", name).Order("version desc").Find(&binaries).Error
 	return binaries, err
 }
 
-func (db *DB) GetBinaryVersionsById(id uint) ([]Binary, error) {
-	var binaries []Binary
-	err := db.Where("id = ?", id).Order("version desc").Find(&binaries).Error
-	return binaries, err
+func (db *DB) GetBinary(id uint) (*Binary, error) {
+	var binary Binary
+	err := db.Where("id = ?", id).First(&binary).Error
+	return &binary, err
 }
 
 func (db *DB) GetBinaryPathById(id uint) (string, error) {

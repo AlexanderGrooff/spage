@@ -7,7 +7,7 @@ groups:
     vars:
       nomad_role: server
     hosts:
-      nomad-server1:
+      nomad-server1: {}
   nomad-clients:
     vars:
       nomad_role: client

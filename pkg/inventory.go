@@ -26,6 +26,15 @@ func (h Host) String() string {
 	return h.Name
 }
 
+func (h *Host) Prepare() {
+	if h.Vars == nil {
+		h.Vars = make(map[string]interface{})
+	}
+	if h.Groups == nil {
+		h.Groups = make(map[string]string)
+	}
+}
+
 type Group struct {
 	Hosts map[string]*Host       `yaml:"hosts"`
 	Vars  map[string]interface{} `yaml:"vars"`
@@ -45,25 +54,30 @@ func LoadInventory(path string) (*Inventory, error) {
 	}
 	for name, host := range inventory.Hosts {
 		DebugOutput("Adding host %q to inventory", name)
+		host.Prepare()
 		host.Name = name
 		inventory.Hosts[name] = host
 	}
 	for groupName, group := range inventory.Groups {
 		for name, host := range group.Hosts {
-			if inventory.Hosts[name] != nil {
+			DebugOutput("Found host %q in group %q", name, groupName)
+			var h *Host
+			if h = inventory.Hosts[name]; h != nil {
 				DebugOutput("Host %q already in inventory", name)
-				for k, v := range group.Vars {
-					inventory.Hosts[name].Vars[k] = v
-				}
-				continue
+			} else {
+				h = host
 			}
-			DebugOutput("Adding host %q to inventory from group %q", name, groupName)
-			host.Name = name
-			if host.Vars == nil {
-				host.Vars = make(map[string]interface{})
+			h.Prepare()
+			if h.Host == "" {
+				h.Host = host.Host
+			}
+			if h.Name == "" {
+				h.Name = name
 			}
 
-			inventory.Hosts[name] = host
+			DebugOutput("Adding host %q to inventory from group %q", name, groupName)
+
+			inventory.Hosts[name] = h
 			for k, v := range group.Vars {
 				inventory.Hosts[name].Vars[k] = v
 			}

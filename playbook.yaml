@@ -1,22 +1,4 @@
 ---
 - name: basic packages
-  pacman:
-    name:
-      - git
-      - man-db
-  run_as: root
-
-- name: git clone yay
-  git:
-    repo: https://aur.archlinux.org/yay.git
-    dest: /tmp/yay
-  register: yay_git
-
-- name: install yay
   shell:
-    execute: cd {{ yay_git.Dest }} && makepkg -si --noconfirm
-  when: "{{ yay_git.Changed }}"
-
-# - name: nomad
-#   include:
-#     path: nomad.yaml
+    execute: echo "Hello, world!"

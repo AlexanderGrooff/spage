@@ -39,7 +39,7 @@ func (g Graph) String() string {
 
 func (g Graph) ToCode() string {
 	var f strings.Builder
-	fmt.Fprintln(&f, "var Graph = pkg.Graph{")
+	fmt.Fprintln(&f, "var GeneratedGraph = pkg.Graph{")
 	fmt.Fprintf(&f, "%sRequiredInputs: []string{\n", Indent(1))
 	for _, input := range g.RequiredInputs {
 		fmt.Fprintf(&f, "%s  %q,\n", Indent(2), input)
@@ -60,12 +60,35 @@ func (g Graph) ToCode() string {
 	return f.String()
 }
 
+func (g Graph) SaveToFile(path string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("error creating file: %v", err)
+	}
+	defer f.Close()
+	fmt.Printf("Compiling graph to code:\n%s", g)
+
+	fmt.Fprintln(f, "package generated")
+	fmt.Fprintln(f)
+	fmt.Fprintln(f, "import (")
+	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/pkg"`)
+	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/pkg/modules"`)
+	fmt.Fprintln(f, ")")
+	fmt.Fprintln(f)
+	fmt.Fprint(f, g.ToCode())
+	return nil
+}
+
 func NewGraphFromFile(path string) (Graph, error) {
 	// Read YAML file
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Graph{}, fmt.Errorf("error reading YAML file: %v", err)
 	}
+	return NewGraphFromPlaybook(data)
+}
+
+func NewGraphFromPlaybook(data []byte) (Graph, error) {
 
 	// Parse YAML
 	tasks, err := TextToGraphNodes(data)

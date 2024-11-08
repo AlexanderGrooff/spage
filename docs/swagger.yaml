@@ -135,4 +135,33 @@ paths:
       summary: Generate binary from playbook
       tags:
       - generate
+  /generate/host/{id}/{hostname}:
+    post:
+      description: Generate a binary for a specific host
+      parameters:
+      - description: Binary ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Host name
+        in: path
+        name: hostname
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/web.ErrorResponse'
+      summary: Generate binary for host
+      tags:
+      - generate
 swagger: "2.0"
