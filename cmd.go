@@ -90,9 +90,11 @@ func init() {
 
 	compileCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file (required)")
 	compileCmd.Flags().StringVarP(&hostname, "hostname", "", "", "Hostname (required)")
+	compileCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output file (required)")
 
 	compileCmd.MarkFlagRequired("inventory")
 	compileCmd.MarkFlagRequired("hostname")
+	compileCmd.MarkFlagRequired("output")
 
 	// Initialize database
 	var err error

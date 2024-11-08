@@ -20,7 +20,7 @@ func NewGenerator(db *database.DB) *Generator {
 	}
 }
 
-func CopyProjectFiles(srcDir, dstDir string) (string, error) {
+func CopyProjectFiles(srcDir string) (string, error) {
 	// Create a temporary directory for building
 	tmpDir, err := os.MkdirTemp("", "spage-build-*")
 	if err != nil {
@@ -35,6 +35,7 @@ func CopyProjectFiles(srcDir, dstDir string) (string, error) {
 		"generated",
 		"go.mod",
 		"go.sum",
+		"cmd.go",
 		"main.go",
 		"pkg",
 	}
@@ -51,7 +52,7 @@ func CopyProjectFiles(srcDir, dstDir string) (string, error) {
 func (g *Generator) GenerateGraphFromPlaybook(playbookPath string, outputDir string) (string, error) {
 	if outputDir == "" {
 		var err error
-		outputDir, err = CopyProjectFiles(playbookPath, "")
+		outputDir, err = CopyProjectFiles(playbookPath)
 		if err != nil {
 			return "", fmt.Errorf("failed to copy project files: %w", err)
 		}
@@ -71,25 +72,30 @@ func (g *Generator) GenerateGraphFromPlaybook(playbookPath string, outputDir str
 }
 
 func (g *Generator) BuildBinary(outputName string, defaultCmd string) (string, error) {
-	directory := filepath.Dir(outputName)
+	tmpDir, err := CopyProjectFiles(".")
+	if err != nil {
+		return "", fmt.Errorf("failed to copy project files: %w", err)
+	}
+	// defer os.RemoveAll(tmpDir)
+
 	// If defaultCmd is provided, create a custom main.go
 	if defaultCmd != "" {
 		mainContent := fmt.Sprintf(`package main
 
 func main() {
-	rootCmd.SetArgs([]string{"%s"})
-	rootCmd.Execute()
+	RootCmd.SetArgs([]string{"%s"})
+	RootCmd.Execute()
 }`, defaultCmd)
 
-		if err := os.WriteFile(filepath.Join(directory, "main.go"), []byte(mainContent), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(mainContent), 0644); err != nil {
 			return "", fmt.Errorf("failed to write custom main.go: %w", err)
 		}
 	}
 
 	// Build binary
-	outputPath := filepath.Join(directory, outputName)
+	outputPath := filepath.Join(tmpDir, outputName)
 	cmd := exec.Command("go", "build", "-o", outputPath)
-	cmd.Dir = directory
+	cmd.Dir = tmpDir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("failed to build binary: %s: %w", output, err)
 	}
