@@ -1,0 +1,187 @@
+{
+    "additional-repositories": [],
+    "archinstall-language": "English",
+    "bootloader": "Grub",
+    "config_version": "2.8.6",
+    "debug": false,
+    "disk_config": {
+        "config_type": "default_layout",
+        "device_modifications": [
+            {
+                "device": "/dev/sda",
+                "partitions": [
+                    {
+                        "btrfs": [],
+                        "dev_path": null,
+                        "flags": [
+                            "Boot"
+                        ],
+                        "fs_type": "fat32",
+                        "mount_options": [],
+                        "mountpoint": "/boot",
+                        "obj_id": "53455d5e-75c0-43a6-aa13-452454201235",
+                        "size": {
+                            "sector_size": {
+                                "unit": "B",
+                                "value": 512
+                            },
+                            "unit": "GiB",
+                            "value": 1
+                        },
+                        "start": {
+                            "sector_size": {
+                                "unit": "B",
+                                "value": 512
+                            },
+                            "unit": "MiB",
+                            "value": 3
+                        },
+                        "status": "create",
+                        "type": "primary"
+                    },
+                    {
+                        "btrfs": [
+                            {
+                                "mountpoint": "/",
+                                "name": "@"
+                            },
+                            {
+                                "mountpoint": "/home",
+                                "name": "@home"
+                            },
+                            {
+                                "mountpoint": "/var/log",
+                                "name": "@log"
+                            },
+                            {
+                                "mountpoint": "/var/cache/pacman/pkg",
+                                "name": "@pkg"
+                            },
+                            {
+                                "mountpoint": "/.snapshots",
+                                "name": "@.snapshots"
+                            }
+                        ],
+                        "dev_path": null,
+                        "flags": [],
+                        "fs_type": "btrfs",
+                        "mount_options": [
+                            "compress=zstd"
+                        ],
+                        "mountpoint": null,
+                        "obj_id": "f0485d9f-36dd-4ee7-ba01-1f74de1333f3",
+                        "size": {
+                            "sector_size": {
+                                "unit": "B",
+                                "value": 512
+                            },
+                            "unit": "B",
+                            "value": 33282850816
+                        },
+                        "start": {
+                            "sector_size": {
+                                "unit": "B",
+                                "value": 512
+                            },
+                            "unit": "B",
+                            "value": 1076887552
+                        },
+                        "status": "create",
+                        "type": "primary"
+                    }
+                ],
+                "wipe": true
+            }
+        ]
+    },
+    "hostname": "nomad-agent1",
+    "kernels": [
+        "linux"
+    ],
+    "locale_config": {
+        "kb_layout": "us",
+        "sys_enc": "UTF-8",
+        "sys_lang": "en_US"
+    },
+    "mirror_config": {
+        "custom_mirrors": [],
+        "mirror_regions": {
+            "Netherlands": [
+                "http://ftp.snt.utwente.nl/pub/os/linux/archlinux/$repo/os/$arch",
+                "http://ftp.nluug.nl/os/Linux/distr/archlinux/$repo/os/$arch",
+                "https://mirror.ams1.nl.leaseweb.net/archlinux/$repo/os/$arch",
+                "https://nl.mirrors.cicku.me/archlinux/$repo/os/$arch",
+                "http://mirror.ams1.nl.leaseweb.net/archlinux/$repo/os/$arch",
+                "http://nl.mirrors.cicku.me/archlinux/$repo/os/$arch",
+                "http://mirrors.xtom.nl/archlinux/$repo/os/$arch",
+                "http://mirror.cj2.nl/archlinux/$repo/os/$arch",
+                "http://arch.mirrors.lavatech.top/$repo/os/$arch",
+                "http://archlinux.mirror.wearetriple.com/$repo/os/$arch",
+                "https://archlinux.mirror.wearetriple.com/$repo/os/$arch",
+                "https://mirror.bouwhuis.network/archlinux/$repo/os/$arch",
+                "http://mirror.bouwhuis.network/archlinux/$repo/os/$arch",
+                "https://arch.mirrors.lavatech.top/$repo/os/$arch",
+                "https://mirror.cj2.nl/archlinux/$repo/os/$arch",
+                "https://mirrors.xtom.nl/archlinux/$repo/os/$arch",
+                "http://nl.mirror.flokinet.net/archlinux/$repo/os/$arch",
+                "https://nl.mirror.flokinet.net/archlinux/$repo/os/$arch",
+                "https://mirror.serverion.com/archlinux/$repo/os/$arch",
+                "http://mirror.mijn.host/archlinux/$repo/os/$arch",
+                "https://mirror.koddos.net/archlinux/$repo/os/$arch",
+                "http://mirror.koddos.net/archlinux/$repo/os/$arch",
+                "https://mirror.mijn.host/archlinux/$repo/os/$arch",
+                "http://mirror.serverion.com/archlinux/$repo/os/$arch",
+                "http://archlinux.mirror.liteserver.nl/$repo/os/$arch",
+                "https://archlinux.mirror.liteserver.nl/$repo/os/$arch",
+                "http://mirrors.evoluso.com/archlinux/$repo/os/$arch",
+                "http://mirror.lyrahosting.com/archlinux/$repo/os/$arch",
+                "https://mirror.lyrahosting.com/archlinux/$repo/os/$arch",
+                "https://mirror.i3d.net/pub/archlinux/$repo/os/$arch",
+                "http://mirror.i3d.net/pub/archlinux/$repo/os/$arch"
+            ]
+        }
+    },
+    "network_config": {
+        "type": "iso"
+    },
+    "no_pkg_lookups": false,
+    "ntp": true,
+    "offline": false,
+    "packages": [
+        "vim",
+        "htop",
+        "curl",
+        "sudo",
+        "git",
+        "man-db"
+    ],
+    "parallel downloads": 0,
+    "profile_config": {
+        "gfx_driver": null,
+        "greeter": null,
+        "profile": {
+            "custom_settings": {
+                "sshd": {}
+            },
+            "details": [
+                "sshd"
+            ],
+            "main": "Server"
+        }
+    },
+    "script": "guided",
+    "silent": false,
+    "skip_ntp": false,
+    "skip_version_check": false,
+    "swap": false,
+    "timezone": "Europe/Amsterdam",
+    "uki": false,
+    "version": "2.8.6",
+    "!users": [
+        {
+            "!password": "banaanbanaan",
+            "sudo": true,
+            "username": "alex"
+        }
+    ]
+}

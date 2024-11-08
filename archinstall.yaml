@@ -1,0 +1,28 @@
+---
+- name: ensure were in arch iso
+  shell:
+    execute: lsblk -f | grep "/run/archiso/bootmnt" && exit 0 || exit 1
+
+- name: create ssh dir
+  shell:
+    execute: mkdir -p .ssh
+
+- name: copy ssh key
+  shell:
+    execute: curl -sSL https://github.com/AlexanderGrooff.keys > .ssh/authorized_keys
+  after: create ssh dir
+
+- name: copy archinstall config
+  template:
+    src: archinstall.j2
+    dest: /tmp/archinstall.json
+
+- name: arch install
+  shell:
+    execute: archinstall --config /tmp/archinstall.json --silent
+  after: copy archinstall config
+
+- name: reboot
+  shell:
+    execute: reboot
+  after: arch install
