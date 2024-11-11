@@ -1,0 +1,81 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: spage_postgres
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - spage_network
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.1
+    container_name: spage_keycloak
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HOSTNAME_STRICT: false
+      KC_HOSTNAME_STRICT_HTTPS: false
+      KC_HTTP_ENABLED: true
+    command: 
+      - start-dev
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    networks:
+      - spage_network
+
+  backend:
+    build:
+      context: ../spage-api
+      dockerfile: Dockerfile
+    container_name: spage_backend
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings
+      - KEYCLOAK_SERVER_URL=http://keycloak:8080
+      - KEYCLOAK_REALM=spage
+      - KEYCLOAK_CLIENT_ID=spage-backend
+      - KEYCLOAK_CLIENT_SECRET=your-client-secret
+      - KEYCLOAK_VERIFY_SSL=false
+    volumes:
+      - ../spage-api:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - keycloak
+    networks:
+      - spage_network
+
+  frontend:
+    build:
+      context: ../spage-web
+      dockerfile: Dockerfile
+    container_name: spage_frontend
+    environment:
+      - NEXT_PUBLIC_KEYCLOAK_URL=http://keycloak:8080
+      - NEXT_PUBLIC_KEYCLOAK_REALM=spage
+      - NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=spage-frontend
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+    volumes:
+      - ../spage-web:/app
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - spage_network
+
+networks:
+  spage_network:
+    driver: bridge
+
+volumes:
+  postgres_data: 
