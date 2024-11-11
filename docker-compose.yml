@@ -6,6 +6,11 @@ services:
       POSTGRES_DB: keycloak
       POSTGRES_USER: keycloak
       POSTGRES_PASSWORD: keycloak
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "keycloak", "-d", "keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -47,6 +52,7 @@ services:
       - KEYCLOAK_VERIFY_SSL=false
     volumes:
       - ../spage-api:/app
+      - /app/.venv
     ports:
       - "8000:8000"
     depends_on:
@@ -60,12 +66,13 @@ services:
       dockerfile: Dockerfile
     container_name: spage_frontend
     environment:
-      - NEXT_PUBLIC_KEYCLOAK_URL=http://keycloak:8080
+      - NEXT_PUBLIC_KEYCLOAK_URL=http://localhost:8080
       - NEXT_PUBLIC_KEYCLOAK_REALM=spage
       - NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=spage-frontend
-      - NEXT_PUBLIC_API_URL=http://backend:8000
+      - NEXT_PUBLIC_SPAGE_API_BASE_URL=http://localhost:8000
     volumes:
       - ../spage-web:/app
+      - /app/node_modules
     ports:
       - "3000:3000"
     depends_on:
