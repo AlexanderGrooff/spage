@@ -47,8 +47,8 @@ services:
       - DJANGO_SETTINGS_MODULE=config.settings
       - KEYCLOAK_SERVER_URL=http://keycloak:8080
       - KEYCLOAK_REALM=spage
-      - KEYCLOAK_CLIENT_ID=spage-backend
-      - KEYCLOAK_CLIENT_SECRET=your-client-secret
+      - KEYCLOAK_CLIENT_ID=spage
+      # - KEYCLOAK_CLIENT_SECRET=change-me-in-production
       - KEYCLOAK_VERIFY_SSL=false
     volumes:
       - ../spage-api:/app
@@ -68,7 +68,7 @@ services:
     environment:
       - NEXT_PUBLIC_KEYCLOAK_URL=http://localhost:8080
       - NEXT_PUBLIC_KEYCLOAK_REALM=spage
-      - NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=spage-frontend
+      - NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=spage
       - NEXT_PUBLIC_SPAGE_API_BASE_URL=http://localhost:8000
     volumes:
       - ../spage-web:/app
