@@ -42,10 +42,22 @@ services:
     networks:
       - spage_network
 
+  db:
+    image: postgres:16
+    container_name: spage_db
+    environment:
+      POSTGRES_DB: spage
+      POSTGRES_USER: spage
+      POSTGRES_PASSWORD: spage
+    volumes:
+      - spage_db_data:/var/lib/postgresql/data
+    networks:
+      - spage_network
+
   backend:
     build:
-      context: ../spage-api
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: spage-api/Dockerfile
     container_name: spage_backend
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings
@@ -55,13 +67,14 @@ services:
       - KEYCLOAK_CLIENT_ID=spage-backend
       - KEYCLOAK_CLIENT_SECRET=TE7DYWz1thejNXSyCcZVql8MQ9YVINLz
       - KEYCLOAK_VERIFY_SSL=false
+      - DATABASE_URL=postgres://spage:spage@db:5432/spage
     volumes:
-      - ../spage-api:/app
       - /app/.venv
     ports:
       - "8000:8000"
     depends_on:
       - keycloak
+      - db
     networks:
       - spage_network
 
@@ -90,4 +103,5 @@ networks:
     driver: bridge
 
 volumes:
-  postgres_data: 
+  postgres_data:
+  spage_db_data:
