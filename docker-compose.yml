@@ -17,7 +17,7 @@ services:
       - spage_network
 
   keycloak:
-    image: quay.io/keycloak/keycloak:24.0.1
+    image: quay.io/keycloak/keycloak:26.0.5
     container_name: spage_keycloak
     environment:
       KC_DB: postgres
@@ -29,6 +29,10 @@ services:
       KC_HOSTNAME_STRICT: false
       KC_HOSTNAME_STRICT_HTTPS: false
       KC_HTTP_ENABLED: true
+
+      KC_LOG_LEVEL: info
+      KC_METRICS_ENABLED: true
+      KC_HEALTH_ENABLED: true
     command: 
       - start-dev
     ports:
@@ -46,9 +50,10 @@ services:
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings
       - KEYCLOAK_SERVER_URL=http://keycloak:8080
+      - KEYCLOAK_FRONTEND_URL=http://localhost:8080
       - KEYCLOAK_REALM=spage
-      - KEYCLOAK_CLIENT_ID=spage
-      # - KEYCLOAK_CLIENT_SECRET=change-me-in-production
+      - KEYCLOAK_CLIENT_ID=spage-backend
+      - KEYCLOAK_CLIENT_SECRET=TE7DYWz1thejNXSyCcZVql8MQ9YVINLz
       - KEYCLOAK_VERIFY_SSL=false
     volumes:
       - ../spage-api:/app
@@ -68,7 +73,7 @@ services:
     environment:
       - NEXT_PUBLIC_KEYCLOAK_URL=http://localhost:8080
       - NEXT_PUBLIC_KEYCLOAK_REALM=spage
-      - NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=spage
+      - NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=spage-frontend
       - NEXT_PUBLIC_SPAGE_API_BASE_URL=http://localhost:8000
     volumes:
       - ../spage-web:/app
