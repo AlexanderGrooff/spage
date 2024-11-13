@@ -65,7 +65,7 @@ services:
       - KEYCLOAK_FRONTEND_URL=http://localhost:8080
       - KEYCLOAK_REALM=spage
       - KEYCLOAK_CLIENT_ID=spage-backend
-      - KEYCLOAK_CLIENT_SECRET=TE7DYWz1thejNXSyCcZVql8MQ9YVINLz
+      - KEYCLOAK_CLIENT_SECRET=vUfinityJwsrDqQB5gyfb5X0mkf7cd5u
       - KEYCLOAK_VERIFY_SSL=false
       - DATABASE_URL=postgres://spage:spage@db:5432/spage
     volumes:
