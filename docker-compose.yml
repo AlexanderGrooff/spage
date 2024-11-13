@@ -69,6 +69,7 @@ services:
       - KEYCLOAK_VERIFY_SSL=false
       - DATABASE_URL=postgres://spage:spage@db:5432/spage
     volumes:
+      - ../spage-api:/app
       - /app/.venv
     ports:
       - "8000:8000"
@@ -91,6 +92,7 @@ services:
     volumes:
       - ../spage-web:/app
       - /app/node_modules
+      - /app/.next
     ports:
       - "3000:3000"
     depends_on:

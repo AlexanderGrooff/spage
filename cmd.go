@@ -45,7 +45,7 @@ var generateCmd = &cobra.Command{
 	Short: "Generate a graph from a playbook and save it as Go code",
 	Run: func(cmd *cobra.Command, args []string) {
 		gen := generator.NewGenerator(db)
-		binaryPath, err := gen.GenerateGraphFromPlaybook(playbookFile, ".")
+		binaryPath, err := gen.GenerateGraphFromPlaybook(playbookFile, outputFile)
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(1)
@@ -87,6 +87,7 @@ func init() {
 	generateCmd.Flags().StringVarP(&playbookFile, "playbook", "p", "", "Playbook file (required)")
 
 	generateCmd.MarkFlagRequired("playbook")
+	generateCmd.Flags().StringVarP(&outputFile, "output", "o", "generated/tasks.go", "Output file")
 
 	compileCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file (required)")
 	compileCmd.Flags().StringVarP(&hostname, "hostname", "", "", "Hostname (required)")

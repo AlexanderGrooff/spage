@@ -49,26 +49,31 @@ func CopyProjectFiles(srcDir string) (string, error) {
 	return tmpDir, nil
 }
 
-func (g *Generator) GenerateGraphFromPlaybook(playbookPath string, outputDir string) (string, error) {
-	if outputDir == "" {
-		var err error
-		outputDir, err = CopyProjectFiles(playbookPath)
-		if err != nil {
-			return "", fmt.Errorf("failed to copy project files: %w", err)
-		}
+func (g *Generator) GenerateGraphFromPlaybook(playbookPath string, outputFile string) (string, error) {
+	// if outputFile != "generated/tasks.go" {
+	// 	var err error
+	// 	outputDir, err = CopyProjectFiles(playbookPath)
+	// 	if err != nil {
+	// 		return "", fmt.Errorf("failed to copy project files: %w", err)
+	// 	}
 
-		// Copy playbook to temp directory
-		if err := pkg.CopyPath(playbookPath, filepath.Join(outputDir, playbookPath)); err != nil {
-			return "", fmt.Errorf("failed to copy playbook: %w", err)
-		}
+	// 	// Copy playbook to temp directory
+	// 	if err := pkg.CopyPath(playbookPath, filepath.Join(outputDir, playbookPath)); err != nil {
+	// 		return "", fmt.Errorf("failed to copy playbook: %w", err)
+	// 	}
+	// }
+
+	graph, err := pkg.NewGraphFromFile(playbookPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate graph: %w", err)
 	}
-	// Generate tasks
-	cmd := exec.Command("go", "run", "generate_tasks.go", "-file", playbookPath)
-	cmd.Dir = outputDir
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("failed to generate tasks: %s: %w", output, err)
+
+	err = graph.SaveToFile(outputFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to save graph to file: %w", err)
 	}
-	return filepath.Join(outputDir, "generated/tasks.go"), nil
+
+	return outputFile, nil
 }
 
 func (g *Generator) BuildBinary(outputName string, defaultCmd string) (string, error) {

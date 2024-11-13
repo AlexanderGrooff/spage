@@ -3,6 +3,7 @@ package pkg
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -61,6 +62,11 @@ func (g Graph) ToCode() string {
 }
 
 func (g Graph) SaveToFile(path string) error {
+	// Create all parent directories if they don't exist
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("error creating directories: %v", err)
+	}
+
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("error creating file: %v", err)
