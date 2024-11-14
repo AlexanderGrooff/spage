@@ -7,18 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/AlexanderGrooff/spage/pkg"
-	"github.com/AlexanderGrooff/spage/pkg/database"
 )
-
-type Generator struct {
-	db *database.DB
-}
-
-func NewGenerator(db *database.DB) *Generator {
-	return &Generator{
-		db: db,
-	}
-}
 
 func CopyProjectFiles(srcDir string) (string, error) {
 	// Create a temporary directory for building
@@ -29,7 +18,7 @@ func CopyProjectFiles(srcDir string) (string, error) {
 
 	// Use source files from /usr/local/src/spage
 	spageSrcDir := "/usr/local/src/spage"
-	
+
 	// Copy necessary files to temp directory
 	files := []string{
 		"docs",
@@ -53,7 +42,7 @@ func CopyProjectFiles(srcDir string) (string, error) {
 	return tmpDir, nil
 }
 
-func (g *Generator) GenerateGraphFromPlaybook(playbookPath string, outputFile string) (string, error) {
+func GenerateGraphFromPlaybook(playbookPath string, outputFile string) (string, error) {
 	// if outputFile != "generated/tasks.go" {
 	// 	var err error
 	// 	outputDir, err = CopyProjectFiles(playbookPath)
@@ -80,7 +69,7 @@ func (g *Generator) GenerateGraphFromPlaybook(playbookPath string, outputFile st
 	return outputFile, nil
 }
 
-func (g *Generator) BuildBinary(outputName string, defaultCmd string) (string, error) {
+func BuildBinary(outputName string, defaultCmd string) (string, error) {
 	tmpDir, err := CopyProjectFiles(".")
 	if err != nil {
 		return "", fmt.Errorf("failed to copy project files: %w", err)
@@ -116,54 +105,16 @@ func main() {
 	return outputName, nil
 }
 
-func (g *Generator) BuildBinaryFromGraphForHost(graph *pkg.Graph, outputName, inventoryFile, hostname string) (string, error) {
-	// binary, err := g.db.GetBinary(binaryId)
-	// if err != nil {
-	// 	return "", fmt.Errorf("failed to get binary path: %w", err)
-	// }
-
-	// graph, err := pkg.NewGraphFromPlaybook(binary.Playbook)
-	// if err != nil {
-	// 	return "", fmt.Errorf("failed to parse playbook: %w", err)
-	// }
-	// graph, err := pkg.CompilePlaybookForHost(graph, inventoryFile, hostname)
-	// if err != nil {
-	// 	return "", fmt.Errorf("failed to compile graph for host: %w", err)
-	// }
-
-	// tmpDir, err := os.MkdirTemp("", "spage-build-*")
-	// if err != nil {
-	// 	return "", fmt.Errorf("failed to create temp dir: %w", err)
-	// }
-	// // defer os.RemoveAll(tmpDir)
-
+func BuildBinaryFromGraphForHost(graph *pkg.Graph, outputName, inventoryFile, hostname string) (string, error) {
 	graphPath := filepath.Join(filepath.Dir(outputName), "generated/tasks.go")
 	if err := graph.SaveToFile(graphPath); err != nil {
 		return "", fmt.Errorf("failed to save compiled graph to playbook: %w", err)
 	}
 
-	binaryPath, err := g.BuildBinary(outputName, "run")
+	binaryPath, err := BuildBinary(outputName, "run")
 	if err != nil {
 		return "", fmt.Errorf("failed to build binary: %w", err)
 	}
 
-	// Store binary information in database with versioning
-	if err := g.db.StoreBinary(outputName, binaryPath, []byte(graph.ToCode())); err != nil {
-		return "", fmt.Errorf("failed to store binary in database: %w", err)
-	}
-
 	return binaryPath, nil
-}
-
-// New helper methods for the generator
-func (g *Generator) GetBinaryByName(name string) ([]database.Binary, error) {
-	return g.db.GetBinaryByName(name)
-}
-
-func (g *Generator) GetBinaryVersion(name string, version int) (*database.Binary, error) {
-	return g.db.GetBinaryVersion(name, version)
-}
-
-func (g *Generator) GetLatestBinary(name string) (*database.Binary, error) {
-	return g.db.GetLatestBinary(name)
 }

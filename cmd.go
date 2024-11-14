@@ -10,9 +10,7 @@ import (
 
 	"github.com/AlexanderGrooff/spage/generated"
 	"github.com/AlexanderGrooff/spage/pkg"
-	"github.com/AlexanderGrooff/spage/pkg/database"
 	"github.com/AlexanderGrooff/spage/pkg/generator"
-	"github.com/AlexanderGrooff/spage/pkg/web"
 )
 
 var (
@@ -20,8 +18,6 @@ var (
 	outputFile    string
 	inventoryFile string
 	hostname      string
-	db            *database.DB
-	graphFile     string
 )
 
 var RootCmd = &cobra.Command{
@@ -63,8 +59,7 @@ var generateCmd = &cobra.Command{
 			fmt.Printf("Failed to compile graph: %s\n", err)
 			os.Exit(1)
 		}
-		gen := generator.NewGenerator(db)
-		binaryPath, err := gen.BuildBinaryFromGraphForHost(&compiledGraph, outputFile, inventoryFile, hostname)
+		binaryPath, err := generator.BuildBinaryFromGraphForHost(&compiledGraph, outputFile, inventoryFile, hostname)
 		if err != nil {
 			fmt.Printf("Failed to build binary: %s\n", err)
 			os.Exit(1)
@@ -82,22 +77,12 @@ var compileCmd = &cobra.Command{
 			fmt.Println(err)
 			os.Exit(1)
 		}
-		gen := generator.NewGenerator(db)
-		binaryPath, err := gen.BuildBinaryFromGraphForHost(&compiledGraph, outputFile, inventoryFile, hostname)
+		binaryPath, err := generator.BuildBinaryFromGraphForHost(&compiledGraph, outputFile, inventoryFile, hostname)
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
 		fmt.Printf("Compiled binary in %s\n", binaryPath)
-	},
-}
-
-var webCmd = &cobra.Command{
-	Use:   "web",
-	Short: "Run the web server",
-	Run: func(cmd *cobra.Command, args []string) {
-		server := web.NewServer(db)
-		server.Start()
 	},
 }
 
@@ -119,16 +104,7 @@ func init() {
 	compileCmd.MarkFlagRequired("hostname")
 	compileCmd.MarkFlagRequired("output")
 
-	// Initialize database
-	var err error
-	db, err = database.NewDB("spage.db")
-	if err != nil {
-		fmt.Printf("Failed to initialize database: %s\n", err)
-		os.Exit(1)
-	}
-
 	RootCmd.AddCommand(runCmd)
 	RootCmd.AddCommand(generateCmd)
-	RootCmd.AddCommand(webCmd)
 	RootCmd.AddCommand(compileCmd)
 }
