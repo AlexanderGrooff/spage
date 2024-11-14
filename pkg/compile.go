@@ -191,40 +191,53 @@ func CompileGraphForHost(graph Graph, host Host) (Graph, error) {
 	for i, taskLayer := range graph.Tasks {
 		compiledGraph.Tasks[i] = make([]GraphNode, len(taskLayer))
 		for j, node := range taskLayer {
-			switch n := node.(type) {
-			case Task:
-				// Replace variables in task fields
-				task := n
-				// Get the value struct of the task
-				v := reflect.ValueOf(&task).Elem()
-
-				// Iterate through all fields of the task
-				for i := 0; i < v.NumField(); i++ {
-					field := v.Field(i)
-					// Only process string fields
-					if field.Kind() == reflect.String {
-						// Get the string value and template it
-						strVal := field.String()
-						if templated, err := TemplateString(strVal, host.Vars); err == nil {
-							field.SetString(templated)
-						}
-					}
-				}
-
-				// TODO: Template the params from inventory into the tasks if they exist
-				compiledGraph.Tasks[i][j] = task
-			case Graph:
-				// Recursively compile nested graphs
-				compiledNestedGraph, err := CompileGraphForHost(n, host)
-				if err != nil {
-					return Graph{}, fmt.Errorf("failed to compile nested graph: %w", err)
-				}
-				compiledGraph.Tasks[i][j] = compiledNestedGraph
-			default:
-				return Graph{}, fmt.Errorf("unknown node type: %T", node)
+			compiledNode, err := compileNode(node, host)
+			if err != nil {
+				return Graph{}, fmt.Errorf("failed to compile node: %w", err)
 			}
+			compiledGraph.Tasks[i][j] = compiledNode
 		}
 	}
 
 	return compiledGraph, nil
+}
+
+// compileNode handles compilation of a single graph node, replacing variables with host values
+func compileNode(node GraphNode, host Host) (GraphNode, error) {
+	switch n := node.(type) {
+	case Task:
+		// Replace variables in task fields
+		task := n
+		// Get the value struct of the task
+		v := reflect.ValueOf(&task).Elem()
+
+		// Iterate through all fields of the task
+		for i := 0; i < v.NumField(); i++ {
+			field := v.Field(i)
+			// Only process string fields
+			if field.Kind() == reflect.String {
+				// Get the string value and template it
+				strVal := field.String()
+				if templated, err := TemplateString(strVal, host.Vars); err == nil {
+					field.SetString(templated)
+				}
+			}
+		}
+
+		// TODO: Template the params from inventory into the tasks if they exist
+		return task, nil
+
+	case Graph:
+		// Recursively compile nested graphs
+		compiledNestedGraph, err := CompileGraphForHost(n, host)
+		if err != nil {
+			return nil, fmt.Errorf("failed to compile nested graph: %w", err)
+		}
+		return compiledNestedGraph, nil
+	case TaskNode:
+		return compileNode(n.Task, host)
+
+	default:
+		return nil, fmt.Errorf("unknown node type: %T", node)
+	}
 }

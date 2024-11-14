@@ -12,4 +12,17 @@
     execute: curl -sSL https://github.com/AlexanderGrooff.keys > .ssh/authorized_keys
   after: create ssh dir
 
-# NO TEMPLATES
+- name: copy archinstall config
+  template:
+    src: archinstall.j2
+    dest: /tmp/archinstall.json
+
+- name: arch install
+  shell:
+    execute: archinstall --config /tmp/archinstall.json --silent
+  after: copy archinstall config
+
+- name: reboot
+  shell:
+    execute: reboot
+  after: arch install

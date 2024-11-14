@@ -26,8 +26,10 @@ func CopyProjectFiles(srcDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	// defer os.RemoveAll(tmpDir)
 
+	// Use source files from /usr/local/src/spage
+	spageSrcDir := "/usr/local/src/spage"
+	
 	// Copy necessary files to temp directory
 	files := []string{
 		"docs",
@@ -41,7 +43,9 @@ func CopyProjectFiles(srcDir string) (string, error) {
 	}
 
 	for _, file := range files {
-		if err := pkg.CopyPath(file, filepath.Join(tmpDir, file)); err != nil {
+		srcPath := filepath.Join(spageSrcDir, file)
+		dstPath := filepath.Join(tmpDir, file)
+		if err := pkg.CopyPath(srcPath, dstPath); err != nil {
 			return "", fmt.Errorf("failed to copy %s: %w", file, err)
 		}
 	}
@@ -97,16 +101,19 @@ func main() {
 		}
 	}
 
+	// Ensure output directory exists
+	if err := os.MkdirAll(filepath.Dir(outputName), 0755); err != nil {
+		return "", fmt.Errorf("failed to create output directory: %w", err)
+	}
+
 	// Build binary
-	outputPath := filepath.Join(tmpDir, outputName)
-	cmd := exec.Command("go", "build", "-o", outputPath)
+	cmd := exec.Command("go", "build", "-o", outputName)
 	cmd.Dir = tmpDir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("failed to build binary: %s: %w", output, err)
 	}
-	fmt.Printf("Built binary in %s\n", outputPath)
 
-	return outputPath, nil
+	return outputName, nil
 }
 
 func (g *Generator) BuildBinaryFromGraphForHost(graph *pkg.Graph, outputName, inventoryFile, hostname string) (string, error) {
