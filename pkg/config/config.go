@@ -9,17 +9,8 @@ import (
 
 // Config holds all configuration settings
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
 	Logging  LoggingConfig  `mapstructure:"logging"`
 	Security SecurityConfig `mapstructure:"security"`
-}
-
-// ServerConfig holds server-related configuration
-type ServerConfig struct {
-	Port         string `mapstructure:"port"`
-	MetricsPort  string `mapstructure:"metrics_port"`
-	ReadTimeout  int    `mapstructure:"read_timeout"`
-	WriteTimeout int    `mapstructure:"write_timeout"`
 }
 
 // LoggingConfig holds logging-related configuration
@@ -64,12 +55,6 @@ func Load(configPaths ...string) (*Config, error) {
 }
 
 func setDefaults(v *viper.Viper) {
-	// Server defaults
-	v.SetDefault("server.port", "8080")
-	v.SetDefault("server.metrics_port", "9090")
-	v.SetDefault("server.read_timeout", 30)
-	v.SetDefault("server.write_timeout", 30)
-
 	// Logging defaults
 	v.SetDefault("logging.level", "info")
 	v.SetDefault("logging.file", "")

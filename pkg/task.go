@@ -62,23 +62,13 @@ func (t Task) ShouldExecute(c *HostContext) bool {
 
 func (t Task) ExecuteModule(c *HostContext) TaskResult {
 	startTime := time.Now()
-	labels := map[string]string{
-		"task":   t.Name,
-		"module": t.Module,
-		"host":   c.Host.Name,
-		"run_as": t.RunAs,
-	}
-
-	// Increment task execution counter
-	Inc("task_executions_total", labels)
-
 	r := TaskResult{Task: t, Context: c}
+
 	if !t.ShouldExecute(c) {
 		LogDebug("Skipping execution of task", map[string]interface{}{
 			"task": t.Name,
 			"host": c.Host.Name,
 		})
-		Inc("task_skips_total", labels)
 		return r
 	}
 
@@ -90,18 +80,13 @@ func (t Task) ExecuteModule(c *HostContext) TaskResult {
 	module, ok := GetModule(t.Module)
 	if !ok {
 		r.Error = fmt.Errorf("module %s not found", t.Module)
-		Inc("task_errors_total", labels)
 		return r
 	}
 
 	r.Output, r.Error = module.Execute(t.Params, c, t.RunAs)
 	duration := time.Since(startTime)
 
-	// Record execution duration
-	Observe("task_duration_seconds", duration.Seconds(), labels)
-
 	if r.Error != nil {
-		Inc("task_errors_total", labels)
 		LogError("Task execution failed", map[string]interface{}{
 			"task":     t.Name,
 			"host":     c.Host.Name,
@@ -109,9 +94,6 @@ func (t Task) ExecuteModule(c *HostContext) TaskResult {
 			"duration": duration,
 		})
 	} else {
-		if r.Output != nil && r.Output.Changed() {
-			Inc("task_changes_total", labels)
-		}
 		LogInfo("Task execution completed", map[string]interface{}{
 			"task":     t.Name,
 			"host":     c.Host.Name,
