@@ -1,0 +1,13 @@
+---
+- name: This is an invalid task
+  nonexistent_module:
+    invalid_param: value
+
+- name: Task with missing required parameters
+  shell:
+
+- name: Task with invalid syntax
+  file:
+    path: /tmp/test.txt
+    state: invalid_state
+    mode: "invalid_mode" 

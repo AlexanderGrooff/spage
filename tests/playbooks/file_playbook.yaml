@@ -1,0 +1,15 @@
+---
+- name: Create a test file
+  file:
+    path: /tmp/spage_test_file.txt
+    state: touch
+
+- name: Write content to file
+  copy:
+    content: "This is a test file created by spage\n"
+    dest: /tmp/spage_test_file.txt
+
+- name: Set file permissions
+  file:
+    path: /tmp/spage_test_file.txt
+    mode: "0644" 

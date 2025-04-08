@@ -1,0 +1,12 @@
+---
+- name: Create test directory
+  shell:
+    execute: mkdir -p /tmp/spage_test
+
+- name: Create test file in directory
+  shell:
+    execute: touch /tmp/spage_test/testfile.txt
+
+- name: Write some content to test file
+  shell:
+    execute: echo "Shell test successful" > /tmp/spage_test/testfile.txt 

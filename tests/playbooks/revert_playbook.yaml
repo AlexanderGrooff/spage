@@ -1,0 +1,7 @@
+---
+# This playbook tests revert functionality by making changes and then failing,
+# which should trigger the revert mechanism
+- name: Fail intentionally to trigger revert
+  shell:
+    execute: "exit 1" 
+    revert: "echo reverted > /tmp/revert_test.txt"
