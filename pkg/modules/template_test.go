@@ -2,9 +2,15 @@ package modules
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+)
+
+var (
+	fixturesDir = filepath.Join(filepath.Dir(os.Args[0]), "fixtures")
 )
 
 func TestTemplateModule_Execute(t *testing.T) {
@@ -21,58 +27,58 @@ func TestTemplateModule_Execute(t *testing.T) {
 		{
 			name: "template new file",
 			input: TemplateInput{
-				Src:  "templates/test.conf.j2",
-				Dest: "/etc/test.conf",
+				Src:  filepath.Join(fixturesDir, "templates", "test.conf.j2"),
+				Dest: "/tmp/test.conf",
 			},
 			mockOutput: map[string]struct {
 				fileContents string
 				err          error
 			}{
-				"templates/test.conf.j2": {
-					fileContents: "Hello {{ name }}!",
+				filepath.Join(fixturesDir, "templates", "test.conf.j2"): {
+					fileContents: "Hello {{ name }}!\n",
 				},
-				"/etc/test.conf": {
+				"/tmp/test.conf": {
 					fileContents: "",
 				},
 			},
 			wantOutput: TemplateOutput{
 				OriginalContents: "",
-				NewContents:      "Hello world!",
+				NewContents:      "Hello world!\n",
 			},
 		},
 		{
 			name: "update existing file",
 			input: TemplateInput{
-				Src:  "templates/test.conf.j2",
-				Dest: "/etc/test.conf",
+				Src:  filepath.Join(fixturesDir, "templates", "test.conf.j2"),
+				Dest: "/tmp/test.conf",
 			},
 			mockOutput: map[string]struct {
 				fileContents string
 				err          error
 			}{
-				"templates/test.conf.j2": {
+				filepath.Join(fixturesDir, "templates", "test.conf.j2"): {
 					fileContents: "Hello {{ name }}!",
 				},
-				"/etc/test.conf": {
+				"/tmp/test.conf": {
 					fileContents: "Hello old world!",
 				},
 			},
 			wantOutput: TemplateOutput{
 				OriginalContents: "Hello old world!",
-				NewContents:      "Hello world!",
+				NewContents:      "Hello world!\n",
 			},
 		},
 		{
 			name: "template source file not found",
 			input: TemplateInput{
-				Src:  "templates/nonexistent.conf.j2",
-				Dest: "/etc/test.conf",
+				Src:  filepath.Join(fixturesDir, "templates", "nonexistent.conf.j2"),
+				Dest: "/tmp/test.conf",
 			},
 			mockOutput: map[string]struct {
 				fileContents string
 				err          error
 			}{
-				"templates/nonexistent.conf.j2": {
+				filepath.Join(fixturesDir, "templates", "nonexistent.conf.j2"): {
 					err: fmt.Errorf("file not found"),
 				},
 			},
@@ -81,14 +87,14 @@ func TestTemplateModule_Execute(t *testing.T) {
 		{
 			name: "invalid template syntax",
 			input: TemplateInput{
-				Src:  "templates/invalid.conf.j2",
-				Dest: "/etc/test.conf",
+				Src:  filepath.Join(fixturesDir, "templates", "invalid.conf.j2"),
+				Dest: "/tmp/test.conf",
 			},
 			mockOutput: map[string]struct {
 				fileContents string
 				err          error
 			}{
-				"templates/invalid.conf.j2": {
+				filepath.Join(fixturesDir, "templates", "invalid.conf.j2"): {
 					fileContents: "Hello {{ invalid syntax",
 				},
 			},
@@ -132,8 +138,8 @@ func TestTemplateModule_Revert(t *testing.T) {
 		{
 			name: "revert file changes",
 			input: TemplateInput{
-				Src:  "templates/test.conf.j2",
-				Dest: "/etc/test.conf",
+				Src:  filepath.Join(fixturesDir, "templates", "test.conf.j2"),
+				Dest: "/tmp/test.conf",
 			},
 			previous: TemplateOutput{
 				OriginalContents: "Hello old world!",
@@ -143,7 +149,7 @@ func TestTemplateModule_Revert(t *testing.T) {
 				fileContents string
 				err          error
 			}{
-				"/etc/test.conf": {
+				"/tmp/test.conf": {
 					fileContents: "Hello world!",
 				},
 			},
@@ -155,8 +161,8 @@ func TestTemplateModule_Revert(t *testing.T) {
 		{
 			name: "revert with write error",
 			input: TemplateInput{
-				Src:  "templates/test.conf.j2",
-				Dest: "/etc/test.conf",
+				Src:  filepath.Join(fixturesDir, "templates", "test.conf.j2"),
+				Dest: "/tmp/test.conf",
 			},
 			previous: TemplateOutput{
 				OriginalContents: "Hello old world!",
@@ -166,7 +172,7 @@ func TestTemplateModule_Revert(t *testing.T) {
 				fileContents string
 				err          error
 			}{
-				"/etc/test.conf": {
+				"/tmp/test.conf": {
 					err: fmt.Errorf("permission denied"),
 				},
 			},
@@ -175,8 +181,8 @@ func TestTemplateModule_Revert(t *testing.T) {
 		{
 			name: "no previous state",
 			input: TemplateInput{
-				Src:  "templates/test.conf.j2",
-				Dest: "/etc/test.conf",
+				Src:  filepath.Join(fixturesDir, "templates", "test.conf.j2"),
+				Dest: "/tmp/test.conf",
 			},
 			previous:   TemplateOutput{},
 			wantOutput: TemplateOutput{},
@@ -212,22 +218,22 @@ func TestTemplateModule_ValidateInput(t *testing.T) {
 		{
 			name: "valid input",
 			input: TemplateInput{
-				Src:  "templates/test.conf.j2",
-				Dest: "/etc/test.conf",
+				Src:  filepath.Join(fixturesDir, "templates", "test.conf.j2"),
+				Dest: "/tmp/test.conf",
 			},
 			wantErr: false,
 		},
 		{
 			name: "missing src",
 			input: TemplateInput{
-				Dest: "/etc/test.conf",
+				Dest: "/tmp/test.conf",
 			},
 			wantErr: true,
 		},
 		{
 			name: "missing dest",
 			input: TemplateInput{
-				Src: "templates/test.conf.j2",
+				Src: filepath.Join(fixturesDir, "templates", "test.conf.j2"),
 			},
 			wantErr: true,
 		},

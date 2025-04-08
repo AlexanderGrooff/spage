@@ -134,7 +134,7 @@ func TestIncludeInput_GetVariableUsage(t *testing.T) {
 			input: IncludeInput{
 				Path: "tasks/test.yaml",
 			},
-			wantVars: []string{},
+			wantVars: []string(nil),
 		},
 		{
 			name: "path with variables",

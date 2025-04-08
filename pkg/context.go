@@ -40,7 +40,10 @@ type HostContext struct {
 }
 
 func ReadTemplateFile(filename string) (string, error) {
-	return ReadLocalFile("templates/" + filename)
+	if filename[0] != '/' {
+		return ReadLocalFile("templates/" + filename)
+	}
+	return ReadLocalFile(filename)
 }
 
 func ReadLocalFile(filename string) (string, error) {
