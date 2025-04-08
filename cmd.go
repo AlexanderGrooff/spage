@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/AlexanderGrooff/spage/pkg"
-	"github.com/AlexanderGrooff/spage/pkg/generator"
 )
 
 var (
@@ -40,12 +39,8 @@ var generateCmd = &cobra.Command{
 			fmt.Printf("Failed to compile graph: %s\n", err)
 			os.Exit(1)
 		}
-		binaryPath, err := generator.BuildBinaryFromGraphForHost(&compiledGraph, outputFile, inventoryFile, hostname)
-		if err != nil {
-			fmt.Printf("Failed to build binary: %s\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("Compiled binary in %s\n", binaryPath)
+		compiledGraph.SaveToFile(outputFile)
+		fmt.Printf("Compiled binary in %s\n", outputFile)
 	},
 }
 
