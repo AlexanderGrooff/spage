@@ -8,7 +8,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/AlexanderGrooff/spage/generated"
 	"github.com/AlexanderGrooff/spage/pkg"
 	"github.com/AlexanderGrooff/spage/pkg/generator"
 )
@@ -24,17 +23,6 @@ var RootCmd = &cobra.Command{
 	Use:   "spage",
 	Short: "Simple Playbook AGEnt",
 	Long:  `A lightweight configuration management tool that compiles your playbooks into a single binary per host.`,
-}
-
-var runCmd = &cobra.Command{
-	Use:   "run",
-	Short: "Run the playbook",
-	Run: func(cmd *cobra.Command, args []string) {
-		if err := pkg.Execute(generated.GeneratedGraph, inventoryFile); err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-	},
 }
 
 var generateCmd = &cobra.Command{
@@ -68,26 +56,7 @@ var generateCmd = &cobra.Command{
 	},
 }
 
-var compileCmd = &cobra.Command{
-	Use:   "compile",
-	Short: "Compile a graph and inventory to a binary for a specific host",
-	Run: func(cmd *cobra.Command, args []string) {
-		compiledGraph, err := pkg.CompilePlaybookForHost(generated.GeneratedGraph, inventoryFile, hostname)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-		binaryPath, err := generator.BuildBinaryFromGraphForHost(&compiledGraph, outputFile, inventoryFile, hostname)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-		fmt.Printf("Compiled binary in %s\n", binaryPath)
-	},
-}
-
 func init() {
-	runCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file (required)")
 	generateCmd.Flags().StringVarP(&playbookFile, "playbook", "p", "", "Playbook file (required)")
 	generateCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file (required)")
 	generateCmd.Flags().StringVarP(&hostname, "hostname", "H", "", "Hostname (required)")
@@ -98,13 +67,5 @@ func init() {
 	generateCmd.MarkFlagRequired("hostname")
 	generateCmd.MarkFlagRequired("output")
 
-	compileCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output file (required)")
-
-	compileCmd.MarkFlagRequired("inventory")
-	compileCmd.MarkFlagRequired("hostname")
-	compileCmd.MarkFlagRequired("output")
-
-	RootCmd.AddCommand(runCmd)
 	RootCmd.AddCommand(generateCmd)
-	RootCmd.AddCommand(compileCmd)
 }

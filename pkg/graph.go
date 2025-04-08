@@ -74,7 +74,7 @@ func (g Graph) SaveToFile(path string) error {
 	defer f.Close()
 	fmt.Printf("Compiling graph to code:\n%s", g)
 
-	fmt.Fprintln(f, "package generated")
+	fmt.Fprintln(f, "package main")
 	fmt.Fprintln(f)
 	fmt.Fprintln(f, "import (")
 	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/pkg"`)
@@ -82,6 +82,10 @@ func (g Graph) SaveToFile(path string) error {
 	fmt.Fprintln(f, ")")
 	fmt.Fprintln(f)
 	fmt.Fprint(f, g.ToCode())
+	fmt.Fprintln(f)
+	fmt.Fprintln(f, "func main() {")
+	fmt.Fprintln(f, "    pkg.Execute(GeneratedGraph, \"\")")
+	fmt.Fprintln(f, "}")
 	return nil
 }
 

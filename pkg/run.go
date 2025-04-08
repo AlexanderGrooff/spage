@@ -1,8 +1,10 @@
 package pkg
 
 import (
+	"context"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // getTasks returns all tasks from a GraphNode, handling both TaskList and Graph types
@@ -25,7 +27,15 @@ func getTasks(node GraphNode) []Task {
 	}
 }
 
-func Execute(graph Graph, inventoryFile string) error {
+// ExecuteWithTimeout wraps Execute with a timeout
+func ExecuteWithTimeout(graph Graph, inventoryFile string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return ExecuteWithContext(ctx, graph, inventoryFile)
+}
+
+// ExecuteWithContext executes the graph with context control
+func ExecuteWithContext(ctx context.Context, graph Graph, inventoryFile string) error {
 	var inventory *Inventory
 	var err error
 	if inventoryFile == "" {
@@ -49,15 +59,22 @@ func Execute(graph Graph, inventoryFile string) error {
 
 	var executedOnHost []map[string][]Task
 	for executionLevel, nodes := range graph.Tasks {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("execution cancelled: %w", ctx.Err())
+		default:
+		}
+
 		DebugOutput("Starting execution level %d\n", executionLevel)
 		var tasks []Task
 		for _, node := range nodes {
 			tasks = append(tasks, getTasks(node)...)
 		}
-		// Run all tasks of this level on all hosts in parallel, regardless of errors
+
 		numExpectedResults := len(tasks) * len(contexts)
 		ch := make(chan TaskResult, numExpectedResults)
 		var wg sync.WaitGroup
+		errCh := make(chan error, 1)
 
 		executedOnHost = append(executedOnHost, make(map[string][]Task))
 
@@ -66,10 +83,19 @@ func Execute(graph Graph, inventoryFile string) error {
 				wg.Add(1)
 				go func(task Task, c *HostContext) {
 					defer wg.Done()
-					ch <- task.ExecuteModule(c)
+					select {
+					case <-ctx.Done():
+						errCh <- ctx.Err()
+						return
+					default:
+						result := task.ExecuteModule(c)
+						ch <- result
+					}
 				}(task, c)
 			}
 		}
+
+		// Wait for completion or context cancellation
 		go func() {
 			wg.Wait()
 			close(ch)
@@ -77,23 +103,32 @@ func Execute(graph Graph, inventoryFile string) error {
 
 		// Process results
 		var errored bool
-		for result := range ch {
-			hostname := result.Context.Host.Name
-			task := result.Task
-			c := result.Context
-			fmt.Printf("[%s - %s]:execute\n", c.Host, task.Name)
-			c.History[task.Name] = result.Output
-			if task.Register != "" {
-				c.Facts[task.Register] = OutputToFacts(result.Output)
-			}
-			executedOnHost[executionLevel][hostname] = append(executedOnHost[executionLevel][hostname], task)
-			PPrintOutput(result.Output, result.Error)
+		for i := 0; i < numExpectedResults; i++ {
+			select {
+			case err := <-errCh:
+				return fmt.Errorf("execution cancelled: %w", err)
+			case result, ok := <-ch:
+				if !ok {
+					break
+				}
+				hostname := result.Context.Host.Name
+				task := result.Task
+				c := result.Context
+				fmt.Printf("[%s - %s]:execute\n", c.Host, task.Name)
+				c.History[task.Name] = result.Output
+				if task.Register != "" {
+					c.Facts[task.Register] = OutputToFacts(result.Output)
+				}
+				executedOnHost[executionLevel][hostname] = append(executedOnHost[executionLevel][hostname], task)
+				PPrintOutput(result.Output, result.Error)
 
-			if result.Error != nil {
-				DebugOutput("error executing '%s': %v\n\nREVERTING\n\n", task, result.Error)
-				errored = true
+				if result.Error != nil {
+					DebugOutput("error executing '%s': %v\n\nREVERTING\n\n", task, result.Error)
+					errored = true
+				}
 			}
 		}
+
 		if errored {
 			if err := RevertTasks(executedOnHost, contexts); err != nil {
 				return fmt.Errorf("run failed: %w", err)
@@ -104,6 +139,11 @@ func Execute(graph Graph, inventoryFile string) error {
 
 	DebugOutput("All tasks executed successfully")
 	return nil
+}
+
+// Original Execute function now wraps ExecuteWithContext
+func Execute(graph Graph, inventoryFile string) error {
+	return ExecuteWithContext(context.Background(), graph, inventoryFile)
 }
 
 func RevertTasks(executedTasks []map[string][]Task, contexts map[string]*HostContext) error {
