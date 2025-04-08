@@ -1,0 +1,11 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+By default, Spage will generate a program that is functionally identical to Ansible. However, Spage also allows for more complex behavior, such as conditional tasks, multiple hosts, and more.
+Spage acts as a drop-in replacement for Ansible, so any playbook that can be run with Ansible can also be run with Spage. There are extra features that Spage offers:
+
+- Revert functionality: Spage will automatically revert any changes made by a task if the task fails. You can specify a revert task for each task in the playbook.
+- Parallel execution: Spage will automatically parallelize tasks across all hosts, and you can control the flow with `before`/`after`.
+- No Python dependency: Spage is a single binary that can be run on any system.

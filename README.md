@@ -58,17 +58,28 @@ var GeneratedGraph = pkg.Graph{
 
 `spage` makes use of modules to execute tasks, just like Ansible. Modules are located in the `pkg/modules` directory. This includes modules such as `shell`, `template`, `systemd`, etc.
 
+## Ansible vs Spage
+
+By default, Spage will generate a program that is functionally identical to Ansible. However, Spage also allows for more complex behavior, such as conditional tasks, multiple hosts, and more.
+Spage acts as a drop-in replacement for Ansible, so any playbook that can be run with Ansible can also be run with Spage. There are extra features that Spage offers:
+
+- Revert functionality: Spage will automatically revert any changes made by a task if the task fails. You can specify a revert task for each task in the playbook.
+- Parallel execution: Spage will automatically parallelize tasks across all hosts, and you can control the flow with `before`/`after`.
+- No Python dependency: Spage is a single binary that can be run on any system.
+
 ## Usage
 
 ```bash
 go generate
 # OR
 go run . generate -p playbook.yaml
+# OR
+go run generate_tasks.go -file playbook.yaml
 
 # Run across an inventory
-go run main.go -i inventory.yaml
+go run generated/tasks.go -i inventory.yaml
 # Or compile for a specific host and run
-go run main.go -i inventory.yaml -H host1
+go run generated/tasks.go -i inventory.yaml
 ```
 
 TODO:
