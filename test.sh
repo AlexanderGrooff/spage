@@ -64,6 +64,10 @@ if [ ! -f /tmp/spage_test_file.txt ]; then
     exit 1
 fi
 
+echo "Running copy test..."
+go run generate_tasks.go -file $TESTS_DIR/playbooks/copy_playbook.yaml
+go run generated/tasks.go
+
 # Test 4: Error handling test
 echo "Running error handling test..."
 if go run generate_tasks.go -file $TESTS_DIR/playbooks/invalid_playbook.yaml; then

@@ -40,8 +40,7 @@ type SystemdInput struct {
 }
 
 type SystemdOutput struct {
-	PreviousState SystemdState `yaml:"previous_state"`
-	CurrentState  SystemdState `yaml:"current_state"`
+	State pkg.RevertableChange[SystemdState]
 	pkg.ModuleOutput
 }
 
@@ -69,11 +68,11 @@ func (i SystemdInput) Validate() error {
 }
 
 func (o SystemdOutput) String() string {
-	return fmt.Sprintf("  previous_state: %q\n  current_state: %q\n", o.PreviousState, o.CurrentState)
+	return fmt.Sprintf("  state: %q\n", o.State)
 }
 
 func (o SystemdOutput) Changed() bool {
-	return o.PreviousState != o.CurrentState
+	return o.State.Changed()
 }
 
 func (m SystemdModule) getCurrentState(name string, c *pkg.HostContext, runAs string) (SystemdState, error) {
@@ -141,14 +140,16 @@ func (m SystemdModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs
 		return SystemdOutput{}, fmt.Errorf("failed to start service %q", systemdParams.Name)
 	}
 	return SystemdOutput{
-		PreviousState: stateBeforeExecute,
-		CurrentState:  currentState,
+		State: pkg.RevertableChange[SystemdState]{
+			Before: stateBeforeExecute,
+			After:  currentState,
+		},
 	}, nil
 }
 
 func (m SystemdModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
 	systemdParams := params.(SystemdInput)
-	originalState := previous.(SystemdOutput).PreviousState
+	originalState := previous.(SystemdOutput).State.Before
 	stateBeforeRevert, err := m.getCurrentState(systemdParams.Name, c, runAs)
 	if err != nil {
 		return SystemdOutput{}, err
@@ -170,8 +171,10 @@ func (m SystemdModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previo
 		return SystemdOutput{}, err
 	}
 	return SystemdOutput{
-		PreviousState: stateBeforeRevert,
-		CurrentState:  stateAfterRevert,
+		State: pkg.RevertableChange[SystemdState]{
+			Before: stateBeforeRevert,
+			After:  stateAfterRevert,
+		},
 	}, nil
 }
 

@@ -26,9 +26,8 @@ type GitInput struct {
 }
 
 type GitOutput struct {
-	RevBefore string `yaml:"rev_before"`
-	RevAfter  string `yaml:"rev_after"`
-	Dest      string `yaml:"dest"`
+	Rev pkg.RevertableChange[string]
+	Dest string
 	pkg.ModuleOutput
 }
 
@@ -57,11 +56,11 @@ func (i GitInput) Validate() error {
 }
 
 func (o GitOutput) String() string {
-	return fmt.Sprintf("  rev_before: %q\n  rev_after: %q\n  dest: %q\n", o.RevBefore, o.RevAfter, o.Dest)
+	return fmt.Sprintf("  rev_before: %q\n  rev_after: %q\n  dest: %q\n", o.Rev.Before, o.Rev.After, o.Dest)
 }
 
 func (o GitOutput) Changed() bool {
-	return o.RevBefore != o.RevAfter
+	return o.Rev.Changed()
 }
 
 func (m GitModule) GetCurrentRev(dest string, c *pkg.HostContext, runAs string) (string, error) {
@@ -102,9 +101,11 @@ func (m GitModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs str
 		return nil, fmt.Errorf("failed to get current rev of repo %s: %w", gitParams.Dest, err)
 	}
 	return GitOutput{
-		RevBefore: revBefore,
-		RevAfter:  revAfter,
-		Dest:      gitParams.Dest,
+		Rev: pkg.RevertableChange[string]{
+			Before: revBefore,
+			After:  revAfter,
+		},
+		Dest: gitParams.Dest,
 	}, nil
 }
 
@@ -113,12 +114,14 @@ func (m GitModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous p
 	if previous != nil {
 		prev := previous.(GitOutput)
 		if prev.Changed() {
-			m.CheckoutVersion(gitParams.Dest, prev.RevBefore, c, runAs)
+			m.CheckoutVersion(gitParams.Dest, prev.Rev.Before, c, runAs)
 		}
 		return GitOutput{
-			RevBefore: prev.RevAfter,
-			RevAfter:  prev.RevBefore,
-			Dest:      gitParams.Dest,
+			Rev: pkg.RevertableChange[string]{
+				Before: prev.Rev.After,
+				After:  prev.Rev.Before,
+			},
+			Dest: gitParams.Dest,
 		}, nil
 	}
 	return GitOutput{Dest: gitParams.Dest}, nil

@@ -11,6 +11,14 @@ type ModuleOutput interface {
 	String() string
 	Changed() bool
 }
+type RevertableChange[T comparable] struct {
+	Before T
+	After  T
+}
+
+func (r RevertableChange[T]) Changed() bool {
+	return r.Before != r.After
+}
 
 func OutputToFacts(output ModuleOutput) Facts {
 	vars := make(Facts)

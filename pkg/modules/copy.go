@@ -25,10 +25,8 @@ type CopyInput struct {
 }
 
 type CopyOutput struct {
-	OriginalContents string
-	OriginalMode     string
-	NewContents      string
-	NewMode          string
+	Contents pkg.RevertableChange[string]
+	Mode     pkg.RevertableChange[string]
 	pkg.ModuleOutput
 }
 
@@ -58,12 +56,12 @@ func (i CopyInput) Validate() error {
 
 func (o CopyOutput) String() string {
 	return fmt.Sprintf("  original contents: %q, mode: %q\n  new contents: %q, mode: %q",
-		o.OriginalContents, o.OriginalMode,
-		o.NewContents, o.NewMode)
+		o.Contents.Before, o.Mode.Before,
+		o.Contents.After, o.Mode.After)
 }
 
 func (o CopyOutput) Changed() bool {
-	return o.OriginalContents != o.NewContents || o.OriginalMode != o.NewMode
+	return o.Contents.Changed() || o.Mode.Changed()
 }
 
 func (m CopyModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
@@ -95,10 +93,14 @@ func (m CopyModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 	}
 
 	return CopyOutput{
-		OriginalContents: originalContents,
-		OriginalMode:     originalMode,
-		NewContents:      p.Content,
-		NewMode:          newMode,
+		Contents: pkg.RevertableChange[string]{
+			Before: originalContents,
+			After:  p.Content,
+		},
+		Mode: pkg.RevertableChange[string]{
+			Before: originalMode,
+			After:  newMode,
+		},
 	}, nil
 }
 
@@ -115,22 +117,27 @@ func (m CopyModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous 
 	}
 
 	// Revert content
-	if err := c.WriteFile(p.Dest, prev.OriginalContents, runAs); err != nil {
+	if err := c.WriteFile(p.Dest, prev.Contents.Before, runAs); err != nil {
 		return nil, fmt.Errorf("failed to revert contents of %s: %v", p.Dest, err)
 	}
 
 	// Revert mode
-	if prev.OriginalMode != "" {
-		if _, _, err := c.RunCommand(fmt.Sprintf("chmod %s %s", prev.OriginalMode, p.Dest), runAs); err != nil {
+	if prev.Mode.Before != "" {
+		if _, _, err := c.RunCommand(fmt.Sprintf("chmod %s %s", prev.Mode.Before, p.Dest), runAs); err != nil {
 			return nil, fmt.Errorf("failed to chmod %s: %v", p.Dest, err)
 		}
 	}
 
+	// Flip the before and after values
 	return CopyOutput{
-		OriginalContents: prev.NewContents,
-		OriginalMode:     prev.NewMode,
-		NewContents:      prev.OriginalContents,
-		NewMode:          prev.OriginalMode,
+		Contents: pkg.RevertableChange[string]{
+			Before: prev.Contents.After,
+			After:  prev.Contents.Before,
+		},
+		Mode: pkg.RevertableChange[string]{
+			Before: prev.Mode.After,
+			After:  prev.Mode.Before,
+		},
 	}, nil
 }
 

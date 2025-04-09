@@ -26,10 +26,8 @@ type FileInput struct {
 }
 
 type FileOutput struct {
-	OriginalState string
-	OriginalMode  string
-	NewState      string
-	NewMode       string
+	State pkg.RevertableChange[string]
+	Mode  pkg.RevertableChange[string]
 	pkg.ModuleOutput
 }
 
@@ -57,12 +55,12 @@ func (i FileInput) Validate() error {
 
 func (o FileOutput) String() string {
 	return fmt.Sprintf("  original state: %q, mode: %q\n  new state: %q, mode: %q",
-		o.OriginalState, o.OriginalMode,
-		o.NewState, o.NewMode)
+		o.State.Before, o.Mode.Before,
+		o.State.After, o.Mode.After)
 }
 
 func (o FileOutput) Changed() bool {
-	return o.OriginalState != o.NewState || o.OriginalMode != o.NewMode
+	return o.State.Changed() || o.Mode.Changed()
 }
 
 func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
@@ -141,10 +139,14 @@ func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 	}
 
 	return FileOutput{
-		OriginalState: originalState,
-		OriginalMode:  originalMode,
-		NewState:      newState,
-		NewMode:       newMode,
+		State: pkg.RevertableChange[string]{
+			Before: originalState,
+			After:  newState,
+		},
+		Mode: pkg.RevertableChange[string]{
+			Before: originalMode,
+			After:  newMode,
+		},
 	}, nil
 }
 
@@ -161,7 +163,7 @@ func (m FileModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous 
 	}
 
 	// Revert state
-	switch prev.OriginalState {
+	switch prev.State.Before {
 	case "absent":
 		if _, _, err := c.RunCommand(fmt.Sprintf("rm -rf %s", p.Path), runAs); err != nil {
 			return nil, fmt.Errorf("failed to remove %s: %v", p.Path, err)
@@ -177,17 +179,22 @@ func (m FileModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous 
 	}
 
 	// Revert mode
-	if prev.OriginalMode != "" {
-		if _, _, err := c.RunCommand(fmt.Sprintf("chmod %s %s", prev.OriginalMode, p.Path), runAs); err != nil {
+	if prev.Mode.Before != "" {
+		if _, _, err := c.RunCommand(fmt.Sprintf("chmod %s %s", prev.Mode.Before, p.Path), runAs); err != nil {
 			return nil, fmt.Errorf("failed to chmod %s: %v", p.Path, err)
 		}
 	}
 
+	// Flip the before and after values
 	return FileOutput{
-		OriginalState: prev.NewState,
-		OriginalMode:  prev.NewMode,
-		NewState:      prev.OriginalState,
-		NewMode:       prev.OriginalMode,
+		State: pkg.RevertableChange[string]{
+			Before: prev.State.After,
+			After:  prev.State.Before,
+		},
+		Mode: pkg.RevertableChange[string]{
+			Before: prev.Mode.After,
+			After:  prev.Mode.Before,
+		},
 	}, nil
 }
 

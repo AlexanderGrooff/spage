@@ -24,8 +24,7 @@ type TemplateInput struct {
 }
 
 type TemplateOutput struct {
-	OriginalContents string
-	NewContents      string
+	Contents pkg.RevertableChange[string]
 	// TODO: track if file was created
 	pkg.ModuleOutput
 }
@@ -62,11 +61,11 @@ func (i TemplateInput) Validate() error {
 
 func (o TemplateOutput) String() string {
 	// TODO: show diff
-	return fmt.Sprintf("  original: %q\n  new: %q", o.OriginalContents, o.NewContents)
+	return fmt.Sprintf("  original: %q\n  new: %q", o.Contents.Before, o.Contents.After)
 }
 
 func (o TemplateOutput) Changed() bool {
-	return o.OriginalContents != o.NewContents
+	return o.Contents.Changed()
 }
 
 func (m TemplateModule) templateContentsToFile(src, dest string, c *pkg.HostContext, runAs string) (string, string, error) {
@@ -95,8 +94,10 @@ func (m TemplateModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runA
 		return nil, err
 	}
 	return TemplateOutput{
-		OriginalContents: original,
-		NewContents:      new,
+		Contents: pkg.RevertableChange[string]{
+			Before: original,
+			After:  new,
+		},
 	}, nil
 }
 
@@ -106,11 +107,16 @@ func (m TemplateModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previ
 	if previous != nil {
 		prev := previous.(TemplateOutput)
 		if prev.Changed() {
-			if err := c.WriteFile(p.Dest, prev.OriginalContents, runAs); err != nil {
+			if err := c.WriteFile(p.Dest, prev.Contents.Before, runAs); err != nil {
 				return TemplateOutput{}, fmt.Errorf("failed to place back original contents in %s", p.Dest)
 			}
 		}
-		return TemplateOutput{OriginalContents: prev.NewContents, NewContents: prev.OriginalContents}, nil
+		return TemplateOutput{
+			Contents: pkg.RevertableChange[string]{
+				Before: prev.Contents.After,
+				After:  prev.Contents.Before,
+			},
+		}, nil
 	}
 	pkg.DebugOutput("Not reverting because previous result was %v", previous)
 	return TemplateOutput{}, nil

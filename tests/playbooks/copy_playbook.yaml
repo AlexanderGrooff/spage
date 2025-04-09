@@ -1,0 +1,27 @@
+---
+- name: Create a test file
+  file:
+    path: /tmp/spage_test_file.txt
+    state: touch
+
+- name: Write content to file
+  copy:
+    content: "This is a test file created by spage\n"
+    dest: /tmp/spage_test_file.txt
+    mode: "0777"
+  after: Create a test file
+
+- name: Assert file contains content
+  shell:
+    execute: "grep -q 'This is a test file created by spage' /tmp/spage_test_file.txt || exit 1"
+  after: Write content to file
+  
+- name: Assert file mode is 0644
+  shell:
+    execute: "stat -c '%a' /tmp/spage_test_file.txt | grep -q '777' || exit 1"
+  after: Write content to file
+  
+- name: show file mode
+  shell:
+    execute: "stat /tmp/spage_test_file.txt"
+  after: Write content to file

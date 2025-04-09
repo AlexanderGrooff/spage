@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/AlexanderGrooff/spage/pkg"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -42,8 +43,10 @@ func TestTemplateModule_Execute(t *testing.T) {
 				},
 			},
 			wantOutput: TemplateOutput{
-				OriginalContents: "",
-				NewContents:      "Hello world!\n",
+				Contents: pkg.RevertableChange[string]{
+					Before: "",
+					After:  "Hello world!\n",
+				},
 			},
 		},
 		{
@@ -64,8 +67,10 @@ func TestTemplateModule_Execute(t *testing.T) {
 				},
 			},
 			wantOutput: TemplateOutput{
-				OriginalContents: "Hello old world!",
-				NewContents:      "Hello world!\n",
+				Contents: pkg.RevertableChange[string]{
+					Before: "Hello old world!",
+					After:  "Hello world!\n",
+				},
 			},
 		},
 		{
@@ -117,8 +122,8 @@ func TestTemplateModule_Execute(t *testing.T) {
 
 			assert.NoError(t, err)
 			templateOutput := output.(TemplateOutput)
-			assert.Equal(t, tt.wantOutput.OriginalContents, templateOutput.OriginalContents)
-			assert.Equal(t, tt.wantOutput.NewContents, templateOutput.NewContents)
+			assert.Equal(t, tt.wantOutput.Contents.Before, templateOutput.Contents.Before)
+			assert.Equal(t, tt.wantOutput.Contents.After, templateOutput.Contents.After)
 		})
 	}
 }
@@ -142,8 +147,10 @@ func TestTemplateModule_Revert(t *testing.T) {
 				Dest: "/tmp/test.conf",
 			},
 			previous: TemplateOutput{
-				OriginalContents: "Hello old world!",
-				NewContents:      "Hello world!",
+				Contents: pkg.RevertableChange[string]{
+					Before: "Hello old world!",
+					After:  "Hello world!",
+				},
 			},
 			mockOutput: map[string]struct {
 				fileContents string
@@ -154,8 +161,10 @@ func TestTemplateModule_Revert(t *testing.T) {
 				},
 			},
 			wantOutput: TemplateOutput{
-				OriginalContents: "Hello world!",
-				NewContents:      "Hello old world!",
+				Contents: pkg.RevertableChange[string]{
+					Before: "Hello world!",
+					After:  "Hello old world!",
+				},
 			},
 		},
 		{
@@ -165,8 +174,10 @@ func TestTemplateModule_Revert(t *testing.T) {
 				Dest: "/tmp/test.conf",
 			},
 			previous: TemplateOutput{
-				OriginalContents: "Hello old world!",
-				NewContents:      "Hello world!",
+				Contents: pkg.RevertableChange[string]{
+					Before: "Hello old world!",
+					After:  "Hello world!",
+				},
 			},
 			mockOutput: map[string]struct {
 				fileContents string
@@ -203,8 +214,8 @@ func TestTemplateModule_Revert(t *testing.T) {
 
 			assert.NoError(t, err)
 			templateOutput := output.(TemplateOutput)
-			assert.Equal(t, tt.wantOutput.OriginalContents, templateOutput.OriginalContents)
-			assert.Equal(t, tt.wantOutput.NewContents, templateOutput.NewContents)
+			assert.Equal(t, tt.wantOutput.Contents.Before, templateOutput.Contents.Before)
+			assert.Equal(t, tt.wantOutput.Contents.After, templateOutput.Contents.After)
 		})
 	}
 }
