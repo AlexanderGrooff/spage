@@ -9,10 +9,40 @@ import (
 var logger = logrus.New()
 
 func init() {
-	// Set default configuration
-	logger.SetFormatter(&logrus.JSONFormatter{})
+	// Default configuration will be overridden when config is loaded
+	setLogFormatter("plain")
 	logger.SetOutput(os.Stdout)
 	logger.SetLevel(logrus.InfoLevel)
+}
+
+// setLogFormatter sets the log formatter based on the specified format
+func setLogFormatter(format string) {
+	switch format {
+	case "json":
+		logger.SetFormatter(&logrus.JSONFormatter{})
+	case "yaml":
+		// YAML format is achieved by using text formatter with custom sorting
+		logger.SetFormatter(&logrus.TextFormatter{
+			DisableColors:   true,
+			TimestampFormat: "2006-01-02 15:04:05",
+			SortingFunc: func(keys []string) {
+				// Sort keys to ensure consistent YAML-like output
+				for i := 0; i < len(keys); i++ {
+					for j := i + 1; j < len(keys); j++ {
+						if keys[i] > keys[j] {
+							keys[i], keys[j] = keys[j], keys[i]
+						}
+					}
+				}
+			},
+		})
+	default: // "plain"
+		logger.SetFormatter(&logrus.TextFormatter{
+			DisableColors:   false,
+			TimestampFormat: "2006-01-02 15:04:05",
+			FullTimestamp:   true,
+		})
+	}
 }
 
 // SetLogLevel sets the logging level
@@ -33,6 +63,11 @@ func SetLogFile(path string) error {
 	}
 	logger.SetOutput(file)
 	return nil
+}
+
+// SetOutputFormat sets the output format for logging
+func SetOutputFormat(format string) {
+	setLogFormatter(format)
 }
 
 // SetExecutionID sets a execution ID field that will be included in all subsequent log entries

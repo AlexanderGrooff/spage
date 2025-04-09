@@ -29,8 +29,8 @@ trap cleanup EXIT
 
 # Test 1: Template playbook test
 echo "Running template playbook test..."
-go run generate_tasks.go -file $TESTS_DIR/playbooks/template_playbook.yaml
-go run generated/tasks.go
+go run main.go generate -p $TESTS_DIR/playbooks/template_playbook.yaml -o generated_tasks.go
+go run generated_tasks.go
 
 # Check if the template files were created
 if [ ! -f ./test.conf ]; then
@@ -44,8 +44,8 @@ fi
 
 # Test 2: Shell command execution test
 echo "Running shell command test..."
-go run generate_tasks.go -file $TESTS_DIR/playbooks/shell_playbook.yaml
-go run generated/tasks.go
+go run main.go generate -p $TESTS_DIR/playbooks/shell_playbook.yaml -o generated_tasks.go
+go run generated_tasks.go
 
 # Check if the test directory was created
 if [ ! -d /tmp/spage_test ]; then
@@ -55,8 +55,8 @@ fi
 
 # Test 3: File operations test
 echo "Running file operations test..."
-go run generate_tasks.go -file $TESTS_DIR/playbooks/file_playbook.yaml
-go run generated/tasks.go
+go run main.go generate -p $TESTS_DIR/playbooks/file_playbook.yaml -o generated_tasks.go
+go run generated_tasks.go
 
 # Check if test file exists with correct content
 if [ ! -f /tmp/spage_test_file.txt ]; then
@@ -65,20 +65,20 @@ if [ ! -f /tmp/spage_test_file.txt ]; then
 fi
 
 echo "Running copy test..."
-go run generate_tasks.go -file $TESTS_DIR/playbooks/copy_playbook.yaml
-go run generated/tasks.go
+go run main.go generate -p $TESTS_DIR/playbooks/copy_playbook.yaml -o generated_tasks.go
+go run generated_tasks.go
 
 # Test 4: Error handling test
 echo "Running error handling test..."
-if go run generate_tasks.go -file $TESTS_DIR/playbooks/invalid_playbook.yaml; then
+if go run main.go generate -p $TESTS_DIR/playbooks/invalid_playbook.yaml -o generated_tasks.go; then
     echo "Error handling test failed: should have errored on invalid playbook"
     exit 1
 fi
 
 # Test 5: Multi-step playbook test
 echo "Running multi-step playbook test..."
-go run generate_tasks.go -file $TESTS_DIR/playbooks/multi_step_playbook.yaml
-go run generated/tasks.go
+go run main.go generate -p $TESTS_DIR/playbooks/multi_step_playbook.yaml -o generated_tasks.go
+go run generated_tasks.go
 
 # Check multi-step results
 if [ ! -f /tmp/step1.txt ] || [ ! -f /tmp/step2.txt ]; then
@@ -96,11 +96,11 @@ mkdir -p /tmp/revert_test_dir
 echo "initial template" > /tmp/revert_test.conf
 
 # Run revert test playbook
-go run generate_tasks.go -file $TESTS_DIR/playbooks/revert_playbook.yaml
+go run main.go generate -p $TESTS_DIR/playbooks/revert_playbook.yaml -o generated_tasks.go
 
 # Temporarily disable exit on error for the failing command
 set +e
-go run generated/tasks.go
+go run generated_tasks.go
 REVERT_EXIT_CODE=$?
 set -e
 

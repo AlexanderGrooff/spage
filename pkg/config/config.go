@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/AlexanderGrooff/spage/pkg"
 	"github.com/spf13/viper"
 )
 
 // Config holds all configuration settings
 type Config struct {
-	Logging  LoggingConfig  `mapstructure:"logging"`
-	Security SecurityConfig `mapstructure:"security"`
+	Logging      LoggingConfig `mapstructure:"logging"`
+	OutputFormat string        `mapstructure:"output_format"`
 }
 
 // LoggingConfig holds logging-related configuration
@@ -19,12 +20,8 @@ type LoggingConfig struct {
 	File  string `mapstructure:"file"`
 }
 
-// SecurityConfig holds security-related configuration
-type SecurityConfig struct {
-	EnableTLS bool   `mapstructure:"enable_tls"`
-	CertFile  string `mapstructure:"cert_file"`
-	KeyFile   string `mapstructure:"key_file"`
-}
+// ValidOutputFormats contains the list of supported output formats
+var ValidOutputFormats = []string{"json", "yaml", "plain"}
 
 // Load loads configuration from files and environment variables
 func Load(configPaths ...string) (*Config, error) {
@@ -51,6 +48,21 @@ func Load(configPaths ...string) (*Config, error) {
 		return nil, fmt.Errorf("error unmarshaling config: %w", err)
 	}
 
+	// Validate output format
+	if !isValidOutputFormat(config.OutputFormat) {
+		return nil, fmt.Errorf("invalid output format %q. Valid formats are: %s",
+			config.OutputFormat, strings.Join(ValidOutputFormats, ", "))
+	}
+
+	// Apply logging configuration
+	pkg.SetLogLevel(config.Logging.Level)
+	if config.Logging.File != "" {
+		if err := pkg.SetLogFile(config.Logging.File); err != nil {
+			return nil, fmt.Errorf("error setting log file: %w", err)
+		}
+	}
+	pkg.SetOutputFormat(config.OutputFormat)
+
 	return &config, nil
 }
 
@@ -58,9 +70,16 @@ func setDefaults(v *viper.Viper) {
 	// Logging defaults
 	v.SetDefault("logging.level", "info")
 	v.SetDefault("logging.file", "")
+	// Output format default
+	v.SetDefault("output_format", "plain")
+}
 
-	// Security defaults
-	v.SetDefault("security.enable_tls", false)
-	v.SetDefault("security.cert_file", "")
-	v.SetDefault("security.key_file", "")
+// isValidOutputFormat checks if the given format is supported
+func isValidOutputFormat(format string) bool {
+	for _, validFormat := range ValidOutputFormats {
+		if format == validFormat {
+			return true
+		}
+	}
+	return false
 }
