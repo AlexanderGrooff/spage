@@ -1,30 +1,65 @@
 package pkg
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/sirupsen/logrus"
 )
 
-var logger = logrus.New()
+// LogFormat represents a supported logging format
+type LogFormat string
+
+// Available log formats
+const (
+	LogFormatPlain LogFormat = "plain"
+	LogFormatJSON  LogFormat = "json"
+	LogFormatYAML  LogFormat = "yaml"
+)
+
+var (
+	logger = logrus.New()
+	// ValidLogFormats contains all supported logging formats
+	ValidLogFormats = []LogFormat{LogFormatPlain, LogFormatJSON, LogFormatYAML}
+)
 
 func init() {
 	// Default configuration will be overridden when config is loaded
-	setLogFormatter("plain")
+	if err := SetLogFormat(string(LogFormatPlain)); err != nil {
+		// This should never happen with the default format
+		fmt.Fprintf(os.Stderr, "Failed to set default log format: %v\n", err)
+	}
 	logger.SetOutput(os.Stdout)
 	logger.SetLevel(logrus.InfoLevel)
 }
 
-// setLogFormatter sets the log formatter based on the specified format
-func setLogFormatter(format string) {
-	switch format {
-	case "json":
-		logger.SetFormatter(&logrus.JSONFormatter{})
-	case "yaml":
+// IsValidLogFormat checks if the given format is supported
+func IsValidLogFormat(format string) bool {
+	for _, validFormat := range ValidLogFormats {
+		if string(validFormat) == format {
+			return true
+		}
+	}
+	return false
+}
+
+// SetLogFormat sets the log formatter based on the specified format
+func SetLogFormat(format string) error {
+	if !IsValidLogFormat(format) {
+		return fmt.Errorf("invalid log format %q. Valid formats are: %v", format, ValidLogFormats)
+	}
+
+	switch LogFormat(format) {
+	case LogFormatJSON:
+		logger.SetFormatter(&logrus.JSONFormatter{
+			TimestampFormat: "2006-01-02 15:04:05",
+		})
+	case LogFormatYAML:
 		// YAML format is achieved by using text formatter with custom sorting
 		logger.SetFormatter(&logrus.TextFormatter{
 			DisableColors:   true,
 			TimestampFormat: "2006-01-02 15:04:05",
+			FullTimestamp:   true,
 			SortingFunc: func(keys []string) {
 				// Sort keys to ensure consistent YAML-like output
 				for i := 0; i < len(keys); i++ {
@@ -36,13 +71,14 @@ func setLogFormatter(format string) {
 				}
 			},
 		})
-	default: // "plain"
+	case LogFormatPlain:
 		logger.SetFormatter(&logrus.TextFormatter{
 			DisableColors:   false,
 			TimestampFormat: "2006-01-02 15:04:05",
 			FullTimestamp:   true,
 		})
 	}
+	return nil
 }
 
 // SetLogLevel sets the logging level
@@ -65,9 +101,11 @@ func SetLogFile(path string) error {
 	return nil
 }
 
-// SetOutputFormat sets the output format for logging
+// SetOutputFormat is deprecated, use SetLogFormat instead
 func SetOutputFormat(format string) {
-	setLogFormatter(format)
+	if err := SetLogFormat(format); err != nil {
+		logger.Warnf("Failed to set output format: %v", err)
+	}
 }
 
 // SetExecutionID sets a execution ID field that will be included in all subsequent log entries

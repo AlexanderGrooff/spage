@@ -6,3 +6,6 @@
 
 spage.db
 tmp
+spage.log
+spage.yaml
+generated_tasks.go

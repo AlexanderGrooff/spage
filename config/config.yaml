@@ -1,8 +1,0 @@
-logging:
-  level: "info"
-  file: "logs/spage.log"
-
-security:
-  enable_tls: false
-  cert_file: ""
-  key_file: "" 

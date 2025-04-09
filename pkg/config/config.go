@@ -10,14 +10,14 @@ import (
 
 // Config holds all configuration settings
 type Config struct {
-	Logging      LoggingConfig `mapstructure:"logging"`
-	OutputFormat string        `mapstructure:"output_format"`
+	Logging LoggingConfig `mapstructure:"logging"`
 }
 
 // LoggingConfig holds logging-related configuration
 type LoggingConfig struct {
-	Level string `mapstructure:"level"`
-	File  string `mapstructure:"file"`
+	Level  string `mapstructure:"level"`
+	File   string `mapstructure:"file"`
+	Format string `mapstructure:"format"`
 }
 
 // ValidOutputFormats contains the list of supported output formats
@@ -49,9 +49,9 @@ func Load(configPaths ...string) (*Config, error) {
 	}
 
 	// Validate output format
-	if !isValidOutputFormat(config.OutputFormat) {
+	if !isValidOutputFormat(config.Logging.Format) {
 		return nil, fmt.Errorf("invalid output format %q. Valid formats are: %s",
-			config.OutputFormat, strings.Join(ValidOutputFormats, ", "))
+			config.Logging.Format, strings.Join(ValidOutputFormats, ", "))
 	}
 
 	// Apply logging configuration
@@ -61,7 +61,7 @@ func Load(configPaths ...string) (*Config, error) {
 			return nil, fmt.Errorf("error setting log file: %w", err)
 		}
 	}
-	pkg.SetOutputFormat(config.OutputFormat)
+	pkg.SetOutputFormat(config.Logging.Format)
 
 	return &config, nil
 }
@@ -70,8 +70,7 @@ func setDefaults(v *viper.Viper) {
 	// Logging defaults
 	v.SetDefault("logging.level", "info")
 	v.SetDefault("logging.file", "")
-	// Output format default
-	v.SetDefault("output_format", "plain")
+	v.SetDefault("logging.format", "plain")
 }
 
 // isValidOutputFormat checks if the given format is supported
