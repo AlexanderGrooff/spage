@@ -72,7 +72,9 @@ func (g Graph) SaveToFile(path string) error {
 		return fmt.Errorf("error creating file: %v", err)
 	}
 	defer f.Close()
-	fmt.Printf("Compiling graph to code:\n%s", g)
+	LogInfo("Compiling graph to code", map[string]interface{}{
+		"graph": g.String(),
+	})
 
 	fmt.Fprintln(f, "package main")
 	fmt.Fprintln(f)

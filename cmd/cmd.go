@@ -19,7 +19,7 @@ var (
 	configFile    string
 )
 
-var LoadConfig = func(configFile string) error{
+var LoadConfig = func(configFile string) error {
 	// Load configuration
 	configPaths := []string{}
 
@@ -63,12 +63,16 @@ var generateCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		graph, err := pkg.NewGraphFromFile(playbookFile)
 		if err != nil {
-			fmt.Printf("Failed to generate graph: %s", err)
+			pkg.LogError("Failed to generate graph", map[string]interface{}{
+				"error": err.Error(),
+			})
 			os.Exit(1)
 		}
 
 		graph.SaveToFile(outputFile)
-		fmt.Printf("Compiled binary in %s\n", outputFile)
+		pkg.LogInfo("Compiled binary", map[string]interface{}{
+			"output_file": outputFile,
+		})
 		// graph, err := pkg.NewGraphFromFile(playbookFile)
 		// if err != nil {
 		// 	fmt.Printf("Failed to generate graph: %s\n", err)

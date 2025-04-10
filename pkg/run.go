@@ -39,8 +39,18 @@ func ExecuteWithContext(ctx context.Context, graph Graph, inventoryFile string) 
 	var inventory *Inventory
 	var err error
 	if inventoryFile == "" {
-		fmt.Printf("No inventory file specified. Assuming target is this machine\n")
-		inventory = &Inventory{Hosts: map[string]*Host{"localhost": {Name: "localhost", IsLocal: true, Host: "localhost"}}}
+		LogInfo("No inventory file specified", map[string]interface{}{
+			"message": "Assuming target is this machine",
+		})
+		inventory = &Inventory{
+			Hosts: map[string]*Host{
+				"localhost": {
+					Name:    "localhost",
+					IsLocal: true,
+					Host:    "localhost",
+				},
+			},
+		}
 	} else {
 		inventory, err = LoadInventory(inventoryFile)
 		if err != nil {
@@ -114,7 +124,10 @@ func ExecuteWithContext(ctx context.Context, graph Graph, inventoryFile string) 
 				hostname := result.Context.Host.Name
 				task := result.Task
 				c := result.Context
-				fmt.Printf("[%s - %s]:execute\n", c.Host, task.Name)
+				LogInfo("Executing task", map[string]interface{}{
+					"host": c.Host,
+					"task": task.Name,
+				})
 				c.History[task.Name] = result.Output
 				if task.Register != "" {
 					c.Facts[task.Register] = OutputToFacts(result.Output)
