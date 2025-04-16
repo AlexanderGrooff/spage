@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/AlexanderGrooff/spage/pkg"
+	// "github.com/AlexanderGrooff/spage/pkg" // Removed to break import cycle
 	"github.com/spf13/viper"
 )
 
 // Config holds all configuration settings
 type Config struct {
-	Logging LoggingConfig `mapstructure:"logging"`
+	Logging       LoggingConfig `mapstructure:"logging"`
+	ExecutionMode string        `mapstructure:"execution_mode"`
 }
 
 // LoggingConfig holds logging-related configuration
@@ -22,6 +23,9 @@ type LoggingConfig struct {
 
 // ValidOutputFormats contains the list of supported output formats
 var ValidOutputFormats = []string{"json", "yaml", "plain"}
+
+// ValidExecutionModes contains the list of supported execution modes
+var ValidExecutionModes = []string{"parallel", "sequential"}
 
 // Load loads configuration from files and environment variables
 func Load(configPaths ...string) (*Config, error) {
@@ -54,14 +58,11 @@ func Load(configPaths ...string) (*Config, error) {
 			config.Logging.Format, strings.Join(ValidOutputFormats, ", "))
 	}
 
-	// Apply logging configuration
-	pkg.SetLogLevel(config.Logging.Level)
-	if config.Logging.File != "" {
-		if err := pkg.SetLogFile(config.Logging.File); err != nil {
-			return nil, fmt.Errorf("error setting log file: %w", err)
-		}
+	// Validate execution mode
+	if !isValidExecutionMode(config.ExecutionMode) {
+		return nil, fmt.Errorf("invalid execution mode %q. Valid modes are: %s",
+			config.ExecutionMode, strings.Join(ValidExecutionModes, ", "))
 	}
-	pkg.SetOutputFormat(config.Logging.Format)
 
 	return &config, nil
 }
@@ -71,12 +72,23 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("logging.level", "info")
 	v.SetDefault("logging.file", "")
 	v.SetDefault("logging.format", "plain")
+	v.SetDefault("execution_mode", "parallel")
 }
 
 // isValidOutputFormat checks if the given format is supported
 func isValidOutputFormat(format string) bool {
 	for _, validFormat := range ValidOutputFormats {
 		if format == validFormat {
+			return true
+		}
+	}
+	return false
+}
+
+// isValidExecutionMode checks if the given execution mode is supported
+func isValidExecutionMode(mode string) bool {
+	for _, validMode := range ValidExecutionModes {
+		if mode == validMode {
 			return true
 		}
 	}

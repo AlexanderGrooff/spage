@@ -6,7 +6,9 @@
 - name: Create test file in directory
   shell:
     execute: touch /tmp/spage_test/testfile.txt
+  after: Create test directory
 
 - name: Write some content to test file
   shell:
-    execute: echo "Shell test successful" > /tmp/spage_test/testfile.txt 
+    execute: echo "Shell test successful" > /tmp/spage_test/testfile.txt
+  after: Create test file in directory

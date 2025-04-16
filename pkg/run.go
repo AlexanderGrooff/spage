@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/AlexanderGrooff/spage/pkg/config"
 )
 
 // getTasks returns all tasks from a GraphNode, handling both TaskList and Graph types
@@ -28,14 +30,14 @@ func getTasks(node GraphNode) []Task {
 }
 
 // ExecuteWithTimeout wraps Execute with a timeout
-func ExecuteWithTimeout(graph Graph, inventoryFile string, timeout time.Duration) error {
+func ExecuteWithTimeout(cfg *config.Config, graph Graph, inventoryFile string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	return ExecuteWithContext(ctx, graph, inventoryFile)
+	return ExecuteWithContext(ctx, cfg, graph, inventoryFile)
 }
 
 // ExecuteWithContext executes the graph with context control
-func ExecuteWithContext(ctx context.Context, graph Graph, inventoryFile string) error {
+func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, inventoryFile string) error {
 	var inventory *Inventory
 	var err error
 	if inventoryFile == "" {
@@ -82,64 +84,96 @@ func ExecuteWithContext(ctx context.Context, graph Graph, inventoryFile string) 
 		}
 
 		numExpectedResults := len(tasks) * len(contexts)
-		ch := make(chan TaskResult, numExpectedResults)
-		var wg sync.WaitGroup
+		resultsCh := make(chan TaskResult, numExpectedResults)
 		errCh := make(chan error, 1)
+		var wg sync.WaitGroup
 
 		executedOnHost = append(executedOnHost, make(map[string][]Task))
 
-		for _, task := range tasks {
-			for _, c := range contexts {
-				wg.Add(1)
-				go func(task Task, c *HostContext) {
-					defer wg.Done()
-					select {
-					case <-ctx.Done():
-						errCh <- ctx.Err()
-						return
-					default:
-						result := task.ExecuteModule(c)
-						ch <- result
-					}
-				}(task, c)
+		if cfg.ExecutionMode == "parallel" {
+			for _, task := range tasks {
+				for _, c := range contexts {
+					wg.Add(1)
+					go func(task Task, c *HostContext) {
+						defer wg.Done()
+						select {
+						case <-ctx.Done():
+							errCh <- ctx.Err()
+							return
+						default:
+							result := task.ExecuteModule(c)
+							resultsCh <- result
+						}
+					}(task, c)
+				}
 			}
-		}
 
-		// Wait for completion or context cancellation
-		go func() {
-			wg.Wait()
-			close(ch)
-		}()
+			// Wait for completion or context cancellation in parallel mode
+			go func() {
+				wg.Wait()
+				close(resultsCh)
+			}()
+		} else { // sequential execution
+			go func() {
+				defer close(resultsCh)
+				for _, task := range tasks {
+					for _, c := range contexts {
+						select {
+						case <-ctx.Done():
+							errCh <- ctx.Err()
+							return
+						default:
+							result := task.ExecuteModule(c)
+							resultsCh <- result
+							// If a task fails in sequential mode, stop this level
+							if result.Error != nil {
+								return
+							}
+						}
+					}
+				}
+			}()
+		}
 
 		// Process results
 		var errored bool
-		for i := 0; i < numExpectedResults; i++ {
-			select {
-			case err := <-errCh:
-				return fmt.Errorf("execution cancelled: %w", err)
-			case result, ok := <-ch:
-				if !ok {
-					break
-				}
-				hostname := result.Context.Host.Name
-				task := result.Task
-				c := result.Context
-				LogInfo("Executing task", map[string]interface{}{
-					"host": c.Host,
-					"task": task.Name,
-				})
-				c.History[task.Name] = result.Output
-				if task.Register != "" {
-					c.Facts[task.Register] = OutputToFacts(result.Output)
-				}
-				executedOnHost[executionLevel][hostname] = append(executedOnHost[executionLevel][hostname], task)
-				PPrintOutput(result.Output, result.Error)
+		resultCount := 0
+		for result := range resultsCh {
+			resultCount++
+			hostname := result.Context.Host.Name
+			task := result.Task
+			c := result.Context
+			LogInfo("Executing task", map[string]interface{}{
+				"host": c.Host,
+				"task": task.Name,
+			})
+			c.History[task.Name] = result.Output
+			if task.Register != "" {
+				c.Facts[task.Register] = OutputToFacts(result.Output)
+			}
+			executedOnHost[executionLevel][hostname] = append(executedOnHost[executionLevel][hostname], task)
+			PPrintOutput(result.Output, result.Error)
 
-				if result.Error != nil {
-					DebugOutput("error executing '%s': %v\n\nREVERTING\n\n", task, result.Error)
-					errored = true
+			if result.Error != nil {
+				DebugOutput("error executing '%s': %v\n\nREVERTING\n\n", task, result.Error)
+				errored = true
+				if cfg.ExecutionMode == "sequential" {
+					// Drain remaining results if any (shouldn't be many in sequential error case)
+					go func() {
+						for range resultsCh {
+						}
+					}()
+					break // Stop processing results for this level
 				}
 			}
+		}
+
+		// Check for context cancellation errors that might have occurred
+		select {
+		case err := <-errCh:
+			return fmt.Errorf("execution cancelled: %w", err)
+		default:
+			// No error from errCh
 		}
 
 		if errored {
@@ -148,15 +182,27 @@ func ExecuteWithContext(ctx context.Context, graph Graph, inventoryFile string) 
 			}
 			return fmt.Errorf("reverted all tasks")
 		}
+
+		// Ensure all expected results were processed (especially important for parallel mode)
+		if cfg.ExecutionMode == "parallel" && resultCount != numExpectedResults {
+			// This might indicate an issue like premature channel closing or context cancellation
+			// Check context error again for clarity
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("execution cancelled during result processing: %w", ctx.Err())
+			default:
+				return fmt.Errorf("internal error: expected %d results, got %d", numExpectedResults, resultCount)
+			}
+		}
 	}
 
 	DebugOutput("All tasks executed successfully")
 	return nil
 }
 
-// Original Execute function now wraps ExecuteWithContext
-func Execute(graph Graph, inventoryFile string) error {
-	return ExecuteWithContext(context.Background(), graph, inventoryFile)
+// Original Execute function now needs the config
+func Execute(cfg *config.Config, graph Graph, inventoryFile string) error {
+	return ExecuteWithContext(context.Background(), cfg, graph, inventoryFile)
 }
 
 func RevertTasks(executedTasks []map[string][]Task, contexts map[string]*HostContext) error {

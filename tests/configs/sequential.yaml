@@ -1,0 +1,3 @@
+execution_mode: sequential
+logging:
+  level: info # Or debug for more details 

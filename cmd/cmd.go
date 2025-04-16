@@ -17,34 +17,43 @@ var (
 	inventoryFile string
 	hostname      string
 	configFile    string
+	cfg           *config.Config // Store the loaded config
 )
 
+// LoadConfig loads the configuration and applies settings
 var LoadConfig = func(configFile string) error {
-	// Load configuration
 	configPaths := []string{}
-
-	// If no config file specified, try to use spage.yaml from current directory
 	if configFile == "" {
 		defaultConfig := "spage.yaml"
 		if _, err := os.Stat(defaultConfig); err == nil {
 			configPaths = append(configPaths, defaultConfig)
 		}
 	} else {
-		// Use specified config file
 		configPaths = append(configPaths, configFile)
 	}
 
-	_, err := config.Load(configPaths...)
+	var err error
+	cfg, err = config.Load(configPaths...)
 	if err != nil {
-		// Only report error for missing config file if it was explicitly specified
 		if configFile != "" || !os.IsNotExist(err) {
-			return fmt.Errorf("failed to load configuration: %w", configPaths, err)
+			return fmt.Errorf("failed to load configuration from %v: %w", configPaths, err)
 		}
-		// If no config file found, proceed with defaults
-		if _, err := config.Load(); err != nil {
+		// If no specific config file found/specified, try loading defaults
+		cfg, err = config.Load() // Load defaults
+		if err != nil {
 			return fmt.Errorf("failed to load default configuration: %w", err)
 		}
 	}
+
+	// Apply logging configuration AFTER loading config
+	pkg.SetLogLevel(cfg.Logging.Level)
+	if cfg.Logging.File != "" {
+		if err := pkg.SetLogFile(cfg.Logging.File); err != nil {
+			return fmt.Errorf("error setting log file: %w", err)
+		}
+	}
+	pkg.SetOutputFormat(cfg.Logging.Format)
+
 	return nil
 }
 
@@ -103,4 +112,9 @@ func init() {
 	// generateCmd.MarkFlagRequired("hostname")
 
 	RootCmd.AddCommand(generateCmd)
+}
+
+// GetConfig returns the loaded configuration
+func GetConfig() *config.Config {
+	return cfg
 }
