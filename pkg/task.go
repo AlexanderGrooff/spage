@@ -9,10 +9,11 @@ import (
 
 // Useful for having a single type to pass around in channels
 type TaskResult struct {
-	Output  ModuleOutput
-	Error   error
-	Context *HostContext
-	Task    Task
+	Output   ModuleOutput
+	Error    error
+	Context  *HostContext
+	Task     Task
+	Duration time.Duration
 }
 
 type Task struct {
@@ -72,11 +73,6 @@ func (t Task) ExecuteModule(c *HostContext) TaskResult {
 		return r
 	}
 
-	LogInfo("Starting task execution", map[string]interface{}{
-		"task": t.Name,
-		"host": c.Host.Name,
-	})
-
 	module, ok := GetModule(t.Module)
 	if !ok {
 		r.Error = fmt.Errorf("module %s not found", t.Module)
@@ -85,31 +81,18 @@ func (t Task) ExecuteModule(c *HostContext) TaskResult {
 
 	r.Output, r.Error = module.Execute(t.Params, c, t.RunAs)
 	duration := time.Since(startTime)
-
-	if r.Error != nil {
-		LogError("Task execution failed", map[string]interface{}{
-			"task":     t.Name,
-			"host":     c.Host.Name,
-			"error":    r.Error,
-			"duration": duration,
-		})
-	} else {
-		LogInfo("Task execution completed", map[string]interface{}{
-			"task":     t.Name,
-			"host":     c.Host.Name,
-			"changed":  r.Output != nil && r.Output.Changed(),
-			"duration": duration,
-		})
-	}
+	r.Duration = duration
 
 	return r
 }
 
 func (t Task) RevertModule(c *HostContext) TaskResult {
 	r := TaskResult{Task: t, Context: c}
-	fmt.Printf("[%s - %s]:revert\n", c.Host, t.Name)
 	if !t.ShouldExecute(c) {
-		DebugOutput("Skipping revert of task %q on %q", t.Name, c.Host)
+		LogDebug("Skipping revert of task", map[string]interface{}{
+			"task": t.Name,
+			"host": c.Host.Name,
+		})
 		return r
 	}
 	module, ok := GetModule(t.Module)

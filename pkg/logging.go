@@ -147,8 +147,8 @@ func LogError(msg string, fields map[string]interface{}) {
 	logger.WithFields(fields).Error(msg)
 }
 
-// DebugOutput is maintained for backward compatibility
-// It should be removed in favor of structured logging in the future
+// DebugOutput logs a debug message using fmt.Sprintf style formatting.
+// It respects the configured log level and formatter (including plain text, JSON, YAML).
 func DebugOutput(format string, args ...interface{}) {
 	logger.Debugf(format, args...)
 }
