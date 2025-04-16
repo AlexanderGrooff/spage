@@ -52,7 +52,10 @@ var LoadConfig = func(configFile string) error {
 			return fmt.Errorf("error setting log file: %w", err)
 		}
 	}
-	pkg.SetOutputFormat(cfg.Logging.Format)
+	// Call SetLogFormat with the loaded logging config
+	if err := pkg.SetLogFormat(cfg.Logging); err != nil {
+		return fmt.Errorf("error setting log format: %w", err)
+	}
 
 	return nil
 }

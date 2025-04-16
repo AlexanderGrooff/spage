@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/AlexanderGrooff/spage/pkg/config"
 	"github.com/sirupsen/logrus"
 )
 
@@ -25,12 +26,17 @@ var (
 
 func init() {
 	// Default configuration will be overridden when config is loaded
-	if err := SetLogFormat(string(LogFormatPlain)); err != nil {
+	// Initialize with default config settings
+	defaultLoggingCfg := config.LoggingConfig{
+		Format:     string(LogFormatPlain),
+		Timestamps: true, // Default timestamp setting
+	}
+	if err := SetLogFormat(defaultLoggingCfg); err != nil {
 		// This should never happen with the default format
 		fmt.Fprintf(os.Stderr, "Failed to set default log format: %v\n", err)
 	}
 	logger.SetOutput(os.Stdout)
-	logger.SetLevel(logrus.InfoLevel)
+	logger.SetLevel(logrus.InfoLevel) // Default level, overridden later
 }
 
 // IsValidLogFormat checks if the given format is supported
@@ -43,23 +49,30 @@ func IsValidLogFormat(format string) bool {
 	return false
 }
 
-// SetLogFormat sets the log formatter based on the specified format
-func SetLogFormat(format string) error {
-	if !IsValidLogFormat(format) {
-		return fmt.Errorf("invalid log format %q. Valid formats are: %v", format, ValidLogFormats)
+// SetLogFormat sets the log formatter based on the logging configuration
+func SetLogFormat(loggingCfg config.LoggingConfig) error {
+	if !IsValidLogFormat(loggingCfg.Format) {
+		return fmt.Errorf("invalid log format %q. Valid formats are: %v", loggingCfg.Format, ValidLogFormats)
 	}
 
-	switch LogFormat(format) {
+	timestampFormat := ""
+	if loggingCfg.Timestamps {
+		timestampFormat = "2006-01-02 15:04:05"
+	}
+
+	switch LogFormat(loggingCfg.Format) {
 	case LogFormatJSON:
 		logger.SetFormatter(&logrus.JSONFormatter{
-			TimestampFormat: "2006-01-02 15:04:05",
+			TimestampFormat:  timestampFormat,
+			DisableTimestamp: !loggingCfg.Timestamps,
 		})
 	case LogFormatYAML:
 		// YAML format is achieved by using text formatter with custom sorting
 		logger.SetFormatter(&logrus.TextFormatter{
-			DisableColors:   true,
-			TimestampFormat: "2006-01-02 15:04:05",
-			FullTimestamp:   true,
+			DisableColors:    true,
+			TimestampFormat:  timestampFormat,
+			FullTimestamp:    loggingCfg.Timestamps,
+			DisableTimestamp: !loggingCfg.Timestamps,
 			SortingFunc: func(keys []string) {
 				// Sort keys to ensure consistent YAML-like output
 				for i := 0; i < len(keys); i++ {
@@ -73,9 +86,10 @@ func SetLogFormat(format string) error {
 		})
 	case LogFormatPlain:
 		logger.SetFormatter(&logrus.TextFormatter{
-			DisableColors:   false,
-			TimestampFormat: "2006-01-02 15:04:05",
-			FullTimestamp:   true,
+			DisableColors:    false,
+			TimestampFormat:  timestampFormat,
+			FullTimestamp:    loggingCfg.Timestamps,
+			DisableTimestamp: !loggingCfg.Timestamps,
 		})
 	}
 	return nil
@@ -102,9 +116,15 @@ func SetLogFile(path string) error {
 }
 
 // SetOutputFormat is deprecated, use SetLogFormat instead
+// Note: This function cannot honor the timestamp setting as it doesn't receive the full config.
 func SetOutputFormat(format string) {
-	if err := SetLogFormat(format); err != nil {
-		logger.Warnf("Failed to set output format: %v", err)
+	// Create a temporary logging config with default timestamp setting
+	tempLoggingCfg := config.LoggingConfig{
+		Format:     format,
+		Timestamps: true, // Cannot know the actual config value here
+	}
+	if err := SetLogFormat(tempLoggingCfg); err != nil {
+		logger.Warnf("Failed to set output format using deprecated function: %v", err)
 	}
 }
 

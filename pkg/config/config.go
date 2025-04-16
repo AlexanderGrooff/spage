@@ -16,9 +16,10 @@ type Config struct {
 
 // LoggingConfig holds logging-related configuration
 type LoggingConfig struct {
-	Level  string `mapstructure:"level"`
-	File   string `mapstructure:"file"`
-	Format string `mapstructure:"format"`
+	Level      string `mapstructure:"level"`
+	File       string `mapstructure:"file"`
+	Format     string `mapstructure:"format"`
+	Timestamps bool   `mapstructure:"timestamps"`
 }
 
 // ValidOutputFormats contains the list of supported output formats
@@ -73,6 +74,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("logging.file", "")
 	v.SetDefault("logging.format", "plain")
 	v.SetDefault("execution_mode", "parallel")
+	v.SetDefault("logging.timestamps", true)
 }
 
 // isValidOutputFormat checks if the given format is supported
