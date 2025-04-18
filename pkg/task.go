@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"fmt"
+	"github.com/AlexanderGrooff/spage/pkg/common"
 	"time"
 
 	"github.com/flosch/pongo2"
@@ -47,9 +48,9 @@ func (t Task) ShouldExecute(c *HostContext) bool {
 	if t.When != "" {
 		templatedWhen, err := TemplateString(t.When, c.Facts)
 		pythonResult := pongo2.AsValue(templatedWhen)
-		DebugOutput("Evaluating when condition %q: %q, %v", t.When, templatedWhen, pythonResult.IsTrue())
+		common.DebugOutput("Evaluating when condition %q: %q, %v", t.When, templatedWhen, pythonResult.IsTrue())
 		if err != nil {
-			DebugOutput("Error evaluating when condition %q: %s", t.When, err)
+			common.DebugOutput("Error evaluating when condition %q: %s", t.When, err)
 			return false
 		}
 		// TODO: this is a hack to handle the fact that pongo2 returns a python boolean as a string
@@ -66,7 +67,7 @@ func (t Task) ExecuteModule(c *HostContext) TaskResult {
 	r := TaskResult{Task: t, Context: c}
 
 	if !t.ShouldExecute(c) {
-		LogDebug("Skipping execution of task", map[string]interface{}{
+		common.LogDebug("Skipping execution of task", map[string]interface{}{
 			"task": t.Name,
 			"host": c.Host.Name,
 		})
@@ -89,7 +90,7 @@ func (t Task) ExecuteModule(c *HostContext) TaskResult {
 func (t Task) RevertModule(c *HostContext) TaskResult {
 	r := TaskResult{Task: t, Context: c}
 	if !t.ShouldExecute(c) {
-		LogDebug("Skipping revert of task", map[string]interface{}{
+		common.LogDebug("Skipping revert of task", map[string]interface{}{
 			"task": t.Name,
 			"host": c.Host.Name,
 		})

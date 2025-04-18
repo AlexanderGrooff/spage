@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"fmt"
+	"github.com/AlexanderGrooff/spage/pkg/common"
 	"log"
 	"os"
 
@@ -53,17 +54,17 @@ func LoadInventory(path string) (*Inventory, error) {
 		return nil, err
 	}
 	for name, host := range inventory.Hosts {
-		DebugOutput("Adding host %q to inventory", name)
+		common.DebugOutput("Adding host %q to inventory", name)
 		host.Prepare()
 		host.Name = name
 		inventory.Hosts[name] = host
 	}
 	for groupName, group := range inventory.Groups {
 		for name, host := range group.Hosts {
-			DebugOutput("Found host %q in group %q", name, groupName)
+			common.DebugOutput("Found host %q in group %q", name, groupName)
 			var h *Host
 			if h = inventory.Hosts[name]; h != nil {
-				DebugOutput("Host %q already in inventory", name)
+				common.DebugOutput("Host %q already in inventory", name)
 			} else {
 				h = host
 			}
@@ -75,7 +76,7 @@ func LoadInventory(path string) (*Inventory, error) {
 				h.Name = name
 			}
 
-			DebugOutput("Adding host %q to inventory from group %q", name, groupName)
+			common.DebugOutput("Adding host %q to inventory from group %q", name, groupName)
 
 			inventory.Hosts[name] = h
 			for k, v := range group.Vars {
@@ -125,7 +126,7 @@ func (i Inventory) GetContextForRun() (map[string]*HostContext, error) {
 	var err error
 	contexts := make(map[string]*HostContext)
 	for _, host := range i.Hosts {
-		DebugOutput("Getting context for host %q", host.Name)
+		common.DebugOutput("Getting context for host %q", host.Name)
 		contexts[host.Name], err = i.GetContextForHost(host)
 		if err != nil {
 			return nil, fmt.Errorf("could not get context for host '%s': %v", host, err)

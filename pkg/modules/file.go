@@ -2,6 +2,7 @@ package modules
 
 import (
 	"fmt"
+	"github.com/AlexanderGrooff/spage/pkg/common"
 	"reflect"
 	"strings"
 
@@ -153,7 +154,7 @@ func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 func (m FileModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
 	p := params.(FileInput)
 	if previous == nil {
-		pkg.DebugOutput("Not reverting because previous result was nil")
+		common.DebugOutput("Not reverting because previous result was nil")
 		return FileOutput{}, nil
 	}
 

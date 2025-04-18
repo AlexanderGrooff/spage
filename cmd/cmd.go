@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/AlexanderGrooff/spage/pkg/common"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -46,14 +47,14 @@ var LoadConfig = func(configFile string) error {
 	}
 
 	// Apply logging configuration AFTER loading config
-	pkg.SetLogLevel(cfg.Logging.Level)
+	common.SetLogLevel(cfg.Logging.Level)
 	if cfg.Logging.File != "" {
-		if err := pkg.SetLogFile(cfg.Logging.File); err != nil {
+		if err := common.SetLogFile(cfg.Logging.File); err != nil {
 			return fmt.Errorf("error setting log file: %w", err)
 		}
 	}
 	// Call SetLogFormat with the loaded logging config
-	if err := pkg.SetLogFormat(cfg.Logging); err != nil {
+	if err := common.SetLogFormat(cfg.Logging); err != nil {
 		return fmt.Errorf("error setting log format: %w", err)
 	}
 
@@ -75,14 +76,14 @@ var generateCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		graph, err := pkg.NewGraphFromFile(playbookFile)
 		if err != nil {
-			pkg.LogError("Failed to generate graph", map[string]interface{}{
+			common.LogError("Failed to generate graph", map[string]interface{}{
 				"error": err.Error(),
 			})
 			os.Exit(1)
 		}
 
 		graph.SaveToFile(outputFile)
-		pkg.LogInfo("Compiled binary", map[string]interface{}{
+		common.LogInfo("Compiled binary", map[string]interface{}{
 			"output_file": outputFile,
 		})
 		// graph, err := pkg.NewGraphFromFile(playbookFile)

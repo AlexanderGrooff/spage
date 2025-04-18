@@ -3,6 +3,7 @@ package pkg
 import (
 	"context"
 	"fmt"
+	"github.com/AlexanderGrooff/spage/pkg/common"
 	"sync"
 	"time"
 
@@ -42,7 +43,7 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 	var err error
 	playTarget := "localhost" // Default play target name
 	if inventoryFile == "" {
-		LogDebug("No inventory file specified", map[string]interface{}{
+		common.LogDebug("No inventory file specified", map[string]interface{}{
 			"message": "Assuming target is this machine",
 		})
 		inventory = &Inventory{
@@ -194,9 +195,9 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 					fmt.Printf("failed: [%s] => (%v)\n", hostname, result.Error)
 					PPrintOutput(result.Output, result.Error) // Print details on error for plain format
 				} else {
-					LogError("Task failed", logData)
+					common.LogError("Task failed", logData)
 				}
-				DebugOutput("error executing '%s': %v\n\nREVERTING\n\n", task, result.Error)
+				common.DebugOutput("error executing '%s': %v\n\nREVERTING\n\n", task, result.Error)
 				errored = true
 				if cfg.ExecutionMode == "sequential" {
 					// Drain remaining results if any (shouldn't be many in sequential error case)
@@ -214,7 +215,7 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 				if cfg.Logging.Format == "plain" {
 					fmt.Printf("changed: [%s] => \n%v\n", hostname, result.Output)
 				} else {
-					LogInfo("Task changed", logData)
+					common.LogInfo("Task changed", logData)
 				}
 			} else if result.Output == nil && result.Error == nil { // Skipped task
 				logData["status"] = "skipped"
@@ -222,7 +223,7 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 				if cfg.Logging.Format == "plain" {
 					fmt.Printf("skipped: [%s]\n", hostname)
 				} else {
-					LogInfo("Task skipped", logData)
+					common.LogInfo("Task skipped", logData)
 				}
 			} else { // OK task
 				logData["status"] = "ok"
@@ -234,7 +235,7 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 				if cfg.Logging.Format == "plain" {
 					fmt.Printf("ok: [%s]\n", hostname)
 				} else {
-					LogInfo("Task ok", logData)
+					common.LogInfo("Task ok", logData)
 				}
 			}
 
@@ -283,7 +284,7 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 		}
 	} else {
 		// Log final recap stats as structured data
-		LogInfo("Play recap", map[string]interface{}{"stats": recapStats})
+		common.LogInfo("Play recap", map[string]interface{}{"stats": recapStats})
 	}
 
 	return nil
@@ -324,7 +325,7 @@ func RevertTasksWithConfig(executedTasks []map[string][]Task, contexts map[strin
 					if cfg.Logging.Format == "plain" {
 						fmt.Printf("failed: [%s] => (context not found)\n", hostname)
 					} else {
-						LogError("Revert task failed", logData)
+						common.LogError("Revert task failed", logData)
 					}
 					continue // Skip this task revert
 				}
@@ -339,7 +340,7 @@ func RevertTasksWithConfig(executedTasks []map[string][]Task, contexts map[strin
 					if cfg.Logging.Format == "plain" {
 						fmt.Printf("failed: [%s] => (%v)\n", hostname, tOutput.Error)
 					} else {
-						LogError("Revert task failed", logData)
+						common.LogError("Revert task failed", logData)
 					}
 					// Decide if one revert failure should stop everything
 				} else if tOutput.Output != nil && tOutput.Output.Changed() {
@@ -350,7 +351,7 @@ func RevertTasksWithConfig(executedTasks []map[string][]Task, contexts map[strin
 					if cfg.Logging.Format == "plain" {
 						fmt.Printf("changed: [%s]\n", hostname)
 					} else {
-						LogInfo("Revert task changed", logData)
+						common.LogInfo("Revert task changed", logData)
 					}
 				} else {
 					logData["status"] = "ok"
@@ -362,7 +363,7 @@ func RevertTasksWithConfig(executedTasks []map[string][]Task, contexts map[strin
 					if cfg.Logging.Format == "plain" {
 						fmt.Printf("ok: [%s]\n", hostname)
 					} else {
-						LogInfo("Revert task ok", logData)
+						common.LogInfo("Revert task ok", logData)
 					}
 				}
 			}
@@ -378,7 +379,7 @@ func RevertTasksWithConfig(executedTasks []map[string][]Task, contexts map[strin
 				hostname, stats["ok"], stats["changed"], stats["failed"])
 		}
 	} else {
-		LogInfo("Revert recap", map[string]interface{}{"stats": recapStats})
+		common.LogInfo("Revert recap", map[string]interface{}{"stats": recapStats})
 	}
 
 	// Check if any revert failed

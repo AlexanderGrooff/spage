@@ -3,6 +3,7 @@ package pkg
 import (
 	"bytes"
 	"fmt"
+	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/runtime"
 	"os"
 	"regexp"
@@ -127,14 +128,14 @@ func getVariablesFromJinjaString(jinjaString string) []string {
 
 	var vars []string
 	if filterApplication.MatchString(jinjaString) {
-		DebugOutput("Found Jinja filter %v", jinjaString)
+		common.DebugOutput("Found Jinja filter %v", jinjaString)
 		for _, match := range filterApplication.FindAllStringSubmatch(jinjaString, -1) {
 			vars = append(vars, getVariablesFromJinjaString(match[1])...)
 		}
 		return vars
 	}
 	if attributeVariable.MatchString(jinjaString) {
-		DebugOutput("Found Jinja subattribute %v", jinjaString)
+		common.DebugOutput("Found Jinja subattribute %v", jinjaString)
 		for _, match := range attributeVariable.FindAllStringSubmatch(jinjaString, -1) {
 			vars = append(vars, getVariablesFromJinjaString(match[1])...)
 		}

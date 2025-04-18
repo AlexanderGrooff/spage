@@ -2,6 +2,7 @@ package modules
 
 import (
 	"fmt"
+	"github.com/AlexanderGrooff/spage/pkg/common"
 	"reflect"
 
 	"github.com/AlexanderGrooff/spage/pkg"
@@ -118,7 +119,7 @@ func (m TemplateModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previ
 			},
 		}, nil
 	}
-	pkg.DebugOutput("Not reverting because previous result was %v", previous)
+	common.DebugOutput("Not reverting because previous result was %v", previous)
 	return TemplateOutput{}, nil
 }
 

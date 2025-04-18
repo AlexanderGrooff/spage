@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"fmt"
+	"github.com/AlexanderGrooff/spage/pkg/common"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,7 +73,7 @@ func (g Graph) SaveToFile(path string) error {
 		return fmt.Errorf("error creating file: %v", err)
 	}
 	defer f.Close()
-	LogInfo("Compiling graph to code", map[string]interface{}{
+	common.LogInfo("Compiling graph to code", map[string]interface{}{
 		"graph": g.String(),
 	})
 
@@ -163,9 +164,9 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 	processTasks = func(node GraphNode) error {
 		switch n := node.(type) {
 		case TaskNode:
-			DebugOutput("Processing node %T %q %q: %+v", node, n.Name, n.Module, n.Params)
+			common.DebugOutput("Processing node %T %q %q: %+v", node, n.Name, n.Module, n.Params)
 			if n.Params == nil {
-				DebugOutput("Task %q has no params, skipping", n.Name)
+				common.DebugOutput("Task %q has no params, skipping", n.Name)
 				return nil
 			}
 			taskNameMapping[n.Name] = n
@@ -180,7 +181,7 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 			}
 			dependsOnVariables[n.Name] = n.Params.GetVariableUsage()
 		case Graph:
-			DebugOutput("Processing nested graph %q", n)
+			common.DebugOutput("Processing nested graph %q", n)
 			for _, subNode := range n.Tasks {
 				for _, node := range subNode {
 					if err := processTasks(node); err != nil {
@@ -223,13 +224,13 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 			providingTask, ok := variableProvidedBy[varName]
 			if !ok {
 				if !containsInSlice(SpecialVars, varName) {
-					DebugOutput("no task found that provides variable %q for task %q", varName, taskName)
+					common.DebugOutput("no task found that provides variable %q for task %q", varName, taskName)
 					if !containsInSlice(g.RequiredInputs, varName) {
 						g.RequiredInputs = append(g.RequiredInputs, varName)
 					}
 				}
 			} else {
-				DebugOutput("Found that task %q depends on %q for variable %q", taskName, providingTask, varName)
+				common.DebugOutput("Found that task %q depends on %q for variable %q", taskName, providingTask, varName)
 				dependsOn[taskName] = append(dependsOn[taskName], providingTask)
 			}
 		}
@@ -292,10 +293,10 @@ func checkCycle(taskName string, dependsOn map[string][]string, visited, recStac
 }
 
 func (g Graph) CheckInventoryForRequiredInputs(inventory *Inventory) error {
-	DebugOutput("Checking inventory for required inputs %+v", inventory)
+	common.DebugOutput("Checking inventory for required inputs %+v", inventory)
 	for _, host := range inventory.Hosts {
 		for _, input := range g.RequiredInputs {
-			DebugOutput("Checking if required input %q is present in inventory for host %q", input, host.Name)
+			common.DebugOutput("Checking if required input %q is present in inventory for host %q", input, host.Name)
 			if _, ok := host.Vars[input]; !ok {
 				return fmt.Errorf("required input %q not found in inventory for host %q", input, host.Name)
 			}
