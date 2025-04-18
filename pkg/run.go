@@ -61,7 +61,6 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 		if err != nil {
 			return fmt.Errorf("failed to load inventory: %w", err)
 		}
-		// DebugOutput("Getting contexts for run from inventory %+v", inventory)
 	}
 
 	if err := graph.CheckInventoryForRequiredInputs(inventory); err != nil {
@@ -79,11 +78,6 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 	recapStats := make(map[string]map[string]int)
 	for hostname := range contexts {
 		recapStats[hostname] = map[string]int{"ok": 0, "changed": 0, "failed": 0, "skipped": 0}
-	}
-
-	// Conditionally print PLAY header based on format
-	if cfg.Logging.Format == "plain" {
-		fmt.Printf("\nPLAY [%s] ****************************************************\n", playTarget)
 	}
 
 	for executionLevel, nodes := range graph.Tasks {
@@ -106,12 +100,9 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 
 		executedOnHost = append(executedOnHost, make(map[string][]Task))
 
+		common.DebugOutput("Scheduling %d tasks on level %d", len(tasks), executionLevel)
 		if cfg.ExecutionMode == "parallel" {
 			for _, task := range tasks {
-				// Conditionally print TASK header
-				if cfg.Logging.Format == "plain" {
-					fmt.Printf("\nTASK [%s] ****************************************************\n", task.Name)
-				}
 				for _, c := range contexts {
 					wg.Add(1)
 					go func(task Task, c *HostContext) {
@@ -137,10 +128,6 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 			go func() {
 				defer close(resultsCh)
 				for _, task := range tasks {
-					// Conditionally print TASK header
-					if cfg.Logging.Format == "plain" {
-						fmt.Printf("\nTASK [%s] ****************************************************\n", task.Name)
-					}
 					for _, c := range contexts {
 						select {
 						case <-ctx.Done():
@@ -160,6 +147,7 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 		}
 
 		// Process results
+		common.DebugOutput("Executing tasks on level %d", executionLevel)
 		var errored bool
 		resultCount := 0
 		processedTasks := make(map[string]bool) // Track processed tasks for parallel header printing
@@ -169,8 +157,9 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 			hostname := result.Context.Host.Name
 			task := result.Task
 			c := result.Context
-			duration := result.Duration // Assuming TaskResult gets Duration
+			duration := result.Duration
 
+			fmt.Printf("\nTASK [%s] ****************************************************\n", task.Name)
 			c.History[task.Name] = result.Output
 			if task.Register != "" {
 				c.Facts[task.Register] = OutputToFacts(result.Output)
