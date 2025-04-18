@@ -3,8 +3,8 @@ package pkg
 import (
 	"bytes"
 	"fmt"
+	"github.com/AlexanderGrooff/spage/pkg/runtime"
 	"os"
-	"os/user"
 	"regexp"
 
 	"github.com/flosch/pongo2"
@@ -65,7 +65,7 @@ func (c HostContext) ReadFile(filename string, username string) (string, error) 
 }
 
 func (c HostContext) ReadRemoteFile(filename string, username string) (string, error) {
-	stdout, _, err := RunRemoteCommand(c.Host.Host, fmt.Sprintf("cat \"%s\"", filename), username)
+	stdout, _, err := runtime.RunRemoteCommand(c.Host.Host, fmt.Sprintf("cat \"%s\"", filename), username)
 	if err != nil {
 		return "", err
 	}
@@ -74,23 +74,31 @@ func (c HostContext) ReadRemoteFile(filename string, username string) (string, e
 
 func (c HostContext) WriteFile(filename, contents, username string) error {
 	if c.Host.IsLocal {
-		return WriteLocalFile(filename, contents)
+		return runtime.WriteLocalFile(filename, contents)
 	}
-	return WriteRemoteFile(c.Host.Host, filename, contents, username)
+	return runtime.WriteRemoteFile(c.Host.Host, filename, contents, username)
+}
+
+func (c HostContext) Copy(src, dst string) error {
+	if c.Host.IsLocal {
+		return runtime.CopyLocal(src, dst)
+	}
+	return runtime.CopyRemote(src, dst)
 }
 
 func (c HostContext) RunCommand(command, username string) (string, string, error) {
-	if username == "" {
-		user, err := user.Current()
-		if err != nil {
-			return "", "", fmt.Errorf("failed to get current user: %v", err)
-		}
-		username = user.Username
-	}
+	// TODO: why was this necessary?
+	//if username == "" {
+	//	user, err := user.Current()
+	//	if err != nil {
+	//		return "", "", fmt.Errorf("failed to get current user: %v", err)
+	//	}
+	//	username = user.Username
+	//}
 	if c.Host.IsLocal {
-		return RunLocalCommand(command, username)
+		return runtime.RunLocalCommand(command, username)
 	}
-	return RunRemoteCommand(c.Host.Host, command, username)
+	return runtime.RunRemoteCommand(c.Host.Host, command, username)
 }
 
 func TemplateString(s string, additionalVars ...Facts) (string, error) {

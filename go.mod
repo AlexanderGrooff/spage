@@ -34,5 +34,6 @@ require (
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.3 // indirect
 )

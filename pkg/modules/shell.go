@@ -62,11 +62,12 @@ func (m ShellModule) templateAndExecute(command string, c *pkg.HostContext, prev
 	if err != nil {
 		return ShellOutput{}, err
 	}
-	stdout, stderr, err := c.RunCommand(templatedCmd, runAs)
+	templatedShell := fmt.Sprintf("sh -c '%s'", templatedCmd)
+	stdout, stderr, err := c.RunCommand(templatedShell, runAs)
 	output := ShellOutput{
 		Stdout:  stdout,
 		Stderr:  stderr,
-		Command: templatedCmd,
+		Command: templatedShell,
 	}
 
 	return output, err

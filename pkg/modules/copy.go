@@ -19,7 +19,8 @@ func (cm CopyModule) OutputType() reflect.Type {
 
 type CopyInput struct {
 	Content string `yaml:"content"`
-	Dest    string `yaml:"dest"`
+	Src     string `yaml:"src"`
+	Dst     string `yaml:"dest"`
 	Mode    string `yaml:"mode"`
 	pkg.ModuleInput
 }
@@ -31,16 +32,16 @@ type CopyOutput struct {
 }
 
 func (i CopyInput) ToCode() string {
-	return fmt.Sprintf("modules.CopyInput{Content: %q, Dest: %q, Mode: %q}",
+	return fmt.Sprintf("modules.CopyInput{Content: %q, Dst: %q, Mode: %q}",
 		i.Content,
-		i.Dest,
+		i.Dst,
 		i.Mode,
 	)
 }
 
 func (i CopyInput) GetVariableUsage() []string {
 	vars := pkg.GetVariableUsageFromTemplate(i.Content)
-	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.Dest)...)
+	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.Dst)...)
 	return vars
 }
 
@@ -48,8 +49,8 @@ func (i CopyInput) Validate() error {
 	if i.Content == "" {
 		return fmt.Errorf("missing Content input")
 	}
-	if i.Dest == "" {
-		return fmt.Errorf("missing Dest input")
+	if i.Dst == "" {
+		return fmt.Errorf("missing Dst input")
 	}
 	return nil
 }
@@ -68,26 +69,29 @@ func (m CopyModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 	p := params.(CopyInput)
 
 	// Get original state
-	originalContents, _ := c.ReadFile(p.Dest, runAs)
+	originalContents, _ := c.ReadFile(p.Dst, runAs)
 	originalMode := ""
 	// Get mode using ls command if file exists
 	if originalContents != "" {
-		stdout, _, err := c.RunCommand(fmt.Sprintf("ls -l %s | cut -d ' ' -f 1", p.Dest), runAs)
+		stdout, _, err := c.RunCommand(fmt.Sprintf("ls -l %s | cut -d ' ' -f 1", p.Dst), runAs)
 		if err == nil {
 			originalMode = stdout[1:4] // Extract numeric mode from ls output
 		}
 	}
 
 	// Write new content
-	if err := c.WriteFile(p.Dest, p.Content, runAs); err != nil {
-		return nil, fmt.Errorf("failed to write to file %s: %v", p.Dest, err)
+	// TODO: copy as user
+	if err := c.Copy(p.Src, p.Dst); err != nil {
+		return nil, fmt.Errorf("failed to copy %s to %s: %v", p.Src, p.Dst, err)
 	}
+
+	// TODO: Place contents
 
 	// Apply mode if specified
 	newMode := originalMode
 	if p.Mode != "" {
-		if _, _, err := c.RunCommand(fmt.Sprintf("chmod %s %s", p.Mode, p.Dest), runAs); err != nil {
-			return nil, fmt.Errorf("failed to chmod %s: %v", p.Dest, err)
+		if _, _, err := c.RunCommand(fmt.Sprintf("chmod %s %s", p.Mode, p.Dst), runAs); err != nil {
+			return nil, fmt.Errorf("failed to chmod %s: %v", p.Dst, err)
 		}
 		newMode = p.Mode
 	}
@@ -117,14 +121,14 @@ func (m CopyModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous 
 	}
 
 	// Revert content
-	if err := c.WriteFile(p.Dest, prev.Contents.Before, runAs); err != nil {
-		return nil, fmt.Errorf("failed to revert contents of %s: %v", p.Dest, err)
+	if err := c.WriteFile(p.Dst, prev.Contents.Before, runAs); err != nil {
+		return nil, fmt.Errorf("failed to revert contents of %s: %v", p.Dst, err)
 	}
 
 	// Revert mode
 	if prev.Mode.Before != "" {
-		if _, _, err := c.RunCommand(fmt.Sprintf("chmod %s %s", prev.Mode.Before, p.Dest), runAs); err != nil {
-			return nil, fmt.Errorf("failed to chmod %s: %v", p.Dest, err)
+		if _, _, err := c.RunCommand(fmt.Sprintf("chmod %s %s", prev.Mode.Before, p.Dst), runAs); err != nil {
+			return nil, fmt.Errorf("failed to chmod %s: %v", p.Dst, err)
 		}
 	}
 

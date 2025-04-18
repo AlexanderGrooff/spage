@@ -26,13 +26,13 @@ type GitInput struct {
 }
 
 type GitOutput struct {
-	Rev pkg.RevertableChange[string]
+	Rev  pkg.RevertableChange[string]
 	Dest string
 	pkg.ModuleOutput
 }
 
 func (i GitInput) ToCode() string {
-	return fmt.Sprintf("modules.GitInput{Repo: %q, Dest: %q, Version: %q}",
+	return fmt.Sprintf("modules.GitInput{Repo: %q, Dst: %q, Version: %q}",
 		i.Repo,
 		i.Dest,
 		i.Version,
@@ -50,7 +50,7 @@ func (i GitInput) GetVariableUsage() []string {
 
 func (i GitInput) Validate() error {
 	if i.Repo == "" || i.Dest == "" {
-		return fmt.Errorf("missing required parameters. Repo and Dest should be given")
+		return fmt.Errorf("missing required parameters. Repo and Dst should be given")
 	}
 	return nil
 }

@@ -16,7 +16,7 @@
     execute: "grep -q 'This is a test file created by spage' /tmp/spage_test_file.txt || exit 1"
   after: Write content to file
   
-- name: Assert file mode is 0644
+- name: Assert file mode is 0777
   shell:
     execute: "stat -c '%a' /tmp/spage_test_file.txt | grep -q '777' || exit 1"
   after: Write content to file

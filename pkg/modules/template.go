@@ -30,7 +30,7 @@ type TemplateOutput struct {
 }
 
 func (i TemplateInput) ToCode() string {
-	return fmt.Sprintf("modules.TemplateInput{Src: %q, Dest: %q}",
+	return fmt.Sprintf("modules.TemplateInput{Src: %q, Dst: %q}",
 		i.Src,
 		i.Dest,
 	)
@@ -54,7 +54,7 @@ func (i TemplateInput) Validate() error {
 		return fmt.Errorf("missing Src input")
 	}
 	if i.Dest == "" {
-		return fmt.Errorf("missing Dest input")
+		return fmt.Errorf("missing Dst input")
 	}
 	return nil
 }
