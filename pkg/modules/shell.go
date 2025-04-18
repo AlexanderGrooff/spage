@@ -62,7 +62,7 @@ func (m ShellModule) templateAndExecute(command string, c *pkg.HostContext, prev
 	if err != nil {
 		return ShellOutput{}, err
 	}
-	templatedShell := fmt.Sprintf("sh -c '%s'", templatedCmd)
+	templatedShell := fmt.Sprintf("sh -c %q", templatedCmd)
 	stdout, stderr, err := c.RunCommand(templatedShell, runAs)
 	output := ShellOutput{
 		Stdout:  stdout,

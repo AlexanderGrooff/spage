@@ -28,8 +28,8 @@ func TestTemplateModule_Execute(t *testing.T) {
 		{
 			name: "template new file",
 			input: TemplateInput{
-				Src:  filepath.Join(fixturesDir, "templates", "test.conf.j2"),
-				Dest: "/tmp/test.conf",
+				Src: filepath.Join(fixturesDir, "templates", "test.conf.j2"),
+				Dst: "/tmp/test.conf",
 			},
 			mockOutput: map[string]struct {
 				fileContents string
@@ -52,8 +52,8 @@ func TestTemplateModule_Execute(t *testing.T) {
 		{
 			name: "update existing file",
 			input: TemplateInput{
-				Src:  filepath.Join(fixturesDir, "templates", "test.conf.j2"),
-				Dest: "/tmp/test.conf",
+				Src: filepath.Join(fixturesDir, "templates", "test.conf.j2"),
+				Dst: "/tmp/test.conf",
 			},
 			mockOutput: map[string]struct {
 				fileContents string
@@ -76,8 +76,8 @@ func TestTemplateModule_Execute(t *testing.T) {
 		{
 			name: "template source file not found",
 			input: TemplateInput{
-				Src:  filepath.Join(fixturesDir, "templates", "nonexistent.conf.j2"),
-				Dest: "/tmp/test.conf",
+				Src: filepath.Join(fixturesDir, "templates", "nonexistent.conf.j2"),
+				Dst: "/tmp/test.conf",
 			},
 			mockOutput: map[string]struct {
 				fileContents string
@@ -92,8 +92,8 @@ func TestTemplateModule_Execute(t *testing.T) {
 		{
 			name: "invalid template syntax",
 			input: TemplateInput{
-				Src:  filepath.Join(fixturesDir, "templates", "invalid.conf.j2"),
-				Dest: "/tmp/test.conf",
+				Src: filepath.Join(fixturesDir, "templates", "invalid.conf.j2"),
+				Dst: "/tmp/test.conf",
 			},
 			mockOutput: map[string]struct {
 				fileContents string
@@ -143,8 +143,8 @@ func TestTemplateModule_Revert(t *testing.T) {
 		{
 			name: "revert file changes",
 			input: TemplateInput{
-				Src:  filepath.Join(fixturesDir, "templates", "test.conf.j2"),
-				Dest: "/tmp/test.conf",
+				Src: filepath.Join(fixturesDir, "templates", "test.conf.j2"),
+				Dst: "/tmp/test.conf",
 			},
 			previous: TemplateOutput{
 				Contents: pkg.RevertableChange[string]{
@@ -170,8 +170,8 @@ func TestTemplateModule_Revert(t *testing.T) {
 		{
 			name: "revert with write error",
 			input: TemplateInput{
-				Src:  filepath.Join(fixturesDir, "templates", "test.conf.j2"),
-				Dest: "/tmp/test.conf",
+				Src: filepath.Join(fixturesDir, "templates", "test.conf.j2"),
+				Dst: "/tmp/test.conf",
 			},
 			previous: TemplateOutput{
 				Contents: pkg.RevertableChange[string]{
@@ -192,8 +192,8 @@ func TestTemplateModule_Revert(t *testing.T) {
 		{
 			name: "no previous state",
 			input: TemplateInput{
-				Src:  filepath.Join(fixturesDir, "templates", "test.conf.j2"),
-				Dest: "/tmp/test.conf",
+				Src: filepath.Join(fixturesDir, "templates", "test.conf.j2"),
+				Dst: "/tmp/test.conf",
 			},
 			previous:   TemplateOutput{},
 			wantOutput: TemplateOutput{},
@@ -229,15 +229,15 @@ func TestTemplateModule_ValidateInput(t *testing.T) {
 		{
 			name: "valid input",
 			input: TemplateInput{
-				Src:  filepath.Join(fixturesDir, "templates", "test.conf.j2"),
-				Dest: "/tmp/test.conf",
+				Src: filepath.Join(fixturesDir, "templates", "test.conf.j2"),
+				Dst: "/tmp/test.conf",
 			},
 			wantErr: false,
 		},
 		{
 			name: "missing src",
 			input: TemplateInput{
-				Dest: "/tmp/test.conf",
+				Dst: "/tmp/test.conf",
 			},
 			wantErr: true,
 		},

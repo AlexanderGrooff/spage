@@ -15,6 +15,7 @@ cleanup() {
     rm -f ./test.conf
     rm -f /tmp/test.conf
     rm -f /tmp/spage_test_file.txt
+    rm -f /tmp/spage_test_file2.txt
     rm -rf /tmp/spage_test
     rm -f /tmp/step1.txt
     rm -f /tmp/step2.txt

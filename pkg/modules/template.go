@@ -18,8 +18,8 @@ func (sm TemplateModule) OutputType() reflect.Type {
 }
 
 type TemplateInput struct {
-	Src  string `yaml:"src"`
-	Dest string `yaml:"dest"`
+	Src string `yaml:"src"`
+	Dst string `yaml:"dest"`
 	pkg.ModuleInput
 }
 
@@ -32,7 +32,7 @@ type TemplateOutput struct {
 func (i TemplateInput) ToCode() string {
 	return fmt.Sprintf("modules.TemplateInput{Src: %q, Dst: %q}",
 		i.Src,
-		i.Dest,
+		i.Dst,
 	)
 }
 
@@ -45,7 +45,7 @@ func (i TemplateInput) GetVariableUsage() []string {
 	}
 	// Get variables from filenames
 	usedVars = append(usedVars, pkg.GetVariableUsageFromTemplate(i.Src)...)
-	usedVars = append(usedVars, pkg.GetVariableUsageFromTemplate(i.Dest)...)
+	usedVars = append(usedVars, pkg.GetVariableUsageFromTemplate(i.Dst)...)
 	return usedVars
 }
 
@@ -53,7 +53,7 @@ func (i TemplateInput) Validate() error {
 	if i.Src == "" {
 		return fmt.Errorf("missing Src input")
 	}
-	if i.Dest == "" {
+	if i.Dst == "" {
 		return fmt.Errorf("missing Dst input")
 	}
 	return nil
@@ -89,7 +89,7 @@ func (m TemplateModule) templateContentsToFile(src, dest string, c *pkg.HostCont
 
 func (m TemplateModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
 	p := params.(TemplateInput)
-	original, new, err := m.templateContentsToFile(p.Src, p.Dest, c, runAs)
+	original, new, err := m.templateContentsToFile(p.Src, p.Dst, c, runAs)
 	if err != nil {
 		return nil, err
 	}
@@ -107,8 +107,8 @@ func (m TemplateModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previ
 	if previous != nil {
 		prev := previous.(TemplateOutput)
 		if prev.Changed() {
-			if err := c.WriteFile(p.Dest, prev.Contents.Before, runAs); err != nil {
-				return TemplateOutput{}, fmt.Errorf("failed to place back original contents in %s", p.Dest)
+			if err := c.WriteFile(p.Dst, prev.Contents.Before, runAs); err != nil {
+				return TemplateOutput{}, fmt.Errorf("failed to place back original contents in %s", p.Dst)
 			}
 		}
 		return TemplateOutput{

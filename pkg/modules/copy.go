@@ -69,23 +69,36 @@ func (m CopyModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 	p := params.(CopyInput)
 
 	// Get original state
+	// Ignore error because dst is allowed to not exist
+	var err error
 	originalContents, _ := c.ReadFile(p.Dst, runAs)
 	originalMode := ""
+	newContents := ""
 	// Get mode using ls command if file exists
 	if originalContents != "" {
+		// TODO: get mode with Golang if local
 		stdout, _, err := c.RunCommand(fmt.Sprintf("ls -l %s | cut -d ' ' -f 1", p.Dst), runAs)
 		if err == nil {
 			originalMode = stdout[1:4] // Extract numeric mode from ls output
 		}
 	}
 
-	// Write new content
-	// TODO: copy as user
-	if err := c.Copy(p.Src, p.Dst); err != nil {
-		return nil, fmt.Errorf("failed to copy %s to %s: %v", p.Src, p.Dst, err)
+	if p.Src != "" {
+		// TODO: copy as user
+		if err := c.Copy(p.Src, p.Dst); err != nil {
+			return nil, fmt.Errorf("failed to copy %s to %s: %v", p.Src, p.Dst, err)
+		}
+		if newContents, err = c.ReadFile(p.Src, runAs); err != nil {
+			return nil, fmt.Errorf("failed to read %s: %v", p.Src, err)
+		}
 	}
 
-	// TODO: Place contents
+	if p.Content != "" {
+		if err := c.WriteFile(p.Dst, p.Content, runAs); err != nil {
+			return nil, fmt.Errorf("failed to place contents in %s: %v", p.Dst, err)
+		}
+		newContents = p.Content
+	}
 
 	// Apply mode if specified
 	newMode := originalMode
@@ -99,7 +112,7 @@ func (m CopyModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 	return CopyOutput{
 		Contents: pkg.RevertableChange[string]{
 			Before: originalContents,
-			After:  p.Content,
+			After:  newContents,
 		},
 		Mode: pkg.RevertableChange[string]{
 			Before: originalMode,
