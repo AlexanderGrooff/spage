@@ -27,8 +27,9 @@ type FileInput struct {
 }
 
 type FileOutput struct {
-	State pkg.RevertableChange[string]
-	Mode  pkg.RevertableChange[string]
+	State  pkg.RevertableChange[string]
+	Mode   pkg.RevertableChange[string]
+	Exists pkg.RevertableChange[bool]
 	pkg.ModuleOutput
 }
 
@@ -61,7 +62,7 @@ func (o FileOutput) String() string {
 }
 
 func (o FileOutput) Changed() bool {
-	return o.State.Changed() || o.Mode.Changed()
+	return o.State.Changed() || o.Mode.Changed() || o.Exists.Changed()
 }
 
 func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
@@ -71,8 +72,11 @@ func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 	contents, err := c.ReadFile(p.Path, runAs)
 	originalState := "absent"
 	originalMode := ""
+	created := false
+	removed := false
 	if err == nil {
 		// File exists, check if it's a directory
+		// TODO: why is the error output checked in the contents?
 		if strings.Contains(contents, "cannot read") && strings.Contains(contents, "Is a directory") {
 			originalState = "directory"
 		} else {
@@ -85,6 +89,8 @@ func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 			// We want the "rwx" part, which starts at index 1
 			originalMode = stdout[1:4]
 		}
+	} else {
+		created = true
 	}
 
 	// Apply state changes
@@ -101,6 +107,7 @@ func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 		if _, _, err := c.RunCommand(fmt.Sprintf("rm -rf %s", p.Path), runAs); err != nil {
 			return nil, fmt.Errorf("failed to remove %s: %v", p.Path, err)
 		}
+		removed = true
 	}
 
 	// Apply mode changes if specified
@@ -147,6 +154,10 @@ func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 		Mode: pkg.RevertableChange[string]{
 			Before: originalMode,
 			After:  newMode,
+		},
+		Exists: pkg.RevertableChange[bool]{
+			Before: !created,
+			After:  created || !removed,
 		},
 	}, nil
 }
@@ -195,6 +206,10 @@ func (m FileModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous 
 		Mode: pkg.RevertableChange[string]{
 			Before: prev.Mode.After,
 			After:  prev.Mode.Before,
+		},
+		Exists: pkg.RevertableChange[bool]{
+			Before: prev.Exists.After,
+			After:  prev.Exists.Before,
 		},
 	}, nil
 }

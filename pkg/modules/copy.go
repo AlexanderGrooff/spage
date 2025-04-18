@@ -86,6 +86,7 @@ func (m CopyModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 
 	if p.Src != "" {
 		// TODO: copy as user
+		common.DebugOutput("Copying %s to %s", p.Src, p.Dst)
 		if err := c.Copy(p.Src, p.Dst); err != nil {
 			return nil, fmt.Errorf("failed to copy %s to %s: %v", p.Src, p.Dst, err)
 		}
