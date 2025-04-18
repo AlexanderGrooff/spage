@@ -87,7 +87,6 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 		default:
 		}
 
-		// DebugOutput("Starting execution level %d\n", executionLevel) // Less verbose
 		var tasks []Task
 		for _, node := range nodes {
 			tasks = append(tasks, getTasks(node)...)
@@ -96,54 +95,14 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 		numExpectedResults := len(tasks) * len(contexts)
 		resultsCh := make(chan TaskResult, numExpectedResults)
 		errCh := make(chan error, 1)
-		var wg sync.WaitGroup
 
 		executedOnHost = append(executedOnHost, make(map[string][]Task))
 
 		common.DebugOutput("Scheduling %d tasks on level %d", len(tasks), executionLevel)
 		if cfg.ExecutionMode == "parallel" {
-			for _, task := range tasks {
-				for _, c := range contexts {
-					wg.Add(1)
-					go func(task Task, c *HostContext) {
-						defer wg.Done()
-						select {
-						case <-ctx.Done():
-							errCh <- ctx.Err()
-							return
-						default:
-							result := task.ExecuteModule(c)
-							resultsCh <- result
-						}
-					}(task, c)
-				}
-			}
-
-			// Wait for completion or context cancellation in parallel mode
-			go func() {
-				wg.Wait()
-				close(resultsCh)
-			}()
-		} else { // sequential execution
-			go func() {
-				defer close(resultsCh)
-				for _, task := range tasks {
-					for _, c := range contexts {
-						select {
-						case <-ctx.Done():
-							errCh <- ctx.Err()
-							return
-						default:
-							result := task.ExecuteModule(c)
-							resultsCh <- result
-							// If a task fails in sequential mode, stop this level
-							if result.Error != nil {
-								return
-							}
-						}
-					}
-				}
-			}()
+			go loadLevelParallel(ctx, tasks, contexts, resultsCh, errCh)
+		} else {
+			go loadLevelSequential(ctx, tasks, contexts, resultsCh, errCh)
 		}
 
 		// Process results
@@ -277,6 +236,53 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 	}
 
 	return nil
+}
+
+func loadLevelSequential(ctx context.Context, tasks []Task, contexts map[string]*HostContext, resultsCh chan TaskResult, errCh chan error) {
+	defer close(resultsCh)
+	for _, task := range tasks {
+		for _, c := range contexts {
+			select {
+			case <-ctx.Done():
+				errCh <- ctx.Err()
+				return
+			default:
+				result := task.ExecuteModule(c)
+				resultsCh <- result
+				// If a task fails in sequential mode, stop this level
+				if result.Error != nil {
+					return
+				}
+			}
+		}
+	}
+}
+
+func loadLevelParallel(ctx context.Context, tasks []Task, contexts map[string]*HostContext, resultsCh chan TaskResult, errCh chan error) {
+	var wg sync.WaitGroup
+
+	for _, task := range tasks {
+		for _, c := range contexts {
+			wg.Add(1)
+			go func(task Task, c *HostContext) {
+				defer wg.Done()
+				select {
+				case <-ctx.Done():
+					errCh <- ctx.Err()
+					return
+				default:
+					result := task.ExecuteModule(c)
+					resultsCh <- result
+				}
+			}(task, c)
+		}
+	}
+
+	// Wait for completion or context cancellation in parallel mode
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
 }
 
 // Original Execute function now needs the config
