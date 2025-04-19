@@ -71,7 +71,7 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 		return fmt.Errorf("failed to get contexts for run: %w", err)
 	}
 
-	var executedOnHost []map[string][]Task
+	var hostTaskLevelHistory []map[string]chan Task
 	fmt.Printf("\nPLAY [%s] ****************************************************\n", playTarget)
 
 	// Initialize recap statistics
@@ -96,7 +96,12 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 		resultsCh := make(chan TaskResult, numExpectedResults)
 		errCh := make(chan error, 1)
 
-		executedOnHost = append(executedOnHost, make(map[string][]Task))
+		// Initialize history for this level
+		hostTaskLevelHistory = append(hostTaskLevelHistory, make(map[string](chan Task)))
+		for hostname := range contexts {
+			hostTaskLevelHistory[executionLevel][hostname] = make(chan Task, len(tasks))
+			common.DebugOutput("Expecting %d results for %s on level %d", len(tasks), hostname, executionLevel)
+		}
 
 		common.DebugOutput("Scheduling %d tasks on level %d", len(tasks), executionLevel)
 		if cfg.ExecutionMode == "parallel" {
@@ -123,7 +128,7 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 			if task.Register != "" {
 				c.Facts[task.Register] = OutputToFacts(result.Output)
 			}
-			executedOnHost[executionLevel][hostname] = append(executedOnHost[executionLevel][hostname], task)
+			hostTaskLevelHistory[executionLevel][hostname] <- task
 
 			// Prepare structured log data
 			logData := map[string]interface{}{
@@ -147,14 +152,6 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 				}
 				common.DebugOutput("error executing '%s': %v\n\nREVERTING\n\n", task, result.Error)
 				errored = true
-				if cfg.ExecutionMode == "sequential" {
-					// Drain remaining results if any (shouldn't be many in sequential error case)
-					go func() {
-						for range resultsCh {
-						}
-					}()
-					break // Stop processing results for this level
-				}
 			} else if result.Output != nil && result.Output.Changed() {
 				logData["status"] = "changed"
 				logData["changed"] = true
@@ -189,6 +186,10 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 
 			processedTasks[task.Name] = true // Mark task as processed for this level
 		}
+		for hostname := range contexts {
+			common.DebugOutput("Closing history channel for %s on level %d", hostname, executionLevel)
+			close(hostTaskLevelHistory[executionLevel][hostname])
+		}
 
 		// Check for context cancellation errors that might have occurred
 		select {
@@ -202,7 +203,7 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 			if cfg.Logging.Format == "plain" {
 				fmt.Printf("\nREVERTING TASKS **********************************************\n")
 			}
-			if err := RevertTasksWithConfig(executedOnHost, contexts, cfg); err != nil {
+			if err := RevertTasksWithConfig(hostTaskLevelHistory, contexts, cfg); err != nil {
 				return fmt.Errorf("run failed during revert: %w", err)
 			}
 			return fmt.Errorf("run failed and tasks reverted")
@@ -285,13 +286,13 @@ func loadLevelParallel(ctx context.Context, tasks []Task, contexts map[string]*H
 	}()
 }
 
-// Original Execute function now needs the config
 func Execute(cfg *config.Config, graph Graph, inventoryFile string) error {
-	return ExecuteWithContext(context.Background(), cfg, graph, inventoryFile)
+	err := ExecuteWithContext(context.Background(), cfg, graph, inventoryFile)
+	common.DebugOutput("Execute done: %v", err)
+	return err
 }
 
-// Renamed to pass config
-func RevertTasksWithConfig(executedTasks []map[string][]Task, contexts map[string]*HostContext, cfg *config.Config) error {
+func RevertTasksWithConfig(executedTasks []map[string]chan Task, contexts map[string]*HostContext, cfg *config.Config) error {
 	// Revert all tasks per level in descending order
 	recapStats := make(map[string]map[string]int) // Track revert stats too
 	for hostname := range contexts {
@@ -299,9 +300,11 @@ func RevertTasksWithConfig(executedTasks []map[string][]Task, contexts map[strin
 	}
 
 	for executionLevel := len(executedTasks) - 1; executionLevel >= 0; executionLevel-- {
-		for hostname, tasks := range executedTasks[executionLevel] {
+		common.DebugOutput("Reverting level %d", executionLevel)
+		for hostname, taskHistoryCh := range executedTasks[executionLevel] {
 			// TODO: revert hosts in parallel per executionlevel
-			for _, task := range tasks {
+			common.DebugOutput("Reverting host %s on level %d", hostname, executionLevel)
+			for task := range taskHistoryCh {
 				// Conditionally print REVERT TASK header
 				if cfg.Logging.Format == "plain" {
 					fmt.Printf("\nREVERT TASK [%s] *****************************************\n", task.Name)
@@ -362,6 +365,7 @@ func RevertTasksWithConfig(executedTasks []map[string][]Task, contexts map[strin
 					}
 				}
 			}
+			common.DebugOutput("Reverted level %d for host %s", executionLevel, hostname)
 		}
 	}
 
@@ -383,6 +387,7 @@ func RevertTasksWithConfig(executedTasks []map[string][]Task, contexts map[strin
 			return fmt.Errorf("one or more tasks failed to revert")
 		}
 	}
+	common.DebugOutput("Revert done")
 
 	return nil
 }
