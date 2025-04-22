@@ -1,0 +1,10 @@
+- name: Task Before Role Import
+  shell:
+    execute: echo "Before import_role" > /tmp/import_role_before.txt
+
+- import_role:
+    name: test_role # Reusing the same role as include_role test
+
+- name: Task After Role Import
+  shell:
+    execute: echo "After import_role" > /tmp/import_role_after.txt 

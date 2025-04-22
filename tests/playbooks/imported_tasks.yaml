@@ -1,0 +1,3 @@
+- name: Task from Imported File
+  shell:
+    execute: echo "This task was imported" > /tmp/import_tasks_imported.txt 

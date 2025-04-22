@@ -30,6 +30,11 @@ cleanup() {
     rm -f /tmp/include_role_before.txt
     rm -f /tmp/include_role_task.txt
     rm -f /tmp/include_role_after.txt
+    rm -f /tmp/import_tasks_before.txt
+    rm -f /tmp/import_tasks_imported.txt
+    rm -f /tmp/import_tasks_after.txt
+    rm -f /tmp/import_role_before.txt
+    rm -f /tmp/import_role_after.txt
     echo "Cleanup complete"
 }
 
@@ -207,6 +212,47 @@ if [ ! -f /tmp/include_role_task.txt ]; then
 fi
 if [ ! -f /tmp/include_role_after.txt ]; then
     echo "Include Role test: after file was not created"
+    exit 1
+fi
+
+# Test 10: Import Tasks directive test
+echo "Running import_tasks directive test..."
+go run main.go generate -p $TESTS_DIR/playbooks/import_tasks_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+./generated_tasks -config tests/configs/default.yaml
+
+# Check if files from before, imported, and after were created
+if [ ! -f /tmp/import_tasks_before.txt ]; then
+    echo "Import Tasks test: before file was not created"
+    exit 1
+fi
+if [ ! -f /tmp/import_tasks_imported.txt ]; then
+    echo "Import Tasks test: imported file was not created"
+    exit 1
+fi
+if [ ! -f /tmp/import_tasks_after.txt ]; then
+    echo "Import Tasks test: after file was not created"
+    exit 1
+fi
+
+# Test 11: Import Role directive test
+echo "Running import_role directive test..."
+go run main.go generate -p $TESTS_DIR/playbooks/import_role_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+./generated_tasks -config tests/configs/default.yaml
+
+# Check if files from before, inside (role task), and after the role import were created
+if [ ! -f /tmp/import_role_before.txt ]; then
+    echo "Import Role test: before file was not created"
+    exit 1
+fi
+# Role task file is /tmp/include_role_task.txt (reused from include_role test)
+if [ ! -f /tmp/include_role_task.txt ]; then
+    echo "Import Role test: role task file was not created"
+    exit 1
+fi
+if [ ! -f /tmp/import_role_after.txt ]; then
+    echo "Import Role test: after file was not created"
     exit 1
 fi
 

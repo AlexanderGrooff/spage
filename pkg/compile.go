@@ -67,6 +67,30 @@ func processIncludeDirective(includeValue interface{}, currentBasePath string) (
 	}
 }
 
+// processImportTasksDirective handles the 'import_tasks' directive during preprocessing.
+// In this static preprocessing model, it behaves identically to processIncludeDirective.
+func processImportTasksDirective(importValue interface{}, currentBasePath string) ([]map[string]interface{}, error) {
+	if pathStr, ok := importValue.(string); ok {
+		absPath := pathStr
+		if !filepath.IsAbs(pathStr) {
+			absPath = filepath.Join(currentBasePath, pathStr)
+		}
+		importedData, err := os.ReadFile(absPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read imported tasks file %s: %w", absPath, err)
+		}
+		// Recursively preprocess the imported content
+		nestedBasePath := filepath.Dir(absPath)
+		nestedBlocks, err := preprocessPlaybook(importedData, nestedBasePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to preprocess imported tasks file %s: %w", absPath, err)
+		}
+		return nestedBlocks, nil
+	} else {
+		return nil, fmt.Errorf("invalid 'import_tasks' value: expected string, got %T", importValue)
+	}
+}
+
 // processIncludeRoleDirective handles the 'include_role' directive during preprocessing.
 func processIncludeRoleDirective(roleParams interface{}, currentBasePath string) ([]map[string]interface{}, error) {
 	paramsMap, ok := roleParams.(map[string]interface{})
@@ -107,6 +131,46 @@ func processIncludeRoleDirective(roleParams interface{}, currentBasePath string)
 	return roleBlocks, nil
 }
 
+// processImportRoleDirective handles the 'import_role' directive during preprocessing.
+// In this static preprocessing model, it behaves identically to processIncludeRoleDirective.
+func processImportRoleDirective(roleParams interface{}, currentBasePath string) ([]map[string]interface{}, error) {
+	paramsMap, ok := roleParams.(map[string]interface{})
+	if !ok {
+		// Handle simple string form: import_role: my_role_name
+		if roleNameStr, okStr := roleParams.(string); okStr {
+			paramsMap = map[string]interface{}{"name": roleNameStr}
+			ok = true
+		} else {
+			return nil, fmt.Errorf("invalid 'import_role' value: expected map or string, got %T", roleParams)
+		}
+	}
+
+	roleName, nameOk := paramsMap["name"].(string)
+	if !nameOk || roleName == "" {
+		return nil, fmt.Errorf("missing or invalid 'name' in import_role directive")
+	}
+
+	// Assume roles are in a 'roles' directory relative to the current base path.
+	roleTasksPath := filepath.Join(currentBasePath, "roles", roleName, "tasks", "main.yml")
+
+	roleData, err := os.ReadFile(roleTasksPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("role tasks file not found for import: %s", roleTasksPath)
+		} else {
+			return nil, fmt.Errorf("failed to read role tasks file for import %s: %w", roleTasksPath, err)
+		}
+	}
+
+	// Recursively preprocess the role's tasks
+	roleTasksBasePath := filepath.Dir(roleTasksPath)
+	roleBlocks, err := preprocessPlaybook(roleData, roleTasksBasePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to preprocess imported role '%s' tasks from %s: %w", roleName, roleTasksPath, err)
+	}
+	return roleBlocks, nil
+}
+
 // preprocessPlaybook takes raw playbook YAML data and a base path,
 // recursively processes include/include_role directives, and returns a flattened
 // list of raw task maps ready for parsing.
@@ -128,8 +192,22 @@ func preprocessPlaybook(data []byte, basePath string) ([]map[string]interface{},
 				continue
 			}
 			processedBlocks = append(processedBlocks, nestedBlocks...)
+		} else if importValue, isImportTasks := block["import_tasks"]; isImportTasks {
+			nestedBlocks, err := processImportTasksDirective(importValue, basePath)
+			if err != nil {
+				processErrors = append(processErrors, err)
+				continue
+			}
+			processedBlocks = append(processedBlocks, nestedBlocks...)
 		} else if roleParams, isIncludeRole := block["include_role"]; isIncludeRole {
 			nestedBlocks, err := processIncludeRoleDirective(roleParams, basePath)
+			if err != nil {
+				processErrors = append(processErrors, err)
+				continue
+			}
+			processedBlocks = append(processedBlocks, nestedBlocks...)
+		} else if roleParams, isImportRole := block["import_role"]; isImportRole {
+			nestedBlocks, err := processImportRoleDirective(roleParams, basePath)
 			if err != nil {
 				processErrors = append(processErrors, err)
 				continue
