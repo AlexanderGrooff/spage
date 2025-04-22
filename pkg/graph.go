@@ -2,10 +2,12 @@ package pkg
 
 import (
 	"fmt"
-	"github.com/AlexanderGrooff/spage/pkg/common"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+
+	"github.com/AlexanderGrooff/spage/pkg/common"
 )
 
 // Don't look for dependencies for these vars
@@ -150,99 +152,155 @@ func (t TaskNode) ToCode() string {
 	return t.Task.ToCode()
 }
 
+// Helper function to flatten GraphNodes into a list of TaskNodes
+// while preserving a semblance of original order.
+func flattenNodes(nodes []GraphNode) []TaskNode {
+	var flatTasks []TaskNode
+	var collectTasks func(node GraphNode)
+	collectTasks = func(node GraphNode) {
+		switch n := node.(type) {
+		case TaskNode:
+			flatTasks = append(flatTasks, n)
+		case Task:
+			// Convert Task to TaskNode before adding
+			flatTasks = append(flatTasks, TaskNode{Task: n})
+		case Graph:
+			// Recursively process nodes within the nested graph
+			// Note: This flattens based on the nested graph's internal structure first.
+			for _, step := range n.Tasks {
+				for _, subNode := range step {
+					collectTasks(subNode)
+				}
+			}
+			// default: // Should not happen if parsing is correct, ignore unknown types
+		}
+	}
+
+	for _, node := range nodes {
+		collectTasks(node)
+	}
+	return flatTasks
+}
+
 func NewGraph(nodes []GraphNode) (Graph, error) {
 	g := Graph{RequiredInputs: []string{}}
 	dependsOn := map[string][]string{}
 	taskNameMapping := map[string]TaskNode{}
+	originalIndexMap := map[string]int{} // Map task name to its original flattened index
 	dependsOnVariables := map[string][]string{}
 	variableProvidedBy := map[string]string{}
 	visited := map[string]bool{}
 	recStack := map[string]bool{}
 
-	// First, flatten all nested graphs and collect tasks
-	var processTasks func(node GraphNode) error
-	processTasks = func(node GraphNode) error {
-		switch n := node.(type) {
-		case TaskNode:
-			common.DebugOutput("Processing node %T %q %q: %+v", node, n.Name, n.Module, n.Params)
-			if n.Params == nil {
-				common.DebugOutput("Task %q has no params, skipping", n.Name)
-				return nil
-			}
-			taskNameMapping[n.Name] = n
-			if n.Before != "" {
-				dependsOn[n.Before] = append(dependsOn[n.Before], n.Name)
-			}
-			if n.After != "" {
-				dependsOn[n.Name] = append(dependsOn[n.Name], n.After)
-			}
-			if n.Register != "" {
-				variableProvidedBy[strings.ToLower(n.Register)] = n.Name
-			}
+	// 1. Flatten nodes and record original order index
+	flattenedTasks := flattenNodes(nodes)
+	for i, taskNode := range flattenedTasks {
+		if _, exists := taskNameMapping[taskNode.Name]; exists {
+			// Handle potential duplicate task names if necessary, though Ansible usually requires unique names within a play
+			common.LogWarn("Duplicate task name found during flattening", map[string]interface{}{"name": taskNode.Name})
+			// For now, we'll overwrite, assuming later tasks with the same name take precedence or are errors
+		}
+		taskNameMapping[taskNode.Name] = taskNode
+		originalIndexMap[taskNode.Name] = i
+	}
+
+	// 2. Build dependencies based on flattened tasks
+	for _, n := range taskNameMapping {
+		common.DebugOutput("Processing node TaskNode %q %q: %+v", n.Name, n.Module, n.Params)
+		if n.Params == nil {
+			common.DebugOutput("Task %q has no params, skipping dependency analysis for params", n.Name)
+			// Continue processing other dependencies like before/after
+		} else {
 			dependsOnVariables[n.Name] = n.Params.GetVariableUsage()
+		}
+
+		if n.Before != "" {
+			// Task 'n' must run *before* task 'n.Before'
+			// So, 'n.Before' depends on 'n'
+			dependsOn[n.Before] = append(dependsOn[n.Before], n.Name)
+		}
+		if n.After != "" {
+			// Task 'n' must run *after* task 'n.After'
+			// So, 'n' depends on 'n.After'
+			dependsOn[n.Name] = append(dependsOn[n.Name], n.After)
+		}
+		if n.Register != "" {
+			variableProvidedBy[strings.ToLower(n.Register)] = n.Name
+		}
+	}
+
+	// Extract required inputs from nested graphs (if any were present in the original structure)
+	var collectRequiredInputs func(node GraphNode)
+	collectRequiredInputs = func(node GraphNode) {
+		switch n := node.(type) {
 		case Graph:
-			common.DebugOutput("Processing nested graph %q", n)
-			for _, subNode := range n.Tasks {
-				for _, node := range subNode {
-					if err := processTasks(node); err != nil {
-						return err
-					}
-				}
-			}
 			for _, input := range n.RequiredInputs {
 				if !containsInSlice(g.RequiredInputs, input) {
 					g.RequiredInputs = append(g.RequiredInputs, input)
 				}
 			}
-		case Task:
-			// Convert Task to TaskNode and process it
-			taskNode := TaskNode{Task: n}
-			return processTasks(taskNode)
-		default:
-			return fmt.Errorf("unknown node type: %T", node)
-		}
-		return nil
-	}
-
-	// Process all nodes
-	for _, node := range nodes {
-		if err := processTasks(node); err != nil {
-			return Graph{}, err
+			// Recursively check nested graphs
+			for _, step := range n.Tasks {
+				for _, subNode := range step {
+					collectRequiredInputs(subNode)
+				}
+			}
+			// Ignore TaskNode and Task types for required inputs collection
 		}
 	}
+	for _, node := range nodes { // Iterate original nodes structure for nested graph inputs
+		collectRequiredInputs(node)
+	}
 
-	// Check for cycles
+	// 3. Check for cycles
 	for taskName := range taskNameMapping {
 		if err := checkCycle(taskName, dependsOn, visited, recStack); err != nil {
 			return Graph{}, err
 		}
 	}
 
-	// Process variable dependencies
+	// 4. Process variable dependencies
 	for taskName, vars := range dependsOnVariables {
 		for _, varName := range vars {
+			// Skip special vars like 'previous'
+			if containsInSlice(SpecialVars, varName) {
+				continue
+			}
+
 			providingTask, ok := variableProvidedBy[varName]
 			if !ok {
-				if !containsInSlice(SpecialVars, varName) {
-					common.DebugOutput("no task found that provides variable %q for task %q", varName, taskName)
-					if !containsInSlice(g.RequiredInputs, varName) {
-						g.RequiredInputs = append(g.RequiredInputs, varName)
-					}
+				common.DebugOutput("no task found that provides variable %q for task %q", varName, taskName)
+				if !containsInSlice(g.RequiredInputs, varName) {
+					g.RequiredInputs = append(g.RequiredInputs, varName)
 				}
+
 			} else {
-				common.DebugOutput("Found that task %q depends on %q for variable %q", taskName, providingTask, varName)
-				dependsOn[taskName] = append(dependsOn[taskName], providingTask)
+				// Ensure the dependency is only added if the tasks are different
+				// and the dependency doesn't already exist to avoid duplicates.
+				if taskName != providingTask && !containsInSlice(dependsOn[taskName], providingTask) {
+					common.DebugOutput("Found that task %q depends on %q for variable %q", taskName, providingTask, varName)
+					dependsOn[taskName] = append(dependsOn[taskName], providingTask)
+				}
 			}
 		}
 	}
 
+	// 5. Resolve execution levels
 	executedOnStep := map[string]int{}
+	allTaskNames := make([]string, 0, len(taskNameMapping))
 	for taskName := range taskNameMapping {
-		executedOnStep = ResolveExecutionLevel(taskName, dependsOn, executedOnStep)
-		if len(executedOnStep) == len(taskNameMapping) {
-			break
+		allTaskNames = append(allTaskNames, taskName)
+	}
+	// Sort task names to ensure deterministic processing order for ResolveExecutionLevel
+	// This helps make the *level assignment* itself more stable, although the final sort step is the primary guarantee.
+	sort.Strings(allTaskNames)
+	for _, taskName := range allTaskNames {
+		if _, processed := executedOnStep[taskName]; !processed {
+			executedOnStep = ResolveExecutionLevel(taskName, dependsOn, executedOnStep)
 		}
 	}
+
+	// 6. Determine max execution level and initialize task slices
 	var maxExecutionLevel int
 	for _, executionLevel := range executedOnStep {
 		maxExecutionLevel = max(maxExecutionLevel, executionLevel)
@@ -253,9 +311,25 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 		g.Tasks[i] = []GraphNode{}
 	}
 
+	// 7. Populate tasks into levels
 	for taskName, executionLevel := range executedOnStep {
 		task := taskNameMapping[taskName]
 		g.Tasks[executionLevel] = append(g.Tasks[executionLevel], task)
+	}
+
+	// 8. Sort tasks within each level based on original index
+	for i := range g.Tasks {
+		sort.SliceStable(g.Tasks[i], func(a, b int) bool {
+			taskA, okA := g.Tasks[i][a].(TaskNode)
+			taskB, okB := g.Tasks[i][b].(TaskNode)
+			if !okA || !okB {
+				// Should not happen if only TaskNodes are added
+				// If other types could be added, handle comparison logic here
+				return false // Or some default order
+			}
+			// Compare based on the original flattened index
+			return originalIndexMap[taskA.Name] < originalIndexMap[taskB.Name]
+		})
 	}
 
 	return g, nil
