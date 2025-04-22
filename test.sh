@@ -30,7 +30,6 @@ cleanup() {
     rm -f /tmp/include_role_before.txt
     rm -f /tmp/include_role_task.txt
     rm -f /tmp/include_role_after.txt
-    rm -rf $TESTS_DIR/playbooks/roles
     echo "Cleanup complete"
 }
 
