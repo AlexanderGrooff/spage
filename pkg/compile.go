@@ -85,40 +85,49 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			continue
 		}
 
-		// Now we can unmarshal the params into the correct type
+		// Now we can unmarshal the params into the correct type.
+		// If task.Module is "shell", this will invoke the custom UnmarshalYAML in shell.go
 		params := reflect.New(module.InputType()).Interface()
 		if err := yaml.Unmarshal(paramsData, params); err != nil {
-			errors = append(errors, fmt.Errorf("failed to unmarshal params for module %s: %v", task.Module, moduleParams))
+			// This error should now only happen for genuinely invalid map structures
+			// or if the custom unmarshaler in a module (like shell) returned an error.
+			errors = append(errors, fmt.Errorf("failed to unmarshal params for module %s: %w", task.Module, err))
 			continue
 		}
 
-		// Validate that there are no extra keys in the block
-		structType := module.InputType()
-		structFields := make(map[string]struct{})
-
-		// Collect field names from the struct
-		for i := 0; i < structType.NumField(); i++ {
-			field := structType.Field(i)
-			structFields[field.Tag.Get("yaml")] = struct{}{}
-		}
-
-		// Check for extra keys in the module block
-		paramsBlock, ok := block[task.Module].(map[string]interface{})
-		if !ok {
-			errors = append(errors, fmt.Errorf("params block is not a map for task %q: %v", task.Name, block[task.Module]))
-			continue
-		}
-		for k := range paramsBlock {
-			if _, ok := structFields[k]; !ok {
-				errors = append(errors, fmt.Errorf("extra key %q found in params for task %q", k, task.Name))
+		// Validate that there are no extra keys in the block, only if params was originally a map
+		// Check the original moduleParams type, not the result of unmarshaling
+		if _, isMap := moduleParams.(map[string]interface{}); isMap {
+			structType := module.InputType()
+			structFields := make(map[string]struct{})
+			// Collect field names from the struct
+			for i := 0; i < structType.NumField(); i++ {
+				field := structType.Field(i)
+				// Use the yaml tag name for matching keys
+				yamlTag := field.Tag.Get("yaml")
+				if yamlTag != "" && yamlTag != "-" { // Ignore fields without tags or explicitly ignored
+					// Handle tags like "field,omitempty"
+					tagName := strings.Split(yamlTag, ",")[0]
+					structFields[tagName] = struct{}{}
+				}
 			}
-		}
+
+			// Check for extra keys in the module block map
+			paramsBlock := moduleParams.(map[string]interface{}) // We already know it's a map
+			for k := range paramsBlock {
+				if _, ok := structFields[k]; !ok {
+					errors = append(errors, fmt.Errorf("extra key %q found in params for task %q", k, task.Name))
+				}
+			}
+		} // else: If it wasn't originally a map (e.g., string shorthand handled above), skip key validation.
 
 		// Ensure params is of the correct type using reflection
-		if typedParams, ok := params.(ModuleInput); ok {
+		// We need to get the value pointed to by params, as it's a pointer receiver from reflect.New
+		paramsValue := reflect.ValueOf(params).Elem().Interface()
+		if typedParams, ok := paramsValue.(ModuleInput); ok {
 			task.Params = typedParams
 		} else {
-			errors = append(errors, fmt.Errorf("params do not implement ModuleInput for module %s", task.Module))
+			errors = append(errors, fmt.Errorf("params (%T) do not implement ModuleInput for module %s", paramsValue, task.Module))
 			continue
 		}
 

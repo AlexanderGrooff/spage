@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/AlexanderGrooff/spage/pkg"
+	"gopkg.in/yaml.v3"
 )
 
 type ShellModule struct{}
@@ -110,6 +111,36 @@ func (m ShellModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous
 		prev = ShellOutput{}
 	}
 	return m.templateAndExecute(shellParams.Revert, c, prev, runAs)
+}
+
+// UnmarshalYAML implements the yaml.Unmarshaler interface for ShellInput.
+// It allows the shell module value to be either a string (shorthand for execute)
+// or a map with 'execute' and optionally 'revert' keys.
+func (i *ShellInput) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode && node.Tag == "!!str" {
+		// Handle shorthand: shell: command_string
+		i.Execute = node.Value
+		i.Revert = "" // Default revert for shorthand
+		return nil
+	}
+
+	if node.Kind == yaml.MappingNode {
+		// Handle standard map format: shell: { execute: ..., revert: ... }
+		// We need a temporary type to avoid infinite recursion with UnmarshalYAML
+		type ShellInputMap struct {
+			Execute string `yaml:"execute"`
+			Revert  string `yaml:"revert"`
+		}
+		var tmp ShellInputMap
+		if err := node.Decode(&tmp); err != nil {
+			return fmt.Errorf("failed to decode shell input map: %w", err)
+		}
+		i.Execute = tmp.Execute
+		i.Revert = tmp.Revert
+		return nil
+	}
+
+	return fmt.Errorf("invalid type for shell module input: expected string or map, got %v", node.Tag)
 }
 
 func init() {

@@ -12,3 +12,13 @@
   shell:
     execute: echo "Shell test successful" > /tmp/spage_test/testfile.txt
   after: Create test file in directory
+
+- name: Short form shell
+  shell: echo "Short form" > /tmp/spage_test/testfile.txt
+  after: Create test file in directory
+
+- name: Short form shell with block
+  shell: |
+    echo "Short form with block" > /tmp/spage_test/testfile.txt
+    echo "Short form with block" > /tmp/spage_test/testfile2.txt
+  after: Create test file in directory
