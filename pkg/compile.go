@@ -171,9 +171,27 @@ func processImportRoleDirective(roleParams interface{}, currentBasePath string) 
 	return roleBlocks, nil
 }
 
+// preprocessorFunc defines the signature for functions that handle meta directives.
+type preprocessorFunc func(value interface{}, basePath string) ([]map[string]interface{}, error)
+
+// preprocessorRegistry maps meta directive keywords to their processing functions.
+// Declared here, populated in init() to avoid initialization cycles.
+var preprocessorRegistry map[string]preprocessorFunc
+
+// init populates the preprocessorRegistry.
+func init() {
+	preprocessorRegistry = map[string]preprocessorFunc{
+		"include":      processIncludeDirective,
+		"import_tasks": processImportTasksDirective,
+		"include_role": processIncludeRoleDirective,
+		"import_role":  processImportRoleDirective,
+		// Add other meta directives here in the future
+	}
+}
+
 // preprocessPlaybook takes raw playbook YAML data and a base path,
-// recursively processes include/include_role directives, and returns a flattened
-// list of raw task maps ready for parsing.
+// recursively processes registered meta directives (include, import_tasks, etc.),
+// and returns a flattened list of raw task maps ready for parsing.
 func preprocessPlaybook(data []byte, basePath string) ([]map[string]interface{}, error) {
 	var initialBlocks []map[string]interface{}
 	err := yaml.Unmarshal(data, &initialBlocks)
@@ -185,36 +203,25 @@ func preprocessPlaybook(data []byte, basePath string) ([]map[string]interface{},
 	var processErrors []error
 
 	for _, block := range initialBlocks {
-		if includeValue, isInclude := block["include"]; isInclude {
-			nestedBlocks, err := processIncludeDirective(includeValue, basePath)
-			if err != nil {
-				processErrors = append(processErrors, err)
-				continue
+		processed := false
+		for key, value := range block {
+			if processor, ok := preprocessorRegistry[key]; ok {
+				nestedBlocks, err := processor(value, basePath)
+				if err != nil {
+					// Add context to the error, e.g., which directive failed
+					processErrors = append(processErrors, fmt.Errorf("error processing '%s' directive: %w", key, err))
+				} else {
+					processedBlocks = append(processedBlocks, nestedBlocks...)
+				}
+				processed = true
+				// Assume a block is either a meta directive OR a task, not both.
+				// If a meta key is found, stop checking other keys in this block.
+				break
 			}
-			processedBlocks = append(processedBlocks, nestedBlocks...)
-		} else if importValue, isImportTasks := block["import_tasks"]; isImportTasks {
-			nestedBlocks, err := processImportTasksDirective(importValue, basePath)
-			if err != nil {
-				processErrors = append(processErrors, err)
-				continue
-			}
-			processedBlocks = append(processedBlocks, nestedBlocks...)
-		} else if roleParams, isIncludeRole := block["include_role"]; isIncludeRole {
-			nestedBlocks, err := processIncludeRoleDirective(roleParams, basePath)
-			if err != nil {
-				processErrors = append(processErrors, err)
-				continue
-			}
-			processedBlocks = append(processedBlocks, nestedBlocks...)
-		} else if roleParams, isImportRole := block["import_role"]; isImportRole {
-			nestedBlocks, err := processImportRoleDirective(roleParams, basePath)
-			if err != nil {
-				processErrors = append(processErrors, err)
-				continue
-			}
-			processedBlocks = append(processedBlocks, nestedBlocks...)
-		} else {
-			// Assume it's a standard task block
+		}
+
+		// If no registered meta directive key was found in the block, treat it as a standard task.
+		if !processed {
 			processedBlocks = append(processedBlocks, block)
 		}
 	}
