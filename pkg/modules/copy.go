@@ -33,8 +33,9 @@ type CopyOutput struct {
 }
 
 func (i CopyInput) ToCode() string {
-	return fmt.Sprintf("modules.CopyInput{Content: %q, Dst: %q, Mode: %q}",
+	return fmt.Sprintf("modules.CopyInput{Content: %q, Src: %q, Dst: %q, Mode: %q}",
 		i.Content,
+		i.Src,
 		i.Dst,
 		i.Mode,
 	)
@@ -42,7 +43,9 @@ func (i CopyInput) ToCode() string {
 
 func (i CopyInput) GetVariableUsage() []string {
 	vars := pkg.GetVariableUsageFromTemplate(i.Content)
+	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.Src)...)
 	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.Dst)...)
+	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.Mode)...)
 	return vars
 }
 
