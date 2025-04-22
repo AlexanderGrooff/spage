@@ -1,0 +1,3 @@
+- name: Task in Role
+  shell:
+    execute: echo "Task in Role" > /tmp/include_role_task.txt
