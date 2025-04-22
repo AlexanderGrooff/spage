@@ -3,6 +3,7 @@ package modules
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 
 	"github.com/AlexanderGrooff/spage/pkg"
@@ -72,15 +73,20 @@ func (m ShellModule) templateAndExecute(command string, c *pkg.HostContext, prev
 		return ShellOutput{}, fmt.Errorf("failed to template shell command: %w", err) // Added error wrapping
 	}
 
-	// Quote the command properly for sh -c
-	// Using fmt.Sprintf with %q handles potential quotes within the command itself
-	templatedShell := fmt.Sprintf("sh -c %q", templatedCmd)
+	// Escape backslashes and double quotes for embedding in a shell double-quoted string.
+	escaper := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	escapedCmd := escaper.Replace(templatedCmd)
 
-	stdout, stderr, err := c.RunCommand(templatedShell, runAs)
+	// Format the command for "sh -c" using double quotes.
+	// This allows internal single quotes and preserves newlines (as \n interpreted by shell).
+	commandForShell := fmt.Sprintf("sh -c \"%s\"", escapedCmd)
+
+	// Pass the double-quoted command string to RunCommand
+	stdout, stderr, err := c.RunCommand(commandForShell, runAs)
 	output := ShellOutput{
 		Stdout:  stdout,
 		Stderr:  stderr,
-		Command: templatedShell, // Store the final command executed
+		Command: commandForShell, // Store the command passed to RunCommand
 	}
 
 	// Don't wrap the error from RunCommand if it's nil

@@ -34,7 +34,7 @@ trap cleanup EXIT
 echo "Running template playbook test..."
 go run main.go generate -p $TESTS_DIR/playbooks/template_playbook.yaml -o generated_tasks.go
 go build -o generated_tasks generated_tasks.go
-./generated_tasks -config spage.yaml
+./generated_tasks -config tests/configs/default.yaml
 
 # Check if the template files were created
 if [ ! -f ./test.conf ]; then
@@ -50,7 +50,7 @@ fi
 echo "Running shell command test..."
 go run main.go generate -p $TESTS_DIR/playbooks/shell_playbook.yaml -o generated_tasks.go
 go build -o generated_tasks generated_tasks.go
-./generated_tasks -config spage.yaml
+./generated_tasks -config tests/configs/default.yaml
 
 # Check if the test directory was created
 if [ ! -d /tmp/spage_test ]; then
@@ -62,7 +62,7 @@ fi
 echo "Running file operations test..."
 go run main.go generate -p $TESTS_DIR/playbooks/file_playbook.yaml -o generated_tasks.go
 go build -o generated_tasks generated_tasks.go
-./generated_tasks -config spage.yaml
+./generated_tasks -config tests/configs/default.yaml
 
 # Check if test file exists with correct content
 if [ ! -f /tmp/spage_test_file.txt ]; then
@@ -73,7 +73,7 @@ fi
 echo "Running copy test..."
 go run main.go generate -p $TESTS_DIR/playbooks/copy_playbook.yaml -o generated_tasks.go
 go build -o generated_tasks generated_tasks.go
-./generated_tasks -config spage.yaml
+./generated_tasks -config tests/configs/default.yaml
 
 # Test 4: Error handling test
 echo "Running error handling test..."
@@ -86,7 +86,7 @@ fi
 echo "Running multi-step playbook test..."
 go run main.go generate -p $TESTS_DIR/playbooks/multi_step_playbook.yaml -o generated_tasks.go
 go build -o generated_tasks generated_tasks.go
-./generated_tasks -config spage.yaml
+./generated_tasks -config tests/configs/default.yaml
 
 # Check multi-step results
 if [ ! -f /tmp/step1.txt ] || [ ! -f /tmp/step2.txt ]; then
@@ -109,7 +109,7 @@ go build -o generated_tasks generated_tasks.go
 
 # Temporarily disable exit on error for the failing command
 set +e
-./generated_tasks -config spage.yaml
+./generated_tasks -config tests/configs/default.yaml
 REVERT_EXIT_CODE=$?
 set -e
 
@@ -133,7 +133,7 @@ go build -o generated_tasks generated_tasks.go
 # Run in parallel mode (default) - should fail due to dependencies
 echo "Running in parallel mode (expecting failure)..."
 set +e
-./generated_tasks -config spage.yaml
+./generated_tasks -config tests/configs/default.yaml
 PARALLEL_EXIT_CODE=$?
 set -e
 if [ $PARALLEL_EXIT_CODE -eq 0 ]; then

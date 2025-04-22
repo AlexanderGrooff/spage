@@ -1,6 +1,7 @@
 - name: Step 1 - Write initial marker
   shell:
-    execute: echo "step1" > /tmp/exec_mode_test.txt
+    # Added a sleep to mess with the execution order in parallel mode. This should make it fail
+    execute: sleep 0.5 && echo "step1" > /tmp/exec_mode_test.txt
 
 - name: Step 2 - Append if step 1 marker exists
   shell:

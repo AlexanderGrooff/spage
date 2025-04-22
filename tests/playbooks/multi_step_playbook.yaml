@@ -7,7 +7,7 @@
   shell:
     execute: |
       if [ -f /tmp/step1.txt ]; then
-        echo "Step 2 complete" > /tmp/step2.txt
+        echo 'Step 2 complete' > /tmp/step2.txt
       else
         exit 1
       fi
