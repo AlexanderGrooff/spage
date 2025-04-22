@@ -1,4 +1,4 @@
-package pkg
+package compile
 
 import (
 	"fmt"
@@ -22,7 +22,7 @@ func processIncludeDirective(includeValue interface{}, currentBasePath string) (
 		}
 		// Recursively preprocess the included content, using the included file's directory as the new base path
 		nestedBasePath := filepath.Dir(absPath)
-		nestedBlocks, err := preprocessPlaybook(includedData, nestedBasePath)
+		nestedBlocks, err := PreprocessPlaybook(includedData, nestedBasePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to preprocess included file %s: %w", absPath, err)
 		}
@@ -46,7 +46,7 @@ func processImportTasksDirective(importValue interface{}, currentBasePath string
 		}
 		// Recursively preprocess the imported content
 		nestedBasePath := filepath.Dir(absPath)
-		nestedBlocks, err := preprocessPlaybook(importedData, nestedBasePath)
+		nestedBlocks, err := PreprocessPlaybook(importedData, nestedBasePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to preprocess imported tasks file %s: %w", absPath, err)
 		}
@@ -89,7 +89,7 @@ func processIncludeRoleDirective(roleParams interface{}, currentBasePath string)
 
 	// Recursively preprocess the role's tasks, using the role's tasks directory as the base path
 	roleTasksBasePath := filepath.Dir(roleTasksPath)
-	roleBlocks, err := preprocessPlaybook(roleData, roleTasksBasePath)
+	roleBlocks, err := PreprocessPlaybook(roleData, roleTasksBasePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to preprocess role '%s' tasks from %s: %w", roleName, roleTasksPath, err)
 	}
@@ -129,7 +129,7 @@ func processImportRoleDirective(roleParams interface{}, currentBasePath string) 
 
 	// Recursively preprocess the role's tasks
 	roleTasksBasePath := filepath.Dir(roleTasksPath)
-	roleBlocks, err := preprocessPlaybook(roleData, roleTasksBasePath)
+	roleBlocks, err := PreprocessPlaybook(roleData, roleTasksBasePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to preprocess imported role '%s' tasks from %s: %w", roleName, roleTasksPath, err)
 	}
@@ -157,7 +157,7 @@ func init() {
 // preprocessPlaybook takes raw playbook YAML data and a base path,
 // recursively processes registered meta directives (include, import_tasks, etc.),
 // and returns a flattened list of raw task maps ready for parsing.
-func preprocessPlaybook(data []byte, basePath string) ([]map[string]interface{}, error) {
+func PreprocessPlaybook(data []byte, basePath string) ([]map[string]interface{}, error) {
 	var initialBlocks []map[string]interface{}
 	err := yaml.Unmarshal(data, &initialBlocks)
 	if err != nil {

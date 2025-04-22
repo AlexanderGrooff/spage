@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
+	"github.com/AlexanderGrooff/spage/pkg/compile"
 )
 
 // Don't look for dependencies for these vars
@@ -124,7 +125,7 @@ func NewGraphFromFile(path string) (Graph, error) {
 	// Determine base path for resolving relative includes/roles
 	basePath := filepath.Dir(path)
 	// Preprocess the playbook to handle includes/roles
-	processedBlocks, err := preprocessPlaybook(data, basePath)
+	processedBlocks, err := compile.PreprocessPlaybook(data, basePath)
 	if err != nil {
 		return Graph{}, fmt.Errorf("error preprocessing playbook %s: %w", path, err)
 	}
@@ -147,7 +148,7 @@ func NewGraphFromPlaybook(data []byte) (Graph, error) {
 	// Preprocess the playbook data with current directory as base path
 	// Assuming the data comes from a context where "." is the correct base.
 	basePath := "."
-	processedBlocks, err := preprocessPlaybook(data, basePath)
+	processedBlocks, err := compile.PreprocessPlaybook(data, basePath)
 	if err != nil {
 		return Graph{}, fmt.Errorf("error preprocessing playbook data: %w", err)
 	}
