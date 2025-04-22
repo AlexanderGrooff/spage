@@ -2,9 +2,10 @@ package pkg
 
 import (
 	"fmt"
-	"github.com/AlexanderGrooff/spage/pkg/common"
 	"log"
 	"os"
+
+	"github.com/AlexanderGrooff/spage/pkg/common"
 
 	"gopkg.in/yaml.v3"
 )
@@ -93,33 +94,37 @@ func LoadInventory(path string) (*Inventory, error) {
 }
 
 func (i Inventory) GetContextForHost(host *Host) (*HostContext, error) {
-	facts := make(Facts)
-	// Apply vars in order of precedence: global, group, host
+	ctx := InitializeHostContext(host)
+
 	for k, v := range i.Vars {
-		facts[k] = v.(ModuleOutput)
+		ctx.Facts.Store(k, v)
 	}
-	for _, groupName := range i.Hosts[host.Name].Groups {
-		group, ok := i.Groups[groupName]
-		if !ok {
-			return nil, fmt.Errorf("could not find group %s in inventory", groupName)
-		}
-		for k, v := range group.Vars {
-			facts[k] = v.(ModuleOutput)
-		}
-	}
-	var ok bool
-	for k, v := range i.Hosts[host.Name].Vars {
-		facts[k], ok = v.(ModuleOutput)
-		if !ok {
-			facts[k] = v
+
+	for _, group := range i.Groups {
+		if group.Hosts != nil {
+			if _, hostInGroup := group.Hosts[host.Name]; hostInGroup {
+				if group.Vars != nil {
+					for k, v := range group.Vars {
+						if _, exists := host.Vars[k]; !exists {
+							ctx.Facts.Store(k, v)
+						}
+					}
+				}
+			}
 		}
 	}
-	// TODO: also compare hostnames? Or even CLI flag?
-	if host.Host == "localhost" {
+
+	if host.Vars != nil {
+		for k, v := range host.Vars {
+			ctx.Facts.Store(k, v)
+		}
+	}
+
+	if host.Host == "localhost" || host.Host == "" {
 		host.IsLocal = true
 	}
-	// TODO: host_vars and group_vars
-	return &HostContext{Facts: facts, Host: host, History: make(map[string]ModuleOutput)}, nil
+
+	return ctx, nil
 }
 
 func (i Inventory) GetContextForRun() (map[string]*HostContext, error) {
@@ -129,7 +134,7 @@ func (i Inventory) GetContextForRun() (map[string]*HostContext, error) {
 		common.DebugOutput("Getting context for host %q", host.Name)
 		contexts[host.Name], err = i.GetContextForHost(host)
 		if err != nil {
-			return nil, fmt.Errorf("could not get context for host '%s': %v", host, err)
+			return nil, fmt.Errorf("could not get context for host '%s' (%s): %w", host.Name, host.Host, err)
 		}
 	}
 	return contexts, nil

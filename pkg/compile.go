@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 
+	"github.com/AlexanderGrooff/spage/pkg/common"
 	"gopkg.in/yaml.v3"
 )
 
@@ -202,40 +204,69 @@ func CompileGraphForHost(graph Graph, host Host) (Graph, error) {
 	return compiledGraph, nil
 }
 
+// Helper function to convert map[string]interface{} to *sync.Map
+func MapToSyncMap(m map[string]interface{}) *sync.Map {
+	sm := new(sync.Map)
+	for k, v := range m {
+		sm.Store(k, v)
+	}
+	return sm
+}
+
 // compileNode handles compilation of a single graph node, replacing variables with host values
 func compileNode(node GraphNode, host Host) (GraphNode, error) {
 	switch n := node.(type) {
 	case Task:
-		// Replace variables in task fields
 		task := n
-		// Get the value struct of the task
 		v := reflect.ValueOf(&task).Elem()
 
-		// Iterate through all fields of the task
+		// Convert host.Vars to *sync.Map once for efficiency
+		hostVarsSyncMap := MapToSyncMap(host.Vars)
+
 		for i := 0; i < v.NumField(); i++ {
 			field := v.Field(i)
-			// Only process string fields
 			if field.Kind() == reflect.String {
-				// Get the string value and template it
 				strVal := field.String()
-				if templated, err := TemplateString(strVal, host.Vars); err == nil {
-					field.SetString(templated)
+				// Pass the converted *sync.Map to TemplateString
+				if templated, err := TemplateString(strVal, hostVarsSyncMap); err == nil {
+					// Check if templating actually changed the value before setting
+					// This avoids unnecessary reflection sets if the string doesn't contain variables
+					if templated != strVal {
+						field.SetString(templated)
+					}
+				} else {
+					// Log or handle templating errors if necessary
+					common.LogWarn("Templating failed for field", map[string]interface{}{
+						"task":  task.Name,
+						"field": v.Type().Field(i).Name,
+						"value": strVal,
+						"error": err.Error(),
+					})
+					// Decide if a templating error should halt compilation
+					// return nil, fmt.Errorf("templating failed for task %s field %s: %w", task.Name, v.Type().Field(i).Name, err)
 				}
 			}
 		}
-
 		// TODO: Template the params from inventory into the tasks if they exist
 		return task, nil
 
 	case Graph:
-		// Recursively compile nested graphs
 		compiledNestedGraph, err := CompileGraphForHost(n, host)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile nested graph: %w", err)
 		}
 		return compiledNestedGraph, nil
 	case TaskNode:
-		return compileNode(n.Task, host)
+		// Assuming TaskNode just wraps a Task, compile the inner Task
+		compiledInnerTask, err := compileNode(n.Task, host)
+		if err != nil {
+			return nil, fmt.Errorf("failed to compile task within TaskNode: %w", err)
+		}
+		// Need to ensure the returned type is TaskNode wrapping the compiled task
+		if compiledTask, ok := compiledInnerTask.(Task); ok {
+			return TaskNode{Task: compiledTask}, nil
+		}
+		return nil, fmt.Errorf("compiling TaskNode did not return a Task")
 
 	default:
 		return nil, fmt.Errorf("unknown node type: %T", node)

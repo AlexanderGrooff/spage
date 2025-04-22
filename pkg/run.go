@@ -3,9 +3,10 @@ package pkg
 import (
 	"context"
 	"fmt"
-	"github.com/AlexanderGrooff/spage/pkg/common"
 	"sync"
 	"time"
+
+	"github.com/AlexanderGrooff/spage/pkg/common"
 
 	"github.com/AlexanderGrooff/spage/pkg/config"
 )
@@ -124,14 +125,14 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 			duration := result.Duration
 
 			fmt.Printf("\nTASK [%s] ****************************************************\n", task.Name)
-			c.History[task.Name] = result.Output
+			c.History.Store(task.Name, result.Output)
 			if task.Register != "" {
-				c.Facts[task.Register] = OutputToFacts(result.Output)
+				c.Facts.Store(task.Register, OutputToFacts(result.Output))
 			}
 			hostTaskLevelHistory[executionLevel][hostname] <- task
 
 			// Prepare structured log data
-			logData := map[string]interface{}{
+			logData := map[string]any{
 				"host":     hostname,
 				"task":     task.Name,
 				"duration": duration.String(),

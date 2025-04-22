@@ -3,6 +3,7 @@ package modules
 import (
 	"fmt"
 	"reflect"
+	"sync"
 
 	"github.com/AlexanderGrooff/spage/pkg"
 )
@@ -58,19 +59,35 @@ func (o ShellOutput) Changed() bool {
 
 func (m ShellModule) templateAndExecute(command string, c *pkg.HostContext, prev ShellOutput, runAs string) (ShellOutput, error) {
 	var err error
-	templatedCmd, err := pkg.TemplateString(command, c.Facts.Add("Previous", prev))
-	if err != nil {
-		return ShellOutput{}, err
+
+	// Create a temporary map for the 'Previous' fact
+	prevFactMap := new(sync.Map)
+	if prev != (ShellOutput{}) { // Only add if 'prev' is not the zero value
+		pkg.AddFact(prevFactMap, "Previous", prev)
 	}
+
+	// Pass both the main Facts map and the temporary map to TemplateString
+	templatedCmd, err := pkg.TemplateString(command, c.Facts, prevFactMap)
+	if err != nil {
+		return ShellOutput{}, fmt.Errorf("failed to template shell command: %w", err) // Added error wrapping
+	}
+
+	// Quote the command properly for sh -c
+	// Using fmt.Sprintf with %q handles potential quotes within the command itself
 	templatedShell := fmt.Sprintf("sh -c %q", templatedCmd)
+
 	stdout, stderr, err := c.RunCommand(templatedShell, runAs)
 	output := ShellOutput{
 		Stdout:  stdout,
 		Stderr:  stderr,
-		Command: templatedShell,
+		Command: templatedShell, // Store the final command executed
 	}
 
-	return output, err
+	// Don't wrap the error from RunCommand if it's nil
+	if err != nil {
+		return output, fmt.Errorf("shell command execution failed: %w", err) // Added error wrapping
+	}
+	return output, nil
 }
 
 func (m ShellModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {

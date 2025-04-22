@@ -2,8 +2,9 @@ package pkg
 
 import (
 	"fmt"
-	"github.com/AlexanderGrooff/spage/pkg/common"
 	"time"
+
+	"github.com/AlexanderGrooff/spage/pkg/common"
 
 	"github.com/flosch/pongo2"
 )
@@ -88,6 +89,7 @@ func (t Task) ExecuteModule(c *HostContext) TaskResult {
 }
 
 func (t Task) RevertModule(c *HostContext) TaskResult {
+	startTime := time.Now()
 	r := TaskResult{Task: t, Context: c}
 	if !t.ShouldExecute(c) {
 		common.LogDebug("Skipping revert of task", map[string]interface{}{
@@ -101,7 +103,33 @@ func (t Task) RevertModule(c *HostContext) TaskResult {
 		r.Error = fmt.Errorf("module %s not found", t.Module)
 		return r
 	}
-	previous := c.History[t.Name]
-	r.Output, r.Error = module.Revert(t.Params, c, previous, t.RunAs)
+
+	// Load previous output from history using sync.Map.Load
+	previousOutputRaw, found := c.History.Load(t.Name) // Changed from index access
+	if !found {
+		common.LogWarn("No previous history found for task during revert", map[string]interface{}{
+			"task": t.Name,
+			"host": c.Host.Name,
+		})
+		previousOutputRaw = nil
+	}
+
+	// Type assert the loaded value to ModuleOutput
+	var previousOutput ModuleOutput
+	if previousOutputRaw != nil {
+		var assertOk bool
+		previousOutput, assertOk = previousOutputRaw.(ModuleOutput)
+		if !assertOk {
+			r.Error = fmt.Errorf("failed to assert previous history type (%T) to ModuleOutput for task %s", previousOutputRaw, t.Name)
+			r.Duration = time.Since(startTime)
+			return r
+		}
+	}
+
+	// Execute the revert logic of the module
+	r.Output, r.Error = module.Revert(t.Params, c, previousOutput, t.RunAs) // Pass potentially nil previousOutput
+	duration := time.Since(startTime)
+	r.Duration = duration
+
 	return r
 }

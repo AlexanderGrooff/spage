@@ -3,41 +3,71 @@ package pkg
 import (
 	"bytes"
 	"fmt"
-	"github.com/AlexanderGrooff/spage/pkg/common"
-	"github.com/AlexanderGrooff/spage/pkg/runtime"
 	"os"
 	"regexp"
+	"sync"
+
+	"github.com/AlexanderGrooff/spage/pkg/common"
+	"github.com/AlexanderGrooff/spage/pkg/runtime"
 
 	"github.com/flosch/pongo2"
 )
 
-type History map[string]ModuleOutput
-type Facts map[string]interface{}
+// No longer using type aliases for History and Facts
 
-func (f *Facts) Merge(other Facts) {
-	for key, value := range other {
-		(*f)[key] = value
+// MergeFacts adds all key-value pairs from 'other' into 'target'.
+// It assumes both are *sync.Map.
+func MergeFacts(target, other *sync.Map) {
+	if target == nil || other == nil {
+		// Handle nil maps appropriately, perhaps return an error or initialize
+		return
 	}
+	other.Range(func(key, value interface{}) bool {
+		target.Store(key, value)
+		return true
+	})
 }
 
-func (f *Facts) Add(k string, v ModuleOutput) Facts {
-	(*f)[k] = v
-	return *f
+// AddFact stores a single key-value pair into the target *sync.Map.
+func AddFact(target *sync.Map, k string, v interface{}) {
+	if target == nil {
+		// Handle nil map
+		return
+	}
+	target.Store(k, v)
 }
 
-func (f Facts) ToJinja2() pongo2.Context {
-	// TODO: handle Changed()
+// FactsToJinja2 converts a *sync.Map (representing Facts) into a pongo2.Context.
+func FactsToJinja2(facts *sync.Map) pongo2.Context {
 	ctx := pongo2.Context{}
-	for k, v := range f {
-		ctx[k] = v
+	if facts == nil {
+		return ctx // Return empty context if map is nil
 	}
+	facts.Range(func(key, value interface{}) bool {
+		// Ensure key is a string for pongo2.Context
+		if k, ok := key.(string); ok {
+			ctx[k] = value
+		} else {
+			// Optionally log or handle non-string keys
+			common.LogWarn("Non-string key found in Facts map during Jinja2 conversion", map[string]interface{}{"key": key})
+		}
+		return true
+	})
 	return ctx
 }
 
 type HostContext struct {
 	Host    *Host
-	Facts   Facts
-	History History
+	Facts   *sync.Map
+	History *sync.Map
+}
+
+func InitializeHostContext(host *Host) *HostContext {
+	return &HostContext{
+		Host:    host,
+		Facts:   new(sync.Map),
+		History: new(sync.Map),
+	}
 }
 
 func ReadTemplateFile(filename string) (string, error) {
@@ -102,19 +132,23 @@ func (c HostContext) RunCommand(command, username string) (string, string, error
 	return runtime.RunRemoteCommand(c.Host.Host, command, username)
 }
 
-func TemplateString(s string, additionalVars ...Facts) (string, error) {
+// TemplateString processes a Jinja2 template string with provided variables.
+// additionalVars should be a slice of *sync.Map.
+func TemplateString(s string, additionalVars ...*sync.Map) (string, error) {
 	tmpl, err := pongo2.FromString(s)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse template: %v", err)
 	}
 
-	allVars := make(Facts)
+	// Merge all provided variable maps into one *sync.Map
+	allVars := new(sync.Map)
 	for _, v := range additionalVars {
-		allVars.Merge(v)
+		MergeFacts(allVars, v) // Use the standalone MergeFacts function
 	}
 
 	var buf bytes.Buffer
-	if err := tmpl.ExecuteWriter(allVars.ToJinja2(), &buf); err != nil {
+	// Convert the final *sync.Map to pongo2.Context before executing
+	if err := tmpl.ExecuteWriter(FactsToJinja2(allVars), &buf); err != nil {
 		return "", fmt.Errorf("failed to execute template: %v", err)
 	}
 
@@ -154,4 +188,13 @@ func GetVariableUsageFromTemplate(s string) []string {
 		vars = append(vars, jinjaVariables...)
 	}
 	return vars
+}
+
+// Helper function (might need adjustment based on actual ModuleOutput type)
+// This is a placeholder, assuming ModuleOutput can be stored directly.
+// If ModuleOutput needs specific conversion before storing in sync.Map, adjust this.
+func OutputToFacts(output ModuleOutput) interface{} {
+	// Placeholder: Directly return the output.
+	// If ModuleOutput is complex, you might need to extract specific fields.
+	return output
 }

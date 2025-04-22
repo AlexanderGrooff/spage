@@ -20,21 +20,6 @@ func (r RevertableChange[T]) Changed() bool {
 	return r.Before != r.After
 }
 
-func OutputToFacts(output ModuleOutput) Facts {
-	vars := make(Facts)
-	v := reflect.ValueOf(output)
-	t := v.Type()
-
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		value := v.Field(i)
-		vars[field.Name] = value.Interface()
-	}
-
-	vars["Changed"] = output.Changed()
-	return vars
-}
-
 type Module interface {
 	Execute(params ModuleInput, c *HostContext, runAs string) (ModuleOutput, error)
 	Revert(params ModuleInput, c *HostContext, previous ModuleOutput, runAs string) (ModuleOutput, error)
