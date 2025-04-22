@@ -1,0 +1,9 @@
+- name: Initial Task in Main Playbook
+  shell:
+    execute: echo "Main playbook start" > /tmp/include_test_main_start.txt
+
+- include: included_playbook.yaml
+
+- name: Final Task in Main Playbook
+  shell:
+    execute: echo "Main playbook end" > /tmp/include_test_main_end.txt

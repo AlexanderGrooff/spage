@@ -24,6 +24,13 @@ cleanup() {
     rm -rf /tmp/revert_test_dir
     rm -f generated_tasks
     rm -f /tmp/exec_mode_test.txt
+    rm -f /tmp/include_test_main_start.txt
+    rm -f /tmp/include_test_included.txt
+    rm -f /tmp/include_test_main_end.txt
+    rm -f /tmp/include_role_before.txt
+    rm -f /tmp/include_role_task.txt
+    rm -f /tmp/include_role_after.txt
+    rm -rf $TESTS_DIR/playbooks/roles
     echo "Cleanup complete"
 }
 
@@ -163,6 +170,46 @@ if [ ! -f /tmp/exec_mode_test.txt ] || [ "$(wc -l < /tmp/exec_mode_test.txt)" -n
     exit 1
 fi
 echo "Sequential success confirmed."
+
+# Test 8: Include directive test
+echo "Running include directive test..."
+go run main.go generate -p $TESTS_DIR/playbooks/include_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+./generated_tasks -config tests/configs/default.yaml
+
+# Check if files from both main and included playbooks were created
+if [ ! -f /tmp/include_test_main_start.txt ]; then
+    echo "Include test: main start file was not created"
+    exit 1
+fi
+if [ ! -f /tmp/include_test_included.txt ]; then
+    echo "Include test: included file was not created"
+    exit 1
+fi
+if [ ! -f /tmp/include_test_main_end.txt ]; then
+    echo "Include test: main end file was not created"
+    exit 1
+fi
+
+# Test 9: Include Role directive test
+echo "Running include_role directive test..."
+go run main.go generate -p $TESTS_DIR/playbooks/include_role_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+./generated_tasks -config tests/configs/default.yaml
+
+# Check if files from before, inside, and after the role include were created
+if [ ! -f /tmp/include_role_before.txt ]; then
+    echo "Include Role test: before file was not created"
+    exit 1
+fi
+if [ ! -f /tmp/include_role_task.txt ]; then
+    echo "Include Role test: role task file was not created"
+    exit 1
+fi
+if [ ! -f /tmp/include_role_after.txt ]; then
+    echo "Include Role test: after file was not created"
+    exit 1
+fi
 
 echo "All tests completed successfully!"
 

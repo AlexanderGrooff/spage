@@ -2,6 +2,8 @@ package pkg
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -42,12 +44,106 @@ func getStringFromMap(m map[string]interface{}, key string) string {
 	return ""
 }
 
-func TextToGraphNodes(text []byte) ([]GraphNode, error) {
-	var yamlMap []map[string]interface{}
-	err := yaml.Unmarshal([]byte(text), &yamlMap)
+// preprocessPlaybook takes raw playbook YAML data and a base path,
+// recursively processes include/include_role directives, and returns a flattened
+// list of raw task maps ready for parsing.
+func preprocessPlaybook(data []byte, basePath string) ([]map[string]interface{}, error) {
+	var initialBlocks []map[string]interface{}
+	err := yaml.Unmarshal(data, &initialBlocks)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error unmarshaling YAML: %w", err)
 	}
+
+	var processedBlocks []map[string]interface{}
+	var processErrors []error
+
+	for _, block := range initialBlocks {
+		if includePath, isInclude := block["include"]; isInclude {
+			if pathStr, ok := includePath.(string); ok {
+				absPath := pathStr
+				if !filepath.IsAbs(pathStr) {
+					absPath = filepath.Join(basePath, pathStr)
+				}
+				includedData, err := os.ReadFile(absPath)
+				if err != nil {
+					processErrors = append(processErrors, fmt.Errorf("failed to read included file %s: %w", absPath, err))
+					continue
+				}
+				// Recursively preprocess the included content, using the included file's directory as the new base path
+				nestedBasePath := filepath.Dir(absPath)
+				nestedBlocks, err := preprocessPlaybook(includedData, nestedBasePath)
+				if err != nil {
+					processErrors = append(processErrors, fmt.Errorf("failed to preprocess included file %s: %w", absPath, err))
+					continue
+				}
+				processedBlocks = append(processedBlocks, nestedBlocks...)
+			} else {
+				processErrors = append(processErrors, fmt.Errorf("invalid 'include' value: expected string, got %T", includePath))
+			}
+		} else if roleParams, isIncludeRole := block["include_role"]; isIncludeRole {
+			paramsMap, ok := roleParams.(map[string]interface{})
+			if !ok {
+				// Handle simple string form: include_role: my_role_name
+				if roleNameStr, okStr := roleParams.(string); okStr {
+					paramsMap = map[string]interface{}{"name": roleNameStr}
+					ok = true
+				} else {
+					processErrors = append(processErrors, fmt.Errorf("invalid 'include_role' value: expected map or string, got %T", roleParams))
+					continue
+				}
+			}
+
+			roleName, nameOk := paramsMap["name"].(string)
+			if !nameOk || roleName == "" {
+				processErrors = append(processErrors, fmt.Errorf("missing or invalid 'name' in include_role directive"))
+				continue
+			}
+
+			// Assume roles are in a 'roles' directory relative to the *initial* playbook's base path?
+			// Or relative to the current file's base path? Let's use current basePath for now.
+			// TODO: Make roles path configurable.
+			roleTasksPath := filepath.Join(basePath, "roles", roleName, "tasks", "main.yml")
+
+			roleData, err := os.ReadFile(roleTasksPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					processErrors = append(processErrors, fmt.Errorf("role tasks file not found: %s", roleTasksPath))
+				} else {
+					processErrors = append(processErrors, fmt.Errorf("failed to read role tasks file %s: %w", roleTasksPath, err))
+				}
+				continue
+			}
+
+			// Recursively preprocess the role's tasks, using the role's tasks directory as the base path
+			// Need role base path (roles/rolename) for further potential includes within the role
+			// roleBasePath := filepath.Dir(filepath.Dir(roleTasksPath))
+			// Using the main.yml dir as base for now
+			roleTasksBasePath := filepath.Dir(roleTasksPath)
+			roleBlocks, err := preprocessPlaybook(roleData, roleTasksBasePath)
+			if err != nil {
+				processErrors = append(processErrors, fmt.Errorf("failed to preprocess role '%s' tasks from %s: %w", roleName, roleTasksPath, err))
+				continue
+			}
+			processedBlocks = append(processedBlocks, roleBlocks...)
+
+		} else {
+			// Assume it's a standard task block
+			processedBlocks = append(processedBlocks, block)
+		}
+	}
+
+	if len(processErrors) > 0 {
+		errorMessages := make([]string, len(processErrors))
+		for i, e := range processErrors {
+			errorMessages[i] = e.Error()
+		}
+		return nil, fmt.Errorf("errors during preprocessing:\n%s", strings.Join(errorMessages, "\n"))
+	}
+
+	return processedBlocks, nil
+}
+
+func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 	arguments := []string{
 		"name",
 		"validate",
@@ -61,7 +157,7 @@ func TextToGraphNodes(text []byte) ([]GraphNode, error) {
 	var tasks []GraphNode
 	var errors []error
 
-	for _, block := range yamlMap {
+	for _, block := range blocks {
 		task := Task{
 			Name:     getStringFromMap(block, "name"),
 			Validate: getStringFromMap(block, "validate"),
@@ -133,22 +229,6 @@ func TextToGraphNodes(text []byte) ([]GraphNode, error) {
 			task.Params = typedParams
 		} else {
 			errors = append(errors, fmt.Errorf("params do not implement ModuleInput for module %s", task.Module))
-			continue
-		}
-
-		// Handle include module during compilation
-		if task.Module == "include" {
-			path, ok := paramsBlock["path"].(string)
-			if !ok {
-				errors = append(errors, fmt.Errorf("include module requires a path"))
-				continue
-			}
-			nestedGraph, err := NewGraphFromFile(path)
-			if err != nil {
-				errors = append(errors, fmt.Errorf("failed to parse included graph from %s: %v", path, err))
-				continue
-			}
-			tasks = append(tasks, nestedGraph)
 			continue
 		}
 
