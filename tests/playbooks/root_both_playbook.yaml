@@ -1,0 +1,8 @@
+---
+- name: Root playbook with both roles and tasks
+  hosts: localhost
+  roles:
+    - test_root_role
+  tasks:
+    - name: Additional task in playbook with roles
+      shell: echo "Additional task" >> /tmp/root_playbook_role.txt 

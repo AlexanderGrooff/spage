@@ -1,0 +1,4 @@
+execution_mode: parallel
+logging:
+  format: plain
+  level: info

@@ -1,0 +1,3 @@
+---
+- name: Task from test_root_role
+  shell: echo "Created by root-level roles section" > /tmp/root_playbook_role.txt 

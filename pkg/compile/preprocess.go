@@ -136,6 +136,73 @@ func processImportRoleDirective(roleParams interface{}, currentBasePath string) 
 	return roleBlocks, nil
 }
 
+// processPlaybookRoot handles the root level of an Ansible playbook with 'hosts' field
+// and either 'roles' or 'tasks' sections.
+func processPlaybookRoot(playbookRoot map[string]interface{}, currentBasePath string) ([]map[string]interface{}, error) {
+	// Check if this is a playbook root entry (has 'hosts' field)
+	if _, hasHosts := playbookRoot["hosts"]; !hasHosts {
+		return nil, fmt.Errorf("not a playbook root entry: missing 'hosts' field")
+	}
+
+	var result []map[string]interface{}
+
+	// Process 'roles' section if it exists
+	if roles, hasRoles := playbookRoot["roles"]; hasRoles {
+		rolesList, ok := roles.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("invalid 'roles' section: expected list, got %T", roles)
+		}
+
+		for _, roleEntry := range rolesList {
+			var roleName string
+
+			// Handle both simple string role names and role entries with parameters
+			switch role := roleEntry.(type) {
+			case string:
+				roleName = role
+			case map[string]interface{}:
+				if name, ok := role["role"].(string); ok {
+					roleName = name
+				} else if name, ok := role["name"].(string); ok {
+					roleName = name
+				} else {
+					return nil, fmt.Errorf("invalid role entry: missing 'role' or 'name' field")
+				}
+			default:
+				return nil, fmt.Errorf("invalid role entry: expected string or map, got %T", roleEntry)
+			}
+
+			// Use the existing include_role processor to handle the role
+			roleParams := map[string]interface{}{"name": roleName}
+			roleBlocks, err := processIncludeRoleDirective(roleParams, currentBasePath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to process role '%s': %w", roleName, err)
+			}
+			result = append(result, roleBlocks...)
+		}
+	}
+
+	// Process 'tasks' section if it exists
+	if tasks, hasTasks := playbookRoot["tasks"]; hasTasks {
+		tasksList, ok := tasks.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("invalid 'tasks' section: expected list, got %T", tasks)
+		}
+
+		for _, taskEntry := range tasksList {
+			taskMap, ok := taskEntry.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("invalid task entry: expected map, got %T", taskEntry)
+			}
+
+			// Each task is already a map, so just add it directly to the result
+			result = append(result, taskMap)
+		}
+	}
+
+	return result, nil
+}
+
 // preprocessorFunc defines the signature for functions that handle meta directives.
 type preprocessorFunc func(value interface{}, basePath string) ([]map[string]interface{}, error)
 
@@ -168,6 +235,18 @@ func PreprocessPlaybook(data []byte, basePath string) ([]map[string]interface{},
 	var processErrors []error
 
 	for _, block := range initialBlocks {
+		// First check if this block is a playbook root entry (has 'hosts' field)
+		if _, hasHosts := block["hosts"]; hasHosts {
+			rootBlocks, err := processPlaybookRoot(block, basePath)
+			if err != nil {
+				processErrors = append(processErrors, fmt.Errorf("error processing playbook root: %w", err))
+			} else {
+				processedBlocks = append(processedBlocks, rootBlocks...)
+			}
+			continue
+		}
+
+		// If not a playbook root, process as before
 		processed := false
 		for key, value := range block {
 			if processor, ok := preprocessorRegistry[key]; ok {

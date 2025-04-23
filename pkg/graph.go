@@ -124,19 +124,18 @@ func NewGraphFromFile(path string) (Graph, error) {
 	}
 	// Determine base path for resolving relative includes/roles
 	basePath := filepath.Dir(path)
-	// Preprocess the playbook to handle includes/roles
-	processedBlocks, err := compile.PreprocessPlaybook(data, basePath)
+	// Preprocess the playbook to handle plays, includes, roles
+	processedNodes, err := compile.PreprocessPlaybook(data, basePath)
 	if err != nil {
 		return Graph{}, fmt.Errorf("error preprocessing playbook %s: %w", path, err)
 	}
 
-	// Parse the preprocessed blocks into tasks
-	tasks, err := TextToGraphNodes(processedBlocks) // Pass processed blocks
+	// Parse the preprocessed nodes into tasks
+	tasks, err := TextToGraphNodes(processedNodes)
 	if err != nil {
 		return Graph{}, fmt.Errorf("error parsing preprocessed tasks from %s: %w", path, err)
 	}
 
-	// return NewGraphFromPlaybook(data)
 	graph, err := NewGraph(tasks)
 	if err != nil {
 		return Graph{}, fmt.Errorf("failed to generate graph from %s: %w", path, err)
@@ -146,16 +145,14 @@ func NewGraphFromFile(path string) (Graph, error) {
 
 func NewGraphFromPlaybook(data []byte) (Graph, error) {
 	// Preprocess the playbook data with current directory as base path
-	// Assuming the data comes from a context where "." is the correct base.
 	basePath := "."
-	processedBlocks, err := compile.PreprocessPlaybook(data, basePath)
+	processedNodes, err := compile.PreprocessPlaybook(data, basePath)
 	if err != nil {
 		return Graph{}, fmt.Errorf("error preprocessing playbook data: %w", err)
 	}
 
-	// Parse YAML
-	// tasks, err := TextToGraphNodes(data)
-	tasks, err := TextToGraphNodes(processedBlocks) // Pass processed blocks
+	// Parse YAML nodes into tasks
+	tasks, err := TextToGraphNodes(processedNodes)
 	if err != nil {
 		return Graph{}, fmt.Errorf("error parsing preprocessed tasks: %w", err)
 	}
@@ -211,6 +208,7 @@ func flattenNodes(nodes []GraphNode) []TaskNode {
 }
 
 func NewGraph(nodes []GraphNode) (Graph, error) {
+	common.LogDebug("NewGraph received nodes.", map[string]interface{}{"count": len(nodes)}) // Log input count
 	g := Graph{RequiredInputs: []string{}}
 	dependsOn := map[string][]string{}
 	taskNameMapping := map[string]TaskNode{}
@@ -360,6 +358,7 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 		})
 	}
 
+	common.LogDebug("NewGraph finished building.", map[string]interface{}{"graph": g.String()}) // Log final graph string
 	return g, nil
 }
 
