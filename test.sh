@@ -256,5 +256,25 @@ if [ ! -f /tmp/import_role_after.txt ]; then
     exit 1
 fi
 
+# Test 12: Assert module test
+echo "Running assert module test..."
+go run main.go generate -p $TESTS_DIR/playbooks/assert_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+
+# This playbook has failing assertions, so it should exit with an error code
+# Run the generated tasks and expect a failure
+echo "Running assert playbook (expecting failure)..."
+set +e
+./generated_tasks -config tests/configs/default.yaml
+ASSERT_EXIT_CODE=$?
+set -e
+
+# Check if the exit code indicates failure (should be non-zero)
+if [ $ASSERT_EXIT_CODE -eq 0 ]; then
+    echo "Assert test failed: playbook should have failed due to assertions, but exited with code 0"
+    exit 1
+fi
+echo "Assert playbook failed as expected (Exit Code: $ASSERT_EXIT_CODE)."
+
 echo "All tests completed successfully!"
 

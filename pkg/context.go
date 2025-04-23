@@ -135,6 +135,9 @@ func (c HostContext) RunCommand(command, username string) (string, string, error
 // TemplateString processes a Jinja2 template string with provided variables.
 // additionalVars should be a slice of *sync.Map.
 func TemplateString(s string, additionalVars ...*sync.Map) (string, error) {
+	if s == "" {
+		return "", nil
+	}
 	tmpl, err := pongo2.FromString(s)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse template: %v", err)
@@ -145,14 +148,15 @@ func TemplateString(s string, additionalVars ...*sync.Map) (string, error) {
 	for _, v := range additionalVars {
 		MergeFacts(allVars, v) // Use the standalone MergeFacts function
 	}
-
 	var buf bytes.Buffer
 	// Convert the final *sync.Map to pongo2.Context before executing
-	if err := tmpl.ExecuteWriter(FactsToJinja2(allVars), &buf); err != nil {
+	facts := FactsToJinja2(allVars)
+	if err := tmpl.ExecuteWriter(facts, &buf); err != nil {
 		return "", fmt.Errorf("failed to execute template: %v", err)
 	}
-
-	return buf.String(), nil
+	res := buf.String()
+	common.DebugOutput("Templated %q into %q with facts: %v", s, res, facts)
+	return res, nil
 }
 
 func getVariablesFromJinjaString(jinjaString string) []string {
@@ -186,6 +190,9 @@ func GetVariableUsageFromTemplate(s string) []string {
 	for _, match := range matches {
 		jinjaVariables := getVariablesFromJinjaString(match[1])
 		vars = append(vars, jinjaVariables...)
+	}
+	if len(vars) > 0 {
+		common.DebugOutput("Found variables %v in %v", vars, s)
 	}
 	return vars
 }

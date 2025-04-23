@@ -2,11 +2,13 @@ package pkg
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
-
-	"github.com/flosch/pongo2"
+	// Remove pongo2 import if no longer needed directly here
+	// "github.com/flosch/pongo2"
 )
 
 // Useful for having a single type to pass around in channels
@@ -47,19 +49,42 @@ func (t Task) String() string {
 
 func (t Task) ShouldExecute(c *HostContext) bool {
 	if t.When != "" {
-		templatedWhen, err := TemplateString(t.When, c.Facts)
-		pythonResult := pongo2.AsValue(templatedWhen)
-		common.DebugOutput("Evaluating when condition %q: %q, %v", t.When, templatedWhen, pythonResult.IsTrue())
+		// Template the 'when' condition string using available facts and history
+		templatedWhen, err := TemplateString(t.When, c.Facts, c.History)
 		if err != nil {
-			common.DebugOutput("Error evaluating when condition %q: %s", t.When, err)
+			// If templating fails, we cannot evaluate the condition, so skip the task
+			common.LogWarn("Error templating when condition, skipping task", map[string]interface{}{
+				"task":      t.Name,
+				"host":      c.Host.Name,
+				"condition": t.When,
+				"error":     err.Error(),
+			})
 			return false
 		}
-		// TODO: this is a hack to handle the fact that pongo2 returns a python boolean as a string
-		if pythonResult.String() == "False" || pythonResult.String() == "None" {
+
+		// Trim whitespace and parse the resulting string as a boolean
+		trimmedResult := strings.TrimSpace(templatedWhen)
+		result, err := strconv.ParseBool(trimmedResult)
+
+		// Log the evaluation result
+		common.DebugOutput("Evaluated when condition %q -> %q: %t (error: %v)",
+			t.When, trimmedResult, result, err)
+
+		if err != nil {
+			// If the result isn't a valid boolean string, treat it as false (skip task)
+			common.LogWarn("When condition did not evaluate to a boolean value, skipping task", map[string]interface{}{
+				"task":      t.Name,
+				"host":      c.Host.Name,
+				"condition": t.When,
+				"evaluated": trimmedResult,
+			})
 			return false
 		}
-		return pythonResult.IsTrue()
+
+		// Return the parsed boolean result
+		return result
 	}
+	// If no 'when' condition, always execute
 	return true
 }
 
