@@ -35,6 +35,8 @@ cleanup() {
     rm -f /tmp/import_tasks_after.txt
     rm -f /tmp/import_role_before.txt
     rm -f /tmp/import_role_after.txt
+    rm -f /tmp/root_playbook_tasks.txt
+    rm -f /tmp/root_playbook_role.txt
     echo "Cleanup complete"
 }
 
@@ -275,6 +277,108 @@ if [ $ASSERT_EXIT_CODE -eq 0 ]; then
     exit 1
 fi
 echo "Assert playbook failed as expected (Exit Code: $ASSERT_EXIT_CODE)."
+
+# Test 13: Root-level playbook with tasks section
+echo "Running root-level playbook with tasks test..."
+
+# Create test playbook
+cat > $TESTS_DIR/playbooks/root_tasks_playbook.yaml << EOF
+---
+- name: Root playbook with tasks
+  hosts: localhost
+  tasks:
+    - name: Create a test file with tasks
+      shell: echo "Created by root-level tasks section" > /tmp/root_playbook_tasks.txt
+EOF
+
+go run main.go generate -p $TESTS_DIR/playbooks/root_tasks_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+./generated_tasks -config tests/configs/default.yaml
+
+# Check if the file was created
+if [ ! -f /tmp/root_playbook_tasks.txt ]; then
+    echo "Root-level tasks test: file was not created"
+    exit 1
+fi
+
+# Verify file content
+if ! grep -q "Created by root-level tasks section" /tmp/root_playbook_tasks.txt; then
+    echo "Root-level tasks test: file has incorrect content"
+    cat /tmp/root_playbook_tasks.txt # Print content for debugging
+    exit 1
+fi
+
+# Test 14: Root-level playbook with roles section
+echo "Running root-level playbook with roles test..."
+
+# Create test role
+mkdir -p $TESTS_DIR/roles/test_root_role/tasks
+cat > $TESTS_DIR/roles/test_root_role/tasks/main.yml << EOF
+---
+- name: Task from test_root_role
+  shell: echo "Created by root-level roles section" > /tmp/root_playbook_role.txt
+EOF
+
+# Create test playbook
+cat > $TESTS_DIR/playbooks/root_roles_playbook.yaml << EOF
+---
+- name: Root playbook with roles
+  hosts: localhost
+  roles:
+    - test_root_role
+EOF
+
+go run main.go generate -p $TESTS_DIR/playbooks/root_roles_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+./generated_tasks -config tests/configs/default.yaml
+
+# Check if the file was created
+if [ ! -f /tmp/root_playbook_role.txt ]; then
+    echo "Root-level roles test: file was not created"
+    exit 1
+fi
+
+# Verify file content
+if ! grep -q "Created by root-level roles section" /tmp/root_playbook_role.txt; then
+    echo "Root-level roles test: file has incorrect content"
+    cat /tmp/root_playbook_role.txt # Print content for debugging
+    exit 1
+fi
+
+# Test 15: Root-level playbook with both roles and tasks
+echo "Running root-level playbook with both roles and tasks test..."
+
+# Create test playbook with both roles and tasks
+cat > $TESTS_DIR/playbooks/root_both_playbook.yaml << EOF
+---
+- name: Root playbook with both roles and tasks
+  hosts: localhost
+  roles:
+    - test_root_role
+  tasks:
+    - name: Additional task in playbook with roles
+      shell: echo "Additional task" >> /tmp/root_playbook_role.txt
+EOF
+
+# First remove any existing file from previous test
+rm -f /tmp/root_playbook_role.txt
+
+go run main.go generate -p $TESTS_DIR/playbooks/root_both_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+./generated_tasks -config tests/configs/default.yaml
+
+# Check if the file was created
+if [ ! -f /tmp/root_playbook_role.txt ]; then
+    echo "Root-level both test: file was not created"
+    exit 1
+fi
+
+# Verify file contains both the role output and the direct task output
+if ! grep -q "Created by root-level roles section" /tmp/root_playbook_role.txt || ! grep -q "Additional task" /tmp/root_playbook_role.txt; then
+    echo "Root-level both test: file doesn't contain expected content from both role and direct task"
+    cat /tmp/root_playbook_role.txt # Print content for debugging
+    exit 1
+fi
 
 echo "All tests completed successfully!"
 
