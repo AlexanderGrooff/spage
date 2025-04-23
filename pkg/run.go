@@ -3,6 +3,8 @@ package pkg
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -127,27 +129,27 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 			fmt.Printf("\nTASK [%s] ****************************************************\n", task.Name)
 			c.History.Store(task.Name, result.Output)
 			if task.Register != "" {
-				var valueToStore interface{}
+				// Attempt to convert the output to a map with lowercase keys
+				valueToStore := convertOutputToFactsMap(result.Output)
 
-				// Check if the output provides its own fact representation
-				if factProvider, ok := result.Output.(FactProvider); ok {
-					valueToStore = factProvider.AsFacts()
-				} else {
-					// Fallback: Store the raw output object.
-					valueToStore = result.Output
-					if result.Output != nil { // Only warn if output is not nil
-						common.LogWarn("Storing raw ModuleOutput struct for registered variable (does not implement pkg.FactProvider); template access might require uppercase fields", map[string]interface{}{
-							"task": task.Name,
-						})
-					}
+				// Check if conversion failed (i.e., it's not a map and not nil)
+				if _, isMap := valueToStore.(map[string]interface{}); !isMap && valueToStore != nil {
+					common.LogWarn("Storing non-struct/non-convertible ModuleOutput for registered variable; structure may not be accessible as expected in templates", map[string]interface{}{
+						"task":     result.Task.Name,
+						"host":     result.Context.Host.Name,
+						"variable": result.Task.Register,
+						"type":     fmt.Sprintf("%T", result.Output),
+					})
+					// Keep the original value in this case (it was already assigned to valueToStore by convertOutputToFactsMap)
 				}
 
-				// Only store if valueToStore is not nil (handles cases where output was nil)
+				// Only store if valueToStore is not nil
 				if valueToStore != nil {
-					common.LogDebug("Registering variable", map[string]interface{}{
-						"host":  hostname,
-						"task":  task.Name,
-						"value": valueToStore,
+					common.LogDebug("Registering variable", map[string]interface{}{ // Use valueToStore in log
+						"task":     result.Task.Name,
+						"host":     result.Context.Host.Name,
+						"variable": result.Task.Register,
+						"value":    valueToStore,
 					})
 					c.Facts.Store(task.Register, valueToStore)
 				}
@@ -310,6 +312,56 @@ func loadLevelParallel(ctx context.Context, tasks []Task, contexts map[string]*H
 	}()
 }
 
+// Get the reflect.Type of the ModuleOutput interface once.
+var moduleOutputType = reflect.TypeOf((*ModuleOutput)(nil)).Elem()
+
+// convertOutputToFactsMap attempts to convert a ModuleOutput struct
+// into a map[string]interface{} using reflection, creating lowercase keys
+// for exported fields to mimic Ansible fact registration.
+// It also adds a 'changed' key based on the output's Changed() method.
+// If the input is not a struct or is nil, it returns the original value.
+func convertOutputToFactsMap(output ModuleOutput) interface{} {
+	if output == nil {
+		return nil
+	}
+
+	outputValue := reflect.ValueOf(output)
+	outputType := outputValue.Type()
+
+	// Handle pointers if the output value itself is a pointer
+	if outputType.Kind() == reflect.Ptr {
+		outputValue = outputValue.Elem()
+		outputType = outputValue.Type()
+	}
+
+	// Ensure we have a valid struct to reflect on
+	if outputValue.IsValid() && outputType.Kind() == reflect.Struct {
+		factsMap := make(map[string]interface{})
+		for i := 0; i < outputValue.NumField(); i++ {
+			fieldValue := outputValue.Field(i)
+			typeField := outputType.Field(i)
+
+			// Only include exported fields
+			if typeField.IsExported() {
+				// Skip the embedded ModuleOutput interface field itself
+				if typeField.Type == moduleOutputType {
+					continue
+				}
+				// Use lowercase field name as key
+				key := strings.ToLower(typeField.Name)
+				factsMap[key] = fieldValue.Interface()
+			}
+		}
+		// Add common 'changed' field
+		factsMap["changed"] = output.Changed()
+		return factsMap
+	}
+
+	// If not a struct, return the original value
+	return output
+}
+
+// Execute executes the graph using the default background context
 func Execute(cfg *config.Config, graph Graph, inventoryFile string) error {
 	err := ExecuteWithContext(context.Background(), cfg, graph, inventoryFile)
 	common.DebugOutput("Execute done: %v", err)
