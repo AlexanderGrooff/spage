@@ -2,9 +2,10 @@ package modules
 
 import (
 	"fmt"
-	"github.com/AlexanderGrooff/spage/pkg/common"
 	"reflect"
 	"strings"
+
+	"github.com/AlexanderGrooff/spage/pkg/common"
 
 	"github.com/AlexanderGrooff/spage/pkg"
 )
@@ -20,133 +21,274 @@ func (fm FileModule) OutputType() reflect.Type {
 }
 
 type FileInput struct {
-	Path  string `yaml:"path"`
+	Path  string `yaml:"path"` // Destination path
 	State string `yaml:"state"`
 	Mode  string `yaml:"mode"`
+	Src   string `yaml:"src,omitempty"` // Source path for state=link
 	pkg.ModuleInput
 }
 
 type FileOutput struct {
-	State  pkg.RevertableChange[string]
-	Mode   pkg.RevertableChange[string]
-	Exists pkg.RevertableChange[bool]
+	State      pkg.RevertableChange[string] // "file", "directory", "link", "absent"
+	Mode       pkg.RevertableChange[string] // Octal mode string
+	Exists     pkg.RevertableChange[bool]
+	IsLnk      pkg.RevertableChange[bool]   // Whether the path is a symlink
+	LinkTarget pkg.RevertableChange[string] // Target of the symlink, if IsLnk is true
 	pkg.ModuleOutput
 }
 
 func (i FileInput) ToCode() string {
-	return fmt.Sprintf("modules.FileInput{Path: %q, State: %q, Mode: %q}",
+	return fmt.Sprintf("modules.FileInput{Path: %q, State: %q, Mode: %q, Src: %q}",
 		i.Path,
 		i.State,
 		i.Mode,
+		i.Src,
 	)
 }
 
 func (i FileInput) GetVariableUsage() []string {
-	return pkg.GetVariableUsageFromTemplate(i.Path)
+	vars := pkg.GetVariableUsageFromTemplate(i.Path)
+	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.State)...)
+	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.Mode)...)
+	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.Src)...)
+	return vars
 }
 
 func (i FileInput) Validate() error {
 	if i.Path == "" {
 		return fmt.Errorf("missing Path input")
 	}
-	if i.State != "" && i.State != "touch" && i.State != "directory" && i.State != "absent" {
-		return fmt.Errorf("invalid State value: %s (must be one of: touch, directory, absent)", i.State)
+	validStates := map[string]bool{
+		"touch":     true,
+		"directory": true,
+		"absent":    true,
+		"link":      true,
+		"file":      true, // Allow 'file' as alias for 'touch'
+		"":          true, // Allow empty state (implies touch if path doesn't exist, or no state change if it does)
 	}
+	if !validStates[i.State] {
+		return fmt.Errorf("invalid State value: %q (must be one of: touch, directory, absent, link, file)", i.State)
+	}
+	if i.State == "link" && i.Src == "" {
+		return fmt.Errorf("missing Src input for state=link")
+	}
+	if i.State != "link" && i.Src != "" {
+		return fmt.Errorf("Src parameter is only valid for state=link")
+	}
+
 	return nil
 }
 
 func (o FileOutput) String() string {
-	return fmt.Sprintf("  original state: %q, mode: %q\n  new state: %q, mode: %q",
-		o.State.Before, o.Mode.Before,
-		o.State.After, o.Mode.After)
+	parts := []string{}
+	if o.Exists.Changed() {
+		if o.Exists.After {
+			parts = append(parts, fmt.Sprintf("created %s", o.State.After))
+		} else {
+			parts = append(parts, fmt.Sprintf("removed %s", o.State.Before))
+		}
+	}
+	if o.State.Changed() && !o.Exists.Changed() { // Don't report state change if existence changed
+		parts = append(parts, fmt.Sprintf("state changed from %s to %s", o.State.Before, o.State.After))
+	}
+	if o.Mode.Changed() {
+		parts = append(parts, fmt.Sprintf("mode changed from %q to %q", o.Mode.Before, o.Mode.After))
+	}
+	if o.IsLnk.Changed() {
+		if o.IsLnk.After {
+			parts = append(parts, fmt.Sprintf("is now link to %q", o.LinkTarget.After))
+		} else {
+			parts = append(parts, "is no longer link")
+		}
+	}
+	if o.LinkTarget.Changed() && !o.IsLnk.Changed() && o.IsLnk.After {
+		parts = append(parts, fmt.Sprintf("link target changed from %q to %q", o.LinkTarget.Before, o.LinkTarget.After))
+	}
+
+	if len(parts) == 0 {
+		return "no changes made"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (o FileOutput) Changed() bool {
-	return o.State.Changed() || o.Mode.Changed() || o.Exists.Changed()
+	return o.State.Changed() || o.Mode.Changed() || o.Exists.Changed() || o.IsLnk.Changed() || o.LinkTarget.Changed()
+}
+
+func getOriginalState(p FileInput, c *pkg.HostContext, runAs string) (exists bool, state, mode, linkTarget string, isLink bool, err error) {
+	// Use stat to determine type and mode, works for files, dirs, and links (without -L)
+	statCmd := fmt.Sprintf("stat --printf='%%F\n%%a' %s", p.Path)
+	stdout, stderr, statErr := c.RunCommand(statCmd, runAs)
+
+	if statErr != nil {
+		if strings.Contains(stderr, "No such file or directory") {
+			return false, "absent", "", "", false, nil // File doesn't exist
+		}
+		return false, "", "", "", false, fmt.Errorf("failed to stat %s: %v, stderr: %s", p.Path, statErr, stderr)
+	}
+
+	exists = true
+	parts := strings.Split(strings.TrimSpace(stdout), "\n")
+	if len(parts) != 2 {
+		return true, "", "", "", false, fmt.Errorf("unexpected stat output: %q", stdout)
+	}
+
+	fileType := parts[0]
+	mode = parts[1] // Octal mode
+
+	switch fileType {
+	case "symbolic link":
+		state = "link"
+		isLink = true
+		// Get link target
+		readlinkCmd := fmt.Sprintf("readlink %s", p.Path)
+		targetStdout, targetStderr, targetErr := c.RunCommand(readlinkCmd, runAs)
+		if targetErr != nil {
+			// Log warning but continue? Or return error?
+			common.DebugOutput("WARNING: Failed to read link target for %s: %v, stderr: %s", p.Path, targetErr, targetStderr)
+			linkTarget = ""
+		} else {
+			linkTarget = strings.TrimSpace(targetStdout)
+		}
+	case "directory":
+		state = "directory"
+		isLink = false
+	case "regular file", "regular empty file":
+		state = "file"
+		isLink = false
+	default: // fifo, socket, character special file, block special file, unknown
+		common.DebugOutput("Treating file type %q as 'file' state for %s", fileType, p.Path)
+		state = "file" // Treat other types as 'file' for state purposes?
+		isLink = false
+	}
+
+	return exists, state, mode, linkTarget, isLink, nil
 }
 
 func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
 	p := params.(FileInput)
 
-	// Get original state
-	contents, err := c.ReadFile(p.Path, runAs)
-	originalState := "absent"
-	originalMode := ""
-	created := false
-	removed := false
-	if err == nil {
-		// File exists, check if it's a directory
-		// TODO: why is the error output checked in the contents?
-		if strings.Contains(contents, "cannot read") && strings.Contains(contents, "Is a directory") {
-			originalState = "directory"
-		} else {
-			originalState = "file"
-		}
-		// Get mode using ls command
-		stdout, _, err := c.RunCommand(fmt.Sprintf("ls -l %s | cut -d ' ' -f 1", p.Path), runAs)
-		if err == nil && len(stdout) >= 4 {
-			// ls -l output format: -rwxr-xr-x
-			// We want the "rwx" part, which starts at index 1
-			originalMode = stdout[1:4]
-		}
-	} else {
-		created = true
+	// 1. Get original state
+	originalExists, originalState, originalMode, originalLinkTarget, originalIsLnk, err := getOriginalState(p, c, runAs)
+	if err != nil {
+		return nil, err // Propagate error from getOriginalState
 	}
 
-	// Apply state changes
-	switch p.State {
-	case "touch":
-		if err := c.WriteFile(p.Path, "", runAs); err != nil {
-			return nil, fmt.Errorf("failed to touch file %s: %v", p.Path, err)
-		}
-	case "directory":
-		if _, _, err := c.RunCommand(fmt.Sprintf("mkdir -p %s", p.Path), runAs); err != nil {
-			return nil, fmt.Errorf("failed to create directory %s: %v", p.Path, err)
-		}
-	case "absent":
-		if _, _, err := c.RunCommand(fmt.Sprintf("rm -rf %s", p.Path), runAs); err != nil {
-			return nil, fmt.Errorf("failed to remove %s: %v", p.Path, err)
-		}
-		removed = true
-	}
-
-	// Apply mode changes if specified
+	// Prepare to track changes
+	newState := originalState
 	newMode := originalMode
-	if p.Mode != "" {
-		// Convert symbolic mode (rw-) to numeric mode (644)
-		modeCmd := p.Mode
-		if len(p.Mode) == 3 && !strings.ContainsAny(p.Mode, "0123456789") {
-			var numeric int
-			for i, c := range p.Mode {
-				if c == 'r' {
-					numeric |= 4 << (uint(2-i) * 3)
-				}
-				if c == 'w' {
-					numeric |= 2 << (uint(2-i) * 3)
-				}
-				if c == 'x' {
-					numeric |= 1 << (uint(2-i) * 3)
+	newIsLnk := originalIsLnk
+	newLinkTarget := originalLinkTarget
+	newExists := originalExists
+	actionTaken := false
+
+	// Determine desired state (treat touch/file as 'file')
+	desiredState := p.State
+	if desiredState == "touch" || desiredState == "file" {
+		desiredState = "file"
+	}
+	if desiredState == "" {
+		if !originalExists {
+			desiredState = "file" // Default to creating a file if state is empty and path doesn't exist
+		} else {
+			desiredState = originalState // No state change requested, keep original
+		}
+	}
+
+	// 2. Apply state changes if needed
+	if desiredState != originalState || !originalExists {
+		common.DebugOutput("Applying state change from %q to %q for %s", originalState, desiredState, p.Path)
+		actionTaken = true
+		// If target state is different from absent, ensure path is clear first unless creating a directory
+		if originalExists && desiredState != originalState && desiredState != "absent" && desiredState != "directory" {
+			if _, _, err := c.RunCommand(fmt.Sprintf("rm -rf %s", p.Path), runAs); err != nil {
+				return nil, fmt.Errorf("failed to remove existing path %s before changing state: %v", p.Path, err)
+			}
+		}
+
+		switch desiredState {
+		case "file":
+			// Ensure path exists as a file (touch)
+			if err := c.WriteFile(p.Path, "", runAs); err != nil {
+				return nil, fmt.Errorf("failed to touch file %s: %v", p.Path, err)
+			}
+			newState = "file"
+			newIsLnk = false
+			newLinkTarget = ""
+			newExists = true
+		case "directory":
+			// Ensure path exists as a directory
+			if _, _, err := c.RunCommand(fmt.Sprintf("mkdir -p %s", p.Path), runAs); err != nil {
+				return nil, fmt.Errorf("failed to create directory %s: %v", p.Path, err)
+			}
+			newState = "directory"
+			newIsLnk = false
+			newLinkTarget = ""
+			newExists = true
+		case "absent":
+			// Ensure path does not exist
+			if originalExists {
+				if _, _, err := c.RunCommand(fmt.Sprintf("rm -rf %s", p.Path), runAs); err != nil {
+					return nil, fmt.Errorf("failed to remove %s: %v", p.Path, err)
 				}
 			}
-			modeCmd = fmt.Sprintf("%03o", numeric)
+			newState = "absent"
+			newIsLnk = false
+			newLinkTarget = ""
+			newExists = false
+		case "link":
+			// Ensure path exists as a link pointing to Src
+			// Remove existing path first to ensure correct link creation
+			if originalExists {
+				if _, _, err := c.RunCommand(fmt.Sprintf("rm -rf %s", p.Path), runAs); err != nil {
+					return nil, fmt.Errorf("failed to remove existing path %s before creating link: %v", p.Path, err)
+				}
+			}
+			linkCmd := fmt.Sprintf("ln -sf %s %s", p.Src, p.Path)
+			if _, _, err := c.RunCommand(linkCmd, runAs); err != nil {
+				return nil, fmt.Errorf("failed to create link %s -> %s: %v", p.Path, p.Src, err)
+			}
+			newState = "link"
+			newIsLnk = true
+			newLinkTarget = p.Src
+			newExists = true
 		}
-
-		if _, _, err := c.RunCommand(fmt.Sprintf("chmod %s %s", modeCmd, p.Path), runAs); err != nil {
-			return nil, fmt.Errorf("failed to chmod %s: %v", p.Path, err)
+	} else if desiredState == "link" && originalLinkTarget != p.Src {
+		// Special case: State is already 'link', but the target needs updating
+		common.DebugOutput("Updating link target for %s from %q to %q", p.Path, originalLinkTarget, p.Src)
+		actionTaken = true
+		// Recreate the link with the new target
+		linkCmd := fmt.Sprintf("ln -sf %s %s", p.Src, p.Path)
+		if _, _, err := c.RunCommand(linkCmd, runAs); err != nil {
+			return nil, fmt.Errorf("failed to update link %s -> %s: %v", p.Path, p.Src, err)
 		}
-		newMode = p.Mode
+		newLinkTarget = p.Src // Only target changes
 	}
 
-	// Get new state
-	newState := originalState
-	if p.State != "" {
-		newState = p.State
-		if p.State == "touch" {
-			newState = "file"
+	// 3. Apply mode changes if specified AND the file/dir exists after state changes
+	if p.Mode != "" && newExists && newState != "link" { // Don't apply mode directly to links
+		// Convert symbolic mode (e.g., u+x, g-w) or octal string to final mode
+		// For now, we only handle simple 3-digit octal modes like Ansible's basic usage
+		// TODO: Implement more complex mode handling if needed (like Ansible does)
+		finalMode := p.Mode                           // Assume p.Mode is octal for now
+		if finalMode != originalMode || actionTaken { // Apply if mode differs or if file was just created/state changed
+			common.DebugOutput("Applying mode %s to %s", finalMode, p.Path)
+			modeCmd := fmt.Sprintf("chmod %s %s", finalMode, p.Path)
+			if _, _, err := c.RunCommand(modeCmd, runAs); err != nil {
+				// Attempting to chmod a link target might fail if the link is broken
+				if newState == "link" {
+					common.DebugOutput("WARNING: Failed to chmod target of link %s (mode %s): %v. This might be expected if link is broken.", p.Path, finalMode, err)
+				} else {
+					return nil, fmt.Errorf("failed to chmod %s to %s: %v", p.Path, finalMode, err)
+				}
+			} else {
+				newMode = finalMode
+			}
 		}
 	}
 
-	return FileOutput{
+	// 4. Populate output
+	out := FileOutput{
 		State: pkg.RevertableChange[string]{
 			Before: originalState,
 			After:  newState,
@@ -156,48 +298,94 @@ func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 			After:  newMode,
 		},
 		Exists: pkg.RevertableChange[bool]{
-			Before: !created,
-			After:  created || !removed,
+			Before: originalExists,
+			After:  newExists,
 		},
-	}, nil
+		IsLnk: pkg.RevertableChange[bool]{
+			Before: originalIsLnk,
+			After:  newIsLnk,
+		},
+		LinkTarget: pkg.RevertableChange[string]{
+			Before: originalLinkTarget,
+			After:  newLinkTarget,
+		},
+	}
+
+	return out, nil
 }
 
 func (m FileModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
 	p := params.(FileInput)
 	if previous == nil {
-		common.DebugOutput("Not reverting because previous result was nil")
+		common.DebugOutput("Not reverting file module because previous result was nil")
 		return FileOutput{}, nil
 	}
 
 	prev := previous.(FileOutput)
 	if !prev.Changed() {
+		common.DebugOutput("Not reverting file module because no changes were made")
 		return FileOutput{}, nil
 	}
 
-	// Revert state
-	switch prev.State.Before {
-	case "absent":
+	common.DebugOutput("Reverting file state for %s from [Exists:%t State:%s Mode:%s Link:%t Target:%s] to [Exists:%t State:%s Mode:%s Link:%t Target:%s]",
+		p.Path, prev.Exists.After, prev.State.After, prev.Mode.After, prev.IsLnk.After, prev.LinkTarget.After,
+		prev.Exists.Before, prev.State.Before, prev.Mode.Before, prev.IsLnk.Before, prev.LinkTarget.Before)
+
+	// Revert to original existence and state
+	if !prev.Exists.Before {
+		// Original state was absent, so remove whatever is there now
+		common.DebugOutput("Reverting to absent: removing %s", p.Path)
 		if _, _, err := c.RunCommand(fmt.Sprintf("rm -rf %s", p.Path), runAs); err != nil {
-			return nil, fmt.Errorf("failed to remove %s: %v", p.Path, err)
+			return nil, fmt.Errorf("revert failed: could not remove %s: %v", p.Path, err)
 		}
-	case "directory":
-		if _, _, err := c.RunCommand(fmt.Sprintf("mkdir -p %s", p.Path), runAs); err != nil {
-			return nil, fmt.Errorf("failed to create directory %s: %v", p.Path, err)
+	} else {
+		// Original state existed, ensure it exists now in the correct state
+		// Remove current path first to handle state changes (e.g., dir -> file)
+		common.DebugOutput("Removing current path %s before reverting to original state %s", p.Path, prev.State.Before)
+		if _, _, err := c.RunCommand(fmt.Sprintf("rm -rf %s", p.Path), runAs); err != nil {
+			// This might fail if the path was already removed, which could be ok if the original state was absent, but we checked Exists.Before was true.
+			// Log a warning? It might interfere with the next step.
+			common.DebugOutput("Warning during revert: failed to remove existing path %s (might be ok if state didn't change drastically): %v", p.Path, err)
 		}
-	case "file":
-		if err := c.WriteFile(p.Path, "", runAs); err != nil {
-			return nil, fmt.Errorf("failed to create file %s: %v", p.Path, err)
+
+		switch prev.State.Before {
+		case "file":
+			common.DebugOutput("Reverting to file: touching %s", p.Path)
+			if err := c.WriteFile(p.Path, "", runAs); err != nil {
+				return nil, fmt.Errorf("revert failed: could not touch file %s: %v", p.Path, err)
+			}
+		case "directory":
+			common.DebugOutput("Reverting to directory: mkdir -p %s", p.Path)
+			if _, _, err := c.RunCommand(fmt.Sprintf("mkdir -p %s", p.Path), runAs); err != nil {
+				return nil, fmt.Errorf("revert failed: could not create directory %s: %v", p.Path, err)
+			}
+		case "link":
+			if prev.LinkTarget.Before == "" {
+				return nil, fmt.Errorf("revert failed: cannot revert link for %s, original target unknown", p.Path)
+			}
+			common.DebugOutput("Reverting to link: ln -sf %s %s", prev.LinkTarget.Before, p.Path)
+			linkCmd := fmt.Sprintf("ln -sf %s %s", prev.LinkTarget.Before, p.Path)
+			if _, _, err := c.RunCommand(linkCmd, runAs); err != nil {
+				return nil, fmt.Errorf("revert failed: could not create link %s -> %s: %v", p.Path, prev.LinkTarget.Before, err)
+			}
+		case "absent":
+			// Should have been handled by the !prev.Exists.Before check
+			common.DebugOutput("Revert: Original state was absent, already handled.")
+		default:
+			return nil, fmt.Errorf("revert failed: unknown original state %q for %s", prev.State.Before, p.Path)
+		}
+
+		// Revert mode *after* recreating the correct state, but *only* if the original state was not a link
+		if prev.Mode.Before != "" && !prev.IsLnk.Before {
+			common.DebugOutput("Reverting mode to %s for %s", prev.Mode.Before, p.Path)
+			modeCmd := fmt.Sprintf("chmod %s %s", prev.Mode.Before, p.Path)
+			if _, _, err := c.RunCommand(modeCmd, runAs); err != nil {
+				return nil, fmt.Errorf("revert failed: could not chmod %s to %s: %v", p.Path, prev.Mode.Before, err)
+			}
 		}
 	}
 
-	// Revert mode
-	if prev.Mode.Before != "" {
-		if _, _, err := c.RunCommand(fmt.Sprintf("chmod %s %s", prev.Mode.Before, p.Path), runAs); err != nil {
-			return nil, fmt.Errorf("failed to chmod %s: %v", p.Path, err)
-		}
-	}
-
-	// Flip the before and after values
+	// Flip the before and after values for the output
 	return FileOutput{
 		State: pkg.RevertableChange[string]{
 			Before: prev.State.After,
@@ -210,6 +398,14 @@ func (m FileModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous 
 		Exists: pkg.RevertableChange[bool]{
 			Before: prev.Exists.After,
 			After:  prev.Exists.Before,
+		},
+		IsLnk: pkg.RevertableChange[bool]{
+			Before: prev.IsLnk.After,
+			After:  prev.IsLnk.Before,
+		},
+		LinkTarget: pkg.RevertableChange[string]{
+			Before: prev.LinkTarget.After,
+			After:  prev.LinkTarget.Before,
 		},
 	}, nil
 }

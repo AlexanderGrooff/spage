@@ -37,6 +37,7 @@ cleanup() {
     rm -f /tmp/import_role_after.txt
     rm -f /tmp/root_playbook_tasks.txt
     rm -f /tmp/root_playbook_role.txt
+    rm -f /tmp/spage_stat_test_file.txt /tmp/spage_stat_test_link.txt
     echo "Cleanup complete"
 }
 
@@ -311,23 +312,6 @@ fi
 # Test 14: Root-level playbook with roles section
 echo "Running root-level playbook with roles test..."
 
-# Create test role
-mkdir -p $TESTS_DIR/roles/test_root_role/tasks
-cat > $TESTS_DIR/roles/test_root_role/tasks/main.yml << EOF
----
-- name: Task from test_root_role
-  shell: echo "Created by root-level roles section" > /tmp/root_playbook_role.txt
-EOF
-
-# Create test playbook
-cat > $TESTS_DIR/playbooks/root_roles_playbook.yaml << EOF
----
-- name: Root playbook with roles
-  hosts: localhost
-  roles:
-    - test_root_role
-EOF
-
 go run main.go generate -p $TESTS_DIR/playbooks/root_roles_playbook.yaml -o generated_tasks.go
 go build -o generated_tasks generated_tasks.go
 ./generated_tasks -config tests/configs/default.yaml
@@ -348,18 +332,6 @@ fi
 # Test 15: Root-level playbook with both roles and tasks
 echo "Running root-level playbook with both roles and tasks test..."
 
-# Create test playbook with both roles and tasks
-cat > $TESTS_DIR/playbooks/root_both_playbook.yaml << EOF
----
-- name: Root playbook with both roles and tasks
-  hosts: localhost
-  roles:
-    - test_root_role
-  tasks:
-    - name: Additional task in playbook with roles
-      shell: echo "Additional task" >> /tmp/root_playbook_role.txt
-EOF
-
 # First remove any existing file from previous test
 rm -f /tmp/root_playbook_role.txt
 
@@ -379,6 +351,19 @@ if ! grep -q "Created by root-level roles section" /tmp/root_playbook_role.txt |
     cat /tmp/root_playbook_role.txt # Print content for debugging
     exit 1
 fi
+
+# Test 16: Stat module test
+echo "Running stat module test..."
+go run main.go generate -p $TESTS_DIR/playbooks/stat_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+./generated_tasks -config tests/configs/default.yaml
+STAT_EXIT_CODE=$?
+
+if [ $STAT_EXIT_CODE -ne 0 ]; then
+    echo "Stat module test failed (Exit Code: $STAT_EXIT_CODE)."
+    exit 1
+fi
+echo "Stat module test succeeded."
 
 echo "All tests completed successfully!"
 

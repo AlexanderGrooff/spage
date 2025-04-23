@@ -12,4 +12,57 @@
 - name: Set file permissions
   file:
     path: /tmp/spage_test_file.txt
-    mode: "0644" 
+    mode: "0644"
+
+- name: Create symlink
+  file:
+    src: /tmp/spage_test_file.txt
+    path: /tmp/spage_test_link.txt
+    state: link
+
+- name: Stat the link
+  stat:
+    path: /tmp/spage_test_link.txt
+    follow: no
+  register: link_stat
+
+- name: Assert link exists
+  assert:
+    that:
+      - link_stat.stat.exists
+      - link_stat.stat.islnk
+
+- name: Change link target
+  file:
+    src: /tmp/non_existent_target.txt # Change target
+    path: /tmp/spage_test_link.txt   # Use path instead of dest
+    state: link
+
+- name: Stat the link again
+  stat:
+    path: /tmp/spage_test_link.txt
+    follow: no
+  register: link_stat_after_change
+
+- name: Assert link target changed
+  assert:
+    that:
+      - link_stat_after_change.stat.exists
+      - link_stat_after_change.stat.islnk
+      # Need readlink in stat output or a dedicated readlink module to assert target here
+
+- name: Remove the link
+  file:
+    path: /tmp/spage_test_link.txt
+    state: absent
+
+- name: Stat the link path after removal
+  stat:
+    path: /tmp/spage_test_link.txt
+    follow: no
+  register: link_stat_after_removal
+
+- name: Assert link removed
+  assert:
+    that:
+      - not link_stat_after_removal.stat.exists 

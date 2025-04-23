@@ -8,18 +8,12 @@
       - "{{ shell_output.stdout == 'success' }}"
   after: Register a variable
 
-# - name: Assert failure (should fail)
-#   assert:
-#     that:
-#       - "1 == 2"
-#     msg: "This assertion is expected to fail."
-
 - name: Assert with templating (boolean string, should pass)
   assert:
     that:
       - "true" # Directly asserting a true string
 
-# - name: Assert failure with boolean string (should fail)
-#   assert:
-#     that:
-#       - "false" # Directly asserting a false string 
+- name: Assert failure with boolean string (should fail)
+  assert:
+    that:
+      - "false" # Directly asserting a false string 
