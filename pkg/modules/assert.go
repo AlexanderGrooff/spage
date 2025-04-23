@@ -84,12 +84,12 @@ func (m AssertModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs 
 		// TODO: Implement a more robust expression evaluation engine like CEL or leverage existing 'when' logic.
 		// For now, we'll do a simple check: treat the string as a boolean.
 		// Render any variables first
-		renderedAssertion, err := pkg.TemplateString(assertion, c.Facts, c.History)
+		renderedAssertion, err := pkg.TemplateString(assertion, c.Facts)
 		if err != nil {
 			output.FailedAssertion = assertion // Use original assertion on render error
 			errMsg := fmt.Sprintf("failed to render assertion template %q: %v", assertion, err)
 			if p.Msg != "" {
-				renderedMsg, renderErr := pkg.TemplateString(p.Msg, c.Facts, c.History)
+				renderedMsg, renderErr := pkg.TemplateString(p.Msg, c.Facts)
 				if renderErr != nil {
 					errMsg = fmt.Sprintf("%s (also failed to render custom message: %v)", errMsg, renderErr)
 				} else {
@@ -105,7 +105,7 @@ func (m AssertModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs 
 			output.FailedAssertion = assertion // Use original assertion string
 			errMsg := fmt.Sprintf("assertion failed: %q (evaluated to %q)", assertion, renderedAssertion)
 			if p.Msg != "" {
-				renderedMsg, renderErr := pkg.TemplateString(p.Msg, c.Facts, c.History)
+				renderedMsg, renderErr := pkg.TemplateString(p.Msg, c.Facts)
 				if renderErr != nil {
 					errMsg = fmt.Sprintf("%s (also failed to render custom message: %v)", errMsg, renderErr)
 				} else {

@@ -49,8 +49,7 @@ func (t Task) String() string {
 
 func (t Task) ShouldExecute(c *HostContext) bool {
 	if t.When != "" {
-		// Template the 'when' condition string using available facts and history
-		templatedWhen, err := TemplateString(t.When, c.Facts, c.History)
+		templatedWhen, err := TemplateString(t.When, c.Facts)
 		if err != nil {
 			// If templating fails, we cannot evaluate the condition, so skip the task
 			common.LogWarn("Error templating when condition, skipping task", map[string]interface{}{

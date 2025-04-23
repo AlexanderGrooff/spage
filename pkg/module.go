@@ -11,6 +11,15 @@ type ModuleOutput interface {
 	String() string
 	Changed() bool
 }
+
+// FactProvider is an optional interface for ModuleOutput types
+// to control their representation when registered as facts.
+// This allows modules to return maps with lowercase keys for
+// Ansible compatibility in templates.
+type FactProvider interface {
+	AsFacts() map[string]interface{}
+}
+
 type RevertableChange[T comparable] struct {
 	Before T
 	After  T

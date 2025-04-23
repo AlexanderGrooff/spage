@@ -127,7 +127,30 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 			fmt.Printf("\nTASK [%s] ****************************************************\n", task.Name)
 			c.History.Store(task.Name, result.Output)
 			if task.Register != "" {
-				c.Facts.Store(task.Register, OutputToFacts(result.Output))
+				var valueToStore interface{}
+
+				// Check if the output provides its own fact representation
+				if factProvider, ok := result.Output.(FactProvider); ok {
+					valueToStore = factProvider.AsFacts()
+				} else {
+					// Fallback: Store the raw output object.
+					valueToStore = result.Output
+					if result.Output != nil { // Only warn if output is not nil
+						common.LogWarn("Storing raw ModuleOutput struct for registered variable (does not implement pkg.FactProvider); template access might require uppercase fields", map[string]interface{}{
+							"task": task.Name,
+						})
+					}
+				}
+
+				// Only store if valueToStore is not nil (handles cases where output was nil)
+				if valueToStore != nil {
+					common.LogDebug("Registering variable", map[string]interface{}{
+						"host":  hostname,
+						"task":  task.Name,
+						"value": valueToStore,
+					})
+					c.Facts.Store(task.Register, valueToStore)
+				}
 			}
 			hostTaskLevelHistory[executionLevel][hostname] <- task
 

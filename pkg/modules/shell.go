@@ -59,6 +59,18 @@ func (o ShellOutput) Changed() bool {
 	return true
 }
 
+// AsFacts implements the pkg.FactProvider interface.
+// It returns a map representation suitable for registration,
+// using lowercase keys for Ansible compatibility.
+func (o ShellOutput) AsFacts() map[string]interface{} {
+	return map[string]interface{}{
+		"stdout":  o.Stdout,
+		"stderr":  o.Stderr,
+		"command": o.Command,
+		"changed": o.Changed(),
+	}
+}
+
 func (m ShellModule) templateAndExecute(command string, c *pkg.HostContext, prev ShellOutput, runAs string) (ShellOutput, error) {
 	var err error
 
