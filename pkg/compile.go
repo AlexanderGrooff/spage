@@ -78,6 +78,29 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			continue
 		}
 
+		// *** Generic Module Alias Handling Start ***
+		// Before marshaling/unmarshaling into specific type, handle parameter aliases
+		if aliases := module.ParameterAliases(); aliases != nil {
+			if paramsMap, ok := moduleParams.(map[string]interface{}); ok {
+				modified := false
+				for aliasName, canonicalName := range aliases {
+					if _, canonicalExists := paramsMap[canonicalName]; !canonicalExists {
+						if aliasVal, aliasExists := paramsMap[aliasName]; aliasExists {
+							common.DebugOutput("Promoting alias %q to %q for module %s task %q", aliasName, canonicalName, task.Module, task.Name)
+							paramsMap[canonicalName] = aliasVal
+							delete(paramsMap, aliasName) // Remove the alias
+							modified = true
+						}
+					}
+				}
+				// Update moduleParams map reference only if it was modified
+				if modified {
+					moduleParams = paramsMap
+				}
+			}
+		} // Else: module doesn't define aliases or params aren't a map
+		// *** Generic Module Alias Handling End ***
+
 		// Convert back to yaml so we can unmarshal it into the correct type
 		paramsData, err := yaml.Marshal(moduleParams)
 		if err != nil {

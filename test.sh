@@ -38,6 +38,9 @@ cleanup() {
     rm -f /tmp/root_playbook_tasks.txt
     rm -f /tmp/root_playbook_role.txt
     rm -f /tmp/spage_stat_test_file.txt /tmp/spage_stat_test_link.txt
+    rm -f /tmp/spage_file_test_dest.txt
+    rm -rf /tmp/spage_file_test_name.txt
+    rm -f /tmp/spage_file_test_link_dest.txt
     echo "Cleanup complete"
 }
 

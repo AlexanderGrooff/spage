@@ -400,3 +400,8 @@ func init() {
 
 	pkg.RegisterModule("stat", StatModule{})
 }
+
+// ParameterAliases defines aliases for module parameters.
+func (m StatModule) ParameterAliases() map[string]string {
+	return nil // No aliases defined for this module
+}

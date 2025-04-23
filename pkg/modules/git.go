@@ -130,3 +130,8 @@ func (m GitModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous p
 func init() {
 	pkg.RegisterModule("git", GitModule{})
 }
+
+// ParameterAliases defines aliases for module parameters.
+func (m GitModule) ParameterAliases() map[string]string {
+	return nil // No aliases defined for this module
+}

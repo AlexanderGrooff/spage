@@ -2,8 +2,9 @@ package modules
 
 import (
 	"fmt"
-	"github.com/AlexanderGrooff/spage/pkg/common"
 	"reflect"
+
+	"github.com/AlexanderGrooff/spage/pkg/common"
 
 	"github.com/AlexanderGrooff/spage/pkg"
 )
@@ -125,4 +126,9 @@ func (m TemplateModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previ
 
 func init() {
 	pkg.RegisterModule("template", TemplateModule{})
+}
+
+// ParameterAliases defines aliases for module parameters.
+func (m TemplateModule) ParameterAliases() map[string]string {
+	return nil // No aliases defined for this module
 }

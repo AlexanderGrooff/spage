@@ -413,3 +413,11 @@ func (m FileModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous 
 func init() {
 	pkg.RegisterModule("file", FileModule{})
 }
+
+// ParameterAliases defines aliases for the file module parameters.
+func (fm FileModule) ParameterAliases() map[string]string {
+	return map[string]string{
+		"dest": "path",
+		"name": "path",
+	}
+}

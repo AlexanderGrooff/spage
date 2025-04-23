@@ -65,4 +65,58 @@
 - name: Assert link removed
   assert:
     that:
-      - not link_stat_after_removal.stat.exists 
+      - not link_stat_after_removal.stat.exists
+
+- name: Test 'dest' alias for path
+  file:
+    dest: /tmp/spage_file_test_dest.txt # Using 'dest' alias
+    state: touch
+    mode: '0600'
+
+- name: Stat file created with 'dest' alias
+  stat:
+    path: /tmp/spage_file_test_dest.txt
+  register: dest_alias_stat
+
+- name: Assert file created with 'dest' alias
+  assert:
+    that:
+      - dest_alias_stat.stat.exists
+      - dest_alias_stat.stat.isreg
+      - dest_alias_stat.stat.mode == '0600'
+
+- name: Test 'name' alias for path
+  file:
+    name: /tmp/spage_file_test_name.txt # Using 'name' alias
+    state: directory
+    mode: '0750'
+
+- name: Stat directory created with 'name' alias
+  stat:
+    path: /tmp/spage_file_test_name.txt
+  register: name_alias_stat
+
+- name: Assert directory created with 'name' alias
+  assert:
+    that:
+      - name_alias_stat.stat.exists
+      - name_alias_stat.stat.isdir
+      - name_alias_stat.stat.mode == '0750'
+
+- name: Test 'dest' alias for link creation
+  file:
+    dest: /tmp/spage_file_test_link_dest.txt # Using 'dest' alias
+    src: /tmp/spage_test_file.txt
+    state: link
+
+- name: Stat link created with 'dest' alias
+  stat:
+    path: /tmp/spage_file_test_link_dest.txt
+    follow: no
+  register: dest_link_alias_stat
+
+- name: Assert link created with 'dest' alias
+  assert:
+    that:
+      - dest_link_alias_stat.stat.exists
+      - dest_link_alias_stat.stat.islnk 

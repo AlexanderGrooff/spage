@@ -2,8 +2,9 @@ package modules
 
 import (
 	"fmt"
-	"github.com/AlexanderGrooff/spage/pkg/common"
 	"reflect"
+
+	"github.com/AlexanderGrooff/spage/pkg/common"
 
 	"github.com/AlexanderGrooff/spage/pkg"
 )
@@ -165,4 +166,9 @@ func (m CopyModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous 
 
 func init() {
 	pkg.RegisterModule("copy", CopyModule{})
+}
+
+// ParameterAliases defines aliases for module parameters.
+func (cm CopyModule) ParameterAliases() map[string]string {
+	return nil // No aliases defined for this module
 }

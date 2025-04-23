@@ -129,3 +129,8 @@ func (m AssertModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previou
 func init() {
 	pkg.RegisterModule("assert", AssertModule{})
 }
+
+// ParameterAliases defines aliases for module parameters.
+func (m AssertModule) ParameterAliases() map[string]string {
+	return nil // No aliases defined for this module
+}

@@ -181,3 +181,8 @@ func (m SystemdModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previo
 func init() {
 	pkg.RegisterModule("systemd", SystemdModule{})
 }
+
+// ParameterAliases defines aliases for module parameters.
+func (m SystemdModule) ParameterAliases() map[string]string {
+	return nil // No aliases defined for this module
+}

@@ -158,3 +158,8 @@ func (i *ShellInput) UnmarshalYAML(node *yaml.Node) error {
 func init() {
 	pkg.RegisterModule("shell", ShellModule{})
 }
+
+// ParameterAliases defines aliases for module parameters.
+func (m ShellModule) ParameterAliases() map[string]string {
+	return nil // No aliases defined for this module
+}
