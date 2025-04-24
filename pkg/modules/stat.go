@@ -214,36 +214,8 @@ func parseStatOutput(output string) (*StatOutput, error) {
 func (m StatModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
 	p := params.(StatInput)
 
-	// Use GNU stat --printf for detailed info. Handle non-GNU stat later if needed.
-	// Format: %a %u %g %s %W %X %Y %Z %F %N %d %i %h %r %b %B %U %G
-	// OctalPerms UID GID Size CreationTime AccessTime ModifyTime ChangeTime FileType FileName DeviceNum InodeNum HardLinks RawDeviceNum(hex) AllocBlocks BlockSize UserName GroupName
-	formatString := `--printf=%a
-%u
-%g
-%s
-%W
-%X
-%Y
-%Z
-%F
-%N
-%d
-%i
-%h
-%r
-%b
-%B
-%U
-%G
-`
-	statCmd := "stat"
-	if p.Follow {
-		statCmd += " -L" // Follow symlinks
-	}
-	// Note: No shell escaping applied here for simplicity. Assumes path is safe.
-	fullCmd := fmt.Sprintf("%s %s %s", statCmd, formatString, p.Path)
-
-	stdout, stderr, err := c.RunCommand(fullCmd, runAs)
+	// TODO: pass p.Follow
+	stdout, stderr, err := c.Stat(p.Path, runAs)
 
 	// Handle "file not found" or other errors during stat
 	if err != nil {

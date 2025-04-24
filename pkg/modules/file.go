@@ -117,8 +117,7 @@ func (o FileOutput) Changed() bool {
 
 func getOriginalState(p FileInput, c *pkg.HostContext, runAs string) (exists bool, state, mode, linkTarget string, isLink bool, err error) {
 	// Use stat to determine type and mode, works for files, dirs, and links (without -L)
-	statCmd := fmt.Sprintf("sh -c \"stat --printf='%%F\n%%a' %q || stat -f='%%F\n%%a' %q\"", p.Path, p.Path)
-	stdout, stderr, statErr := c.RunCommand(statCmd, runAs)
+	stdout, stderr, statErr := c.Stat(p.Path, runAs)
 
 	if statErr != nil {
 		if strings.Contains(stderr, "No such file or directory") {
@@ -129,12 +128,12 @@ func getOriginalState(p FileInput, c *pkg.HostContext, runAs string) (exists boo
 
 	exists = true
 	parts := strings.Split(strings.TrimSpace(stdout), "\n")
-	if len(parts) != 2 {
+	if len(parts) < 16 {
 		return true, "", "", "", false, fmt.Errorf("unexpected stat output: %q", stdout)
 	}
 
-	fileType := parts[0]
-	mode = parts[1] // Octal mode
+	fileType := parts[8]
+	mode = parts[0] // Octal mode
 
 	switch fileType {
 	case "symbolic link":

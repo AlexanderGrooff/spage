@@ -117,6 +117,14 @@ func (c HostContext) Copy(src, dst string) error {
 	return runtime.CopyRemote(src, dst)
 }
 
+func (c HostContext) Stat(path, runAs string) (string, string, error) {
+	if c.Host.IsLocal {
+		return runtime.StatLocal(path, runAs)
+	}
+	// TODO: run specific stat flags based on arch in HostContext
+	return runtime.StatRemote(path, c.Host.Host, runAs)
+}
+
 func (c HostContext) RunCommand(command, username string) (string, string, error) {
 	// TODO: why was this necessary?
 	//if username == "" {
