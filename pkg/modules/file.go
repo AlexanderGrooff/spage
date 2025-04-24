@@ -117,7 +117,7 @@ func (o FileOutput) Changed() bool {
 
 func getOriginalState(p FileInput, c *pkg.HostContext, runAs string) (exists bool, state, mode, linkTarget string, isLink bool, err error) {
 	// Use stat to determine type and mode, works for files, dirs, and links (without -L)
-	statCmd := fmt.Sprintf("stat --printf='%%F\n%%a' %s", p.Path)
+	statCmd := fmt.Sprintf("sh -c \"stat --printf='%%F\n%%a' %q || stat -f='%%F\n%%a' %q\"", p.Path, p.Path)
 	stdout, stderr, statErr := c.RunCommand(statCmd, runAs)
 
 	if statErr != nil {
