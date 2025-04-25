@@ -165,3 +165,8 @@ func (m ShellModule) ParameterAliases() map[string]string {
 		"cmd": "execute",
 	}
 }
+
+// HasRevert checks if a revert command is defined.
+func (i ShellInput) HasRevert() bool {
+	return i.Revert != ""
+}

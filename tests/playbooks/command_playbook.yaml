@@ -1,0 +1,30 @@
+---
+- name: Create test file 1 using command (shorthand)
+  command: touch /tmp/spage_command_test_file1.txt
+
+- name: Create test file 2 using command (long form)
+  command:
+    execute: touch /tmp/spage_command_test_file2.txt
+  after: Create test file 1 using command (shorthand)
+
+# Test direct command execution without shell interpretation
+- name: Create test file 3 using command (no shell)
+  command:
+    execute: touch /tmp/spage_command_test_no_expand.txt
+  after: Create test file 2 using command (long form)
+
+- name: Test command with arguments (create directory)
+  command: mkdir -p /tmp/spage_command_dir
+  after: Create test file 3 using command (no shell)
+
+- name: Test revert command (create file)
+  command:
+    execute: touch /tmp/spage_command_revert.txt
+    # Revert action: remove the file created by execute
+    revert: rm -f /tmp/spage_command_revert.txt
+  after: Test command with arguments (create directory)
+
+# This task is designed to fail, triggering the revert of the previous task
+- name: Fail intentionally to trigger revert
+  command: /bin/false # Use command to ensure it runs directly
+  after: Test revert command (create file) 

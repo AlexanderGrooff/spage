@@ -69,7 +69,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 					moduleParams = v
 					break
 				} else {
-					errors = append(errors, fmt.Errorf("unknown key %q in task %q", k, task.Name))
+					errors = append(errors, fmt.Errorf("unknown module or key %q in task %q", k, task.Name))
 					errored = true
 				}
 			}
@@ -122,6 +122,17 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		// Check the original moduleParams type, not the result of unmarshaling
 		if _, isMap := moduleParams.(map[string]interface{}); isMap {
 			structType := module.InputType()
+			// If the input type is a pointer, get the underlying element type
+			if structType.Kind() == reflect.Ptr {
+				structType = structType.Elem()
+			}
+			// Ensure we have a struct type after potentially dereferencing
+			if structType.Kind() != reflect.Struct {
+				// This should ideally not happen if InputType returns a struct or pointer to struct
+				errors = append(errors, fmt.Errorf("module %s input type is not a struct or pointer to struct (%s)", task.Module, module.InputType().String()))
+				continue
+			}
+
 			structFields := make(map[string]struct{})
 			// Collect field names from the struct
 			for i := 0; i < structType.NumField(); i++ {

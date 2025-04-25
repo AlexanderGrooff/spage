@@ -11,6 +11,8 @@ type ModuleInput interface {
 	ToCode() string
 	GetVariableUsage() []string
 	Validate() error
+	// HasRevert indicates if this input defines a revert action.
+	HasRevert() bool
 }
 
 // ModuleOutput is a marker interface for module output results.

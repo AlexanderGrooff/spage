@@ -1,0 +1,38 @@
+---
+- name: Update apt cache
+  apt:
+    update_cache: yes
+  run_as: root
+
+- name: Ensure cowsay is installed (shorthand)
+  apt: cowsay
+  after: Update apt cache
+  run_as: root
+
+- name: Ensure cowsay is absent
+  apt:
+    name: cowsay
+    state: absent
+  after: Ensure cowsay is installed (shorthand)
+  run_as: root
+
+- name: Ensure cowsay is present again (long form)
+  apt:
+    name: cowsay
+    state: present
+  after: Ensure cowsay is absent
+  run_as: root
+
+- name: Install list of packages (cowsay, sl)
+  apt:
+    name:
+      - cowsay
+      - sl
+    state: present
+  after: Ensure cowsay is present again (long form)
+  run_as: root
+
+# Add a failing task to test revert
+- name: Fail to trigger revert (ensure cowsay and sl removed)
+  command: /bin/false
+  after: Install list of packages (cowsay, sl) 

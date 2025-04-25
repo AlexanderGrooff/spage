@@ -486,6 +486,23 @@ func RevertTasksWithConfig(executedTasks []map[string]chan Task, contexts map[st
 					}
 					continue // Skip this task revert
 				}
+
+				// Check if the task actually has a revert command defined using the interface method
+				if !task.Params.HasRevert() {
+					// Task doesn't have a revert command, log as 'ok' (no action needed)
+					logData["status"] = "ok"
+					logData["changed"] = false
+					logData["message"] = "No revert command defined for this task"
+					recapStats[hostname]["ok"]++
+					if cfg.Logging.Format == "plain" {
+						fmt.Printf("ok: [%s] => (no revert defined)\n", hostname)
+					} else {
+						common.LogInfo("Skipping revert task", logData)
+					}
+					continue // Move to the next task
+				}
+
+				// Proceed with revert only if HasRevert() is true
 				tOutput := task.RevertModule(c)
 				if tOutput.Error != nil {
 					logData["status"] = "failed"

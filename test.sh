@@ -41,6 +41,21 @@ cleanup() {
     rm -f /tmp/spage_file_test_dest.txt
     rm -rf /tmp/spage_file_test_name.txt
     rm -f /tmp/spage_file_test_link_dest.txt
+    # Cleanup for command module tests
+    rm -f /tmp/spage_command_test_file1.txt
+    rm -f /tmp/spage_command_test_file2.txt
+    rm -f /tmp/spage_command_test_no_expand.txt
+    rm -rf /tmp/spage_command_dir
+    rm -f /tmp/spage_command_revert.txt
+    # Cleanup for apt module tests (requires sudo)
+    if command -v cowsay &> /dev/null; then
+        echo "Removing cowsay package installed during test..."
+        sudo apt-get remove -y --purge cowsay || echo "Failed to remove cowsay, may require manual cleanup."
+    fi
+    if command -v sl &> /dev/null; then
+        echo "Removing sl package installed during test..."
+        sudo apt-get remove -y --purge sl || echo "Failed to remove sl, may require manual cleanup."
+    fi
     echo "Cleanup complete"
 }
 
@@ -367,6 +382,100 @@ if [ $STAT_EXIT_CODE -ne 0 ]; then
     exit 1
 fi
 echo "Stat module test succeeded."
+
+# Test 17: Command module test
+echo "Running command module test..."
+go run main.go generate -p $TESTS_DIR/playbooks/command_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+
+# Run and expect failure due to the intentional fail task triggering revert
+echo "Running command playbook (expecting failure to test revert)..."
+set +e
+./generated_tasks -config tests/configs/sequential.yaml
+COMMAND_EXIT_CODE=$?
+set -e
+
+# Check if the exit code indicates failure (should be non-zero)
+if [ $COMMAND_EXIT_CODE -eq 0 ]; then
+    echo "Command module test failed: Playbook succeeded unexpectedly (Exit Code: $COMMAND_EXIT_CODE). Revert likely did not trigger."
+    exit 1
+fi
+echo "Command playbook failed as expected (Exit Code: $COMMAND_EXIT_CODE), checking results..."
+
+# Check file existence
+if [ ! -f /tmp/spage_command_test_file1.txt ]; then
+    echo "Command test: file1 was not created"
+    exit 1
+fi
+if [ ! -f /tmp/spage_command_test_file2.txt ]; then
+    echo "Command test: file2 was not created"
+    exit 1
+fi
+if [ ! -d /tmp/spage_command_dir ]; then
+    echo "Command test: directory was not created"
+    exit 1
+fi
+
+# Check for no shell expansion (file 3 created)
+if [ ! -f /tmp/spage_command_test_no_expand.txt ]; then
+    echo "Command test: no_expand file was not created"
+    exit 1
+fi
+
+# Check revert worked (revert file should NOT exist)
+if [ -f /tmp/spage_command_revert.txt ]; then # Check if file exists (it shouldn't)
+    echo "Command test: revert failed, revert file still exists"
+    exit 1
+fi
+
+echo "Command module test succeeded."
+
+# Test 18: Apt module test
+echo "Running apt module test..."
+
+# Check if apt-get is available
+if ! command -v apt-get &> /dev/null; then
+    echo "Skipping apt module test: apt-get command not found."
+else
+    # Ensure cowsay and sl are not installed before starting
+    if command -v cowsay &> /dev/null; then
+        echo "Removing pre-existing cowsay package..."
+        sudo apt-get remove -y --purge cowsay
+    fi
+    if command -v sl &> /dev/null; then
+        echo "Removing pre-existing sl package..."
+        sudo apt-get remove -y --purge sl
+    fi
+
+    go run main.go generate -p $TESTS_DIR/playbooks/apt_playbook.yaml -o generated_tasks.go
+    go build -o generated_tasks generated_tasks.go
+
+    # Run and expect failure due to the intentional fail task triggering revert
+    echo "Running apt playbook (expecting failure to test revert)..."
+    set +e
+    ./generated_tasks -config tests/configs/sequential.yaml
+    APT_EXIT_CODE=$?
+    set -e
+
+    # Check if the exit code indicates failure (should be non-zero)
+    if [ $APT_EXIT_CODE -eq 0 ]; then
+        echo "Apt module test failed: Playbook succeeded unexpectedly (Exit Code: $APT_EXIT_CODE). Revert likely did not trigger."
+        exit 1
+    fi
+    echo "Apt playbook failed as expected (Exit Code: $APT_EXIT_CODE), checking results..."
+
+    # Check that cowsay IS NOT installed (due to successful revert)
+    if command -v cowsay &> /dev/null; then
+        echo "Apt test failed: cowsay is still installed after revert should have removed it."
+        exit 1
+    fi
+    # Check that sl IS NOT installed (due to successful revert)
+    if command -v sl &> /dev/null; then
+        echo "Apt test failed: sl is still installed after revert should have removed it."
+        exit 1
+    fi
+    echo "Apt module test (including list install and revert) succeeded."
+fi # End of apt-get check
 
 echo "All tests completed successfully!"
 
