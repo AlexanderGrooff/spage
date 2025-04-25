@@ -139,7 +139,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			paramsBlock := moduleParams.(map[string]interface{}) // We already know it's a map
 			for k := range paramsBlock {
 				if _, ok := structFields[k]; !ok {
-					errors = append(errors, fmt.Errorf("extra key %q found in params for task %q", k, task.Name))
+					errors = append(errors, fmt.Errorf("extra key %q found in params for %s task %q", k, task.Module, task.Name))
 				}
 			}
 		} // else: If it wasn't originally a map (e.g., string shorthand handled above), skip key validation.

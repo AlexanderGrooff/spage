@@ -8,3 +8,23 @@
   template:
     src: test.conf.j2
     dest: ./test.conf
+
+- name: test template with mode
+  template:
+    src: test.conf.j2
+    dest: /tmp/test_mode.conf
+    mode: "0600"
+
+- name: stat file created with mode
+  stat:
+    path: /tmp/test_mode.conf
+  register: mode_stat
+  after: test template with mode
+
+- name: assert file mode
+  assert:
+    that:
+      - mode_stat.stat.exists
+      - mode_stat.stat.isreg
+      - mode_stat.stat.mode == "0600"
+  after: stat file created with mode

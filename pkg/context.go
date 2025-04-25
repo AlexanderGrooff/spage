@@ -119,6 +119,13 @@ func (c HostContext) Copy(src, dst string) error {
 	return runtime.CopyRemote(src, dst)
 }
 
+func (c HostContext) SetFileMode(path, mode, username string) error {
+	if c.Host.IsLocal {
+		return runtime.SetLocalFileMode(path, mode)
+	}
+	return runtime.SetRemoteFileMode(c.Host.Host, path, mode, username)
+}
+
 func (c HostContext) Stat(path, runAs string) (string, string, error) {
 	if c.Host.IsLocal {
 		return runtime.StatLocal(path, runAs)

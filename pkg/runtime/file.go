@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
 func WriteLocalFile(filename string, data string) error {
@@ -106,4 +107,31 @@ func copyLocalFile(src, dst string) error {
 
 	_, err = io.Copy(dstFile, srcFile)
 	return err
+}
+
+func parseFileMode(modeStr string) (os.FileMode, error) {
+	// Try parsing as octal first
+	if mode, err := strconv.ParseUint(modeStr, 8, 32); err == nil {
+		return os.FileMode(mode), nil
+	}
+	// TODO: Add support for symbolic mode strings if needed (e.g., "u+x")
+	return 0, fmt.Errorf("invalid file mode string: %q", modeStr)
+}
+
+func SetLocalFileMode(path, modeStr string) error {
+	mode, err := parseFileMode(modeStr)
+	if err != nil {
+		return err
+	}
+	return os.Chmod(path, mode)
+}
+
+func SetRemoteFileMode(host, path, modeStr, username string) error {
+	// We assume the mode string is numeric/octal for direct use with chmod
+	// Add validation or symbolic mode conversion if necessary
+	_, _, err := RunRemoteCommand(host, fmt.Sprintf("chmod %s %q", modeStr, path), username)
+	if err != nil {
+		return fmt.Errorf("failed to set remote file mode: %w", err)
+	}
+	return nil
 }

@@ -109,8 +109,8 @@ func (m CopyModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 	// Apply mode if specified
 	newMode := originalMode
 	if p.Mode != "" {
-		if _, _, err := c.RunCommand(fmt.Sprintf("chmod %s %s", p.Mode, p.Dst), runAs); err != nil {
-			return nil, fmt.Errorf("failed to chmod %s: %v", p.Dst, err)
+		if err := c.SetFileMode(p.Dst, p.Mode, runAs); err != nil {
+			return nil, fmt.Errorf("failed to set mode %s on %s: %w", p.Mode, p.Dst, err)
 		}
 		newMode = p.Mode
 	}
@@ -146,8 +146,8 @@ func (m CopyModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous 
 
 	// Revert mode
 	if prev.Mode.Before != "" {
-		if _, _, err := c.RunCommand(fmt.Sprintf("chmod %s %s", prev.Mode.Before, p.Dst), runAs); err != nil {
-			return nil, fmt.Errorf("failed to chmod %s: %v", p.Dst, err)
+		if err := c.SetFileMode(p.Dst, prev.Mode.Before, runAs); err != nil {
+			return nil, fmt.Errorf("failed to revert mode on %s to %s: %w", p.Dst, prev.Mode.Before, err)
 		}
 	}
 

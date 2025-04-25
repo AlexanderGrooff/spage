@@ -272,13 +272,14 @@ func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 		finalMode := p.Mode                           // Assume p.Mode is octal for now
 		if finalMode != originalMode || actionTaken { // Apply if mode differs or if file was just created/state changed
 			common.DebugOutput("Applying mode %s to %s", finalMode, p.Path)
-			modeCmd := fmt.Sprintf("chmod %s %s", finalMode, p.Path)
-			if _, _, err := c.RunCommand(modeCmd, runAs); err != nil {
+			if err := c.SetFileMode(p.Path, finalMode, runAs); err != nil {
 				// Attempting to chmod a link target might fail if the link is broken
+				// SetFileMode handles local/remote automatically
+				// It might still fail for links, keep the warning
 				if newState == "link" {
-					common.DebugOutput("WARNING: Failed to chmod target of link %s (mode %s): %v. This might be expected if link is broken.", p.Path, finalMode, err)
+					common.DebugOutput("WARNING: Failed to set mode on target of link %s (mode %s): %v. This might be expected if link is broken.", p.Path, finalMode, err)
 				} else {
-					return nil, fmt.Errorf("failed to chmod %s to %s: %v", p.Path, finalMode, err)
+					return nil, fmt.Errorf("failed to set mode %s on %s: %w", finalMode, p.Path, err)
 				}
 			} else {
 				newMode = finalMode
@@ -377,9 +378,8 @@ func (m FileModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous 
 		// Revert mode *after* recreating the correct state, but *only* if the original state was not a link
 		if prev.Mode.Before != "" && !prev.IsLnk.Before {
 			common.DebugOutput("Reverting mode to %s for %s", prev.Mode.Before, p.Path)
-			modeCmd := fmt.Sprintf("chmod %s %s", prev.Mode.Before, p.Path)
-			if _, _, err := c.RunCommand(modeCmd, runAs); err != nil {
-				return nil, fmt.Errorf("revert failed: could not chmod %s to %s: %v", p.Path, prev.Mode.Before, err)
+			if err := c.SetFileMode(p.Path, prev.Mode.Before, runAs); err != nil {
+				return nil, fmt.Errorf("revert failed: could not set mode %s on %s: %w", prev.Mode.Before, p.Path, err)
 			}
 		}
 	}

@@ -20,8 +20,9 @@ func (sm TemplateModule) OutputType() reflect.Type {
 }
 
 type TemplateInput struct {
-	Src string `yaml:"src"`
-	Dst string `yaml:"dest"`
+	Src  string `yaml:"src"`
+	Dst  string `yaml:"dest"`
+	Mode string `yaml:"mode"`
 	pkg.ModuleInput
 }
 
@@ -32,9 +33,10 @@ type TemplateOutput struct {
 }
 
 func (i TemplateInput) ToCode() string {
-	return fmt.Sprintf("modules.TemplateInput{Src: %q, Dst: %q}",
+	return fmt.Sprintf("modules.TemplateInput{Src: %q, Dst: %q, Mode: %q}",
 		i.Src,
 		i.Dst,
+		i.Mode,
 	)
 }
 
@@ -95,6 +97,15 @@ func (m TemplateModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runA
 	if err != nil {
 		return nil, err
 	}
+
+	if p.Mode != "" {
+		if err := c.SetFileMode(p.Dst, p.Mode, runAs); err != nil {
+			// Attempt to revert the content change if setting mode fails
+			_ = c.WriteFile(p.Dst, original, runAs) // Best effort revert
+			return nil, fmt.Errorf("failed to set mode %s for file %s: %w", p.Mode, p.Dst, err)
+		}
+	}
+
 	return TemplateOutput{
 		Contents: pkg.RevertableChange[string]{
 			Before: original,
