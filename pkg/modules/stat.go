@@ -214,6 +214,12 @@ func parseStatOutput(output string) (*StatOutput, error) {
 func (m StatModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
 	p := params.(StatInput)
 
+	// Set default checksum algorithm if it's empty
+	checksumAlgo := p.ChecksumAlgorithm
+	if checksumAlgo == "" {
+		checksumAlgo = "sha1"
+	}
+
 	// TODO: pass p.Follow
 	stdout, stderr, err := c.Stat(p.Path, runAs)
 
@@ -246,12 +252,12 @@ func (m StatModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 	// Get Checksum
 	if p.GetChecksum {
 		checksumCmd := ""
-		switch p.ChecksumAlgorithm {
+		switch checksumAlgo {
 		case "sha1", "md5", "sha224", "sha256", "sha384", "sha512":
 			// Note: No shell escaping applied here for simplicity. Assumes path is safe.
-			checksumCmd = fmt.Sprintf("%ssum %s", p.ChecksumAlgorithm, p.Path)
+			checksumCmd = fmt.Sprintf("%ssum %s", checksumAlgo, p.Path)
 		default:
-			return nil, fmt.Errorf("unsupported checksum algorithm: %s", p.ChecksumAlgorithm) // Should be caught by Validate, but double-check
+			return nil, fmt.Errorf("unsupported checksum algorithm: %s", checksumAlgo) // Should be caught by Validate, but double-check
 		}
 
 		// If the file is a directory, checksum command will likely fail or checksum the contents recursively.

@@ -92,6 +92,8 @@ TODO:
 - Allow variables to not start with a dot
 - Should we compile assets (templates, files) along with the code?
 - Hook up host facts like release, os, etc.
+- Expression support:
+  - "x is defined"
 
 ## Differences between Spage and Ansible
 

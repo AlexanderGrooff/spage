@@ -5,7 +5,7 @@
 - name: Assert success variable (should pass)
   assert:
     that:
-      - "{{ shell_output.stdout == 'success' }}"
+      - shell_output.stdout == 'success'
   after: Register a variable
 
 - name: Assert with templating (boolean string, should pass)

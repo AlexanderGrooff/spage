@@ -340,7 +340,7 @@ rm -f /tmp/root_playbook_role.txt
 
 go run main.go generate -p $TESTS_DIR/playbooks/root_both_playbook.yaml -o generated_tasks.go
 go build -o generated_tasks generated_tasks.go
-./generated_tasks -config tests/configs/default.yaml
+./generated_tasks -config tests/configs/sequential.yaml
 
 # Check if the file was created
 if [ ! -f /tmp/root_playbook_role.txt ]; then
@@ -359,7 +359,7 @@ fi
 echo "Running stat module test..."
 go run main.go generate -p $TESTS_DIR/playbooks/stat_playbook.yaml -o generated_tasks.go
 go build -o generated_tasks generated_tasks.go
-./generated_tasks -config tests/configs/default.yaml
+./generated_tasks -config tests/configs/sequential.yaml
 STAT_EXIT_CODE=$?
 
 if [ $STAT_EXIT_CODE -ne 0 ]; then

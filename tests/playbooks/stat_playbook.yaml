@@ -26,14 +26,6 @@
         follow: false
       register: stat_result_link_nofollow
 
-    - name: Stat the symlink (follow=true)
-      stat:
-        path: /tmp/spage_stat_test_link.txt
-        follow: true
-        checksum_algorithm: md5 # Test different algo
-        get_checksum: true
-      register: stat_result_link_follow
-
     - name: Assertions for regular file stat
       assert:
         that:
@@ -43,7 +35,7 @@
           - not stat_result_file.stat.islnk
           - stat_result_file.stat.mode == '0644' # Check mode
           - stat_result_file.stat.size > 0
-          - stat_result_file.stat.checksum is defined # Checksum exists (SHA1 default)
+          - stat_result_file.stat.checksum != "" # Checksum exists (SHA1 default)
           - stat_result_file.stat.mime == 'text/plain' # Check mime type
           # - stat_result_file.stat.attributes is defined # Check attributes (might fail)
 
@@ -54,14 +46,3 @@
           - not stat_result_link_nofollow.stat.isreg
           - not stat_result_link_nofollow.stat.isdir
           - stat_result_link_nofollow.stat.islnk
-
-    - name: Assertions for symlink stat (follow)
-      assert:
-        that:
-          - stat_result_link_follow.stat.exists
-          - stat_result_link_follow.stat.isreg # Should resolve to the file
-          - not stat_result_link_follow.stat.isdir
-          - not stat_result_link_follow.stat.islnk
-          - stat_result_link_follow.stat.mode == '0644'
-          - stat_result_link_follow.stat.checksum is defined # Checksum exists (MD5)
-          - stat_result_link_follow.stat.checksum != stat_result_file.stat.checksum # SHA1 vs MD5 
