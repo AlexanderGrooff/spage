@@ -1,4 +1,4 @@
 execution_mode: sequential
 logging:
   format: plain
-  level: info # Or debug for more details 
+  level: debug

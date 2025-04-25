@@ -2,7 +2,6 @@ package pkg
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -61,27 +60,16 @@ func (t Task) ShouldExecute(c *HostContext) bool {
 			return false
 		}
 
-		// Trim whitespace and parse the resulting string as a boolean
-		trimmedResult := strings.TrimSpace(templatedWhen)
-		result, err := strconv.ParseBool(trimmedResult)
+		// Evaluate truthiness using the helper function
+		conditionMet := IsExpressionTruthy(templatedWhen)
+		trimmedResult := strings.TrimSpace(templatedWhen) // Still needed for logging
 
 		// Log the evaluation result
-		common.DebugOutput("Evaluated when condition %q -> %q: %t (error: %v)",
-			t.When, trimmedResult, result, err)
+		common.DebugOutput("Evaluated when condition %q -> %q: %t",
+			t.When, trimmedResult, conditionMet)
 
-		if err != nil {
-			// If the result isn't a valid boolean string, treat it as false (skip task)
-			common.LogWarn("When condition did not evaluate to a boolean value, skipping task", map[string]interface{}{
-				"task":      t.Name,
-				"host":      c.Host.Name,
-				"condition": t.When,
-				"evaluated": trimmedResult,
-			})
-			return false
-		}
-
-		// Return the parsed boolean result
-		return result
+		// Return the evaluated truthiness
+		return conditionMet
 	}
 	// If no 'when' condition, always execute
 	return true
@@ -105,6 +93,7 @@ func (t Task) ExecuteModule(c *HostContext) TaskResult {
 		return r
 	}
 
+	common.DebugOutput("Executing module %s with params %v and context %v", t.Module, t.Params, c)
 	r.Output, r.Error = module.Execute(t.Params, c, t.RunAs)
 	duration := time.Since(startTime)
 	r.Duration = duration

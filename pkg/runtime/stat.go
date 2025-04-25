@@ -8,7 +8,7 @@ import (
 // Format: %a %u %g %s %W %X %Y %Z %F %N %d %i %h %r %b %B %U %G
 // OctalPerms UID GID Size CreationTime AccessTime ModifyTime ChangeTime FileType FileName DeviceNum InodeNum HardLinks
 // RawDeviceNum(hex) AllocBlocks BlockSize UserName GroupName
-var statGNUFlags = `%a
+var statGNUFlags = `0%a
 %u
 %g
 %s

@@ -13,6 +13,23 @@ import (
 	"github.com/AlexanderGrooff/spage/pkg/config"
 )
 
+// registerVariableIfNeeded checks if a task result should be registered as a variable
+// and stores it in the HostContext's Facts if necessary.
+func registerVariableIfNeeded(result TaskResult, task Task, c *HostContext) {
+	if result.Error == nil && task.Register != "" {
+		valueToStore := convertOutputToFactsMap(result.Output)
+		if valueToStore != nil {
+			common.LogDebug("Registering variable (inline)", map[string]interface{}{ // Use valueToStore in log
+				"task":     result.Task.Name,
+				"host":     result.Context.Host.Name,
+				"variable": result.Task.Register,
+				"value":    valueToStore,
+			})
+			c.Facts.Store(task.Register, valueToStore)
+		}
+	}
+}
+
 // getTasks returns all tasks from a GraphNode, handling both TaskList and Graph types
 func getTasks(node GraphNode) []Task {
 	switch n := node.(type) {
@@ -128,32 +145,7 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 
 			fmt.Printf("\nTASK [%s] ****************************************************\n", task.Name)
 			c.History.Store(task.Name, result.Output)
-			if task.Register != "" {
-				// Attempt to convert the output to a map with lowercase keys
-				valueToStore := convertOutputToFactsMap(result.Output)
 
-				// Check if conversion failed (i.e., it's not a map and not nil)
-				if _, isMap := valueToStore.(map[string]interface{}); !isMap && valueToStore != nil {
-					common.LogWarn("Storing non-struct/non-convertible ModuleOutput for registered variable; structure may not be accessible as expected in templates", map[string]interface{}{
-						"task":     result.Task.Name,
-						"host":     result.Context.Host.Name,
-						"variable": result.Task.Register,
-						"type":     fmt.Sprintf("%T", result.Output),
-					})
-					// Keep the original value in this case (it was already assigned to valueToStore by convertOutputToFactsMap)
-				}
-
-				// Only store if valueToStore is not nil
-				if valueToStore != nil {
-					common.LogDebug("Registering variable", map[string]interface{}{ // Use valueToStore in log
-						"task":     result.Task.Name,
-						"host":     result.Context.Host.Name,
-						"variable": result.Task.Register,
-						"value":    valueToStore,
-					})
-					c.Facts.Store(task.Register, valueToStore)
-				}
-			}
 			hostTaskLevelHistory[executionLevel][hostname] <- task
 
 			// Prepare structured log data
@@ -275,7 +267,9 @@ func loadLevelSequential(ctx context.Context, tasks []Task, contexts map[string]
 				return
 			default:
 				result := task.ExecuteModule(c)
-				resultsCh <- result
+				// Register facts immediately after execution
+				registerVariableIfNeeded(result, task, c)
+				resultsCh <- result // Send result AFTER potential registration
 				// If a task fails in sequential mode, stop this level
 				if result.Error != nil {
 					return
@@ -299,7 +293,9 @@ func loadLevelParallel(ctx context.Context, tasks []Task, contexts map[string]*H
 					return
 				default:
 					result := task.ExecuteModule(c)
-					resultsCh <- result
+					// Register facts immediately after execution
+					registerVariableIfNeeded(result, task, c)
+					resultsCh <- result // Send result AFTER potential registration
 				}
 			}(task, c)
 		}
@@ -330,6 +326,10 @@ func convertOutputToFactsMap(output ModuleOutput) interface{} {
 
 	// Handle pointers if the output value itself is a pointer
 	if outputType.Kind() == reflect.Ptr {
+		// If the pointer is nil, return nil
+		if outputValue.IsNil() {
+			return nil
+		}
 		outputValue = outputValue.Elem()
 		outputType = outputValue.Type()
 	}
@@ -349,17 +349,100 @@ func convertOutputToFactsMap(output ModuleOutput) interface{} {
 				}
 				// Use lowercase field name as key
 				key := strings.ToLower(typeField.Name)
-				factsMap[key] = fieldValue.Interface()
+
+				// --- START RECURSIVE CONVERSION ---
+				fieldInterface := fieldValue.Interface()
+				// Check if the field's value is itself a struct or a pointer to a struct
+				fieldValType := reflect.TypeOf(fieldInterface)
+				fieldValKind := fieldValType.Kind()
+				if fieldValKind == reflect.Ptr {
+					// If it's a pointer, get the element type's kind
+					fieldValKind = fieldValType.Elem().Kind()
+				}
+
+				if fieldValKind == reflect.Struct {
+					// If it's a struct (or pointer to one), recursively convert it
+					// We need to pass it as a ModuleOutput for the recursive call,
+					// which isn't ideal, but works if it embeds ModuleOutput or we adapt.
+					// A better approach might be a dedicated recursive map converter.
+					// For now, let's try a direct recursive map conversion helper.
+					factsMap[key] = convertInterfaceToMapRecursive(fieldInterface)
+				} else {
+					// Otherwise, store the value directly
+					factsMap[key] = fieldInterface
+				}
+				// --- END RECURSIVE CONVERSION ---
 			}
 		}
-		// Add common 'changed' field
-		factsMap["changed"] = output.Changed()
+		// Add common 'changed' field if the original output implemented Changed()
+		if changedMethod := outputValue.MethodByName("Changed"); changedMethod.IsValid() {
+			results := changedMethod.Call(nil)
+			if len(results) > 0 && results[0].Kind() == reflect.Bool {
+				factsMap["changed"] = results[0].Bool()
+			}
+		} else if outputValue.CanAddr() {
+			// Try calling Changed() on a pointer if the original value was not a pointer
+			addrValue := outputValue.Addr()
+			if changedMethod := addrValue.MethodByName("Changed"); changedMethod.IsValid() {
+				results := changedMethod.Call(nil)
+				if len(results) > 0 && results[0].Kind() == reflect.Bool {
+					factsMap["changed"] = results[0].Bool()
+				}
+			}
+		}
+
 		return factsMap
 	}
 
-	// If not a struct, return the original value
+	// If not a struct (or pointer to one), return the original value
 	return output
 }
+
+// --- START NEW HELPER FOR RECURSION ---
+// convertInterfaceToMapRecursive converts any interface{} containing a struct
+// (or pointer to struct) into a map[string]interface{} recursively.
+// Handles basic types directly.
+func convertInterfaceToMapRecursive(data interface{}) interface{} {
+	if data == nil {
+		return nil
+	}
+
+	value := reflect.ValueOf(data)
+	typeInfo := value.Type()
+
+	// Handle pointers
+	if typeInfo.Kind() == reflect.Ptr {
+		if value.IsNil() {
+			return nil
+		}
+		value = value.Elem()
+		typeInfo = value.Type()
+	}
+
+	// Only convert structs
+	if typeInfo.Kind() != reflect.Struct {
+		// Return non-struct types as is (e.g., string, int, bool, slices, etc.)
+		// Note: This won't recursively convert structs *within* slices or maps yet.
+		return data
+	}
+
+	// Convert struct to map
+	mapResult := make(map[string]interface{})
+	for i := 0; i < value.NumField(); i++ {
+		fieldValue := value.Field(i)
+		typeField := typeInfo.Field(i)
+
+		if typeField.IsExported() {
+			// Use lowercase field name as key (consistent with convertOutputToFactsMap)
+			key := strings.ToLower(typeField.Name)
+			// Recursively convert the field's value
+			mapResult[key] = convertInterfaceToMapRecursive(fieldValue.Interface())
+		}
+	}
+	return mapResult
+}
+
+// --- END NEW HELPER FOR RECURSION ---
 
 // Execute executes the graph using the default background context
 func Execute(cfg *config.Config, graph Graph, inventoryFile string) error {

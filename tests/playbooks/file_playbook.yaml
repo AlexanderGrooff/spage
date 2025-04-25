@@ -78,6 +78,9 @@
     path: /tmp/spage_file_test_dest.txt
   register: dest_alias_stat
 
+- name: Debug file
+  shell: stat /tmp/spage_file_test_dest.txt
+
 - name: Assert file created with 'dest' alias
   assert:
     that:

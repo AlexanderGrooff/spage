@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
@@ -140,6 +142,11 @@ func (c HostContext) RunCommand(command, username string) (string, string, error
 	return runtime.RunRemoteCommand(c.Host.Host, command, username)
 }
 
+func EvaluateExpression(s string, additionalVars ...*sync.Map) (string, error) {
+	// TODO: this is a hack to evaluate a string as a Jinja2 template
+	return TemplateString(fmt.Sprintf("{{ %s }}", s), additionalVars...)
+}
+
 // TemplateString processes a Jinja2 template string with provided variables.
 // additionalVars should be a slice of *sync.Map.
 func TemplateString(s string, additionalVars ...*sync.Map) (string, error) {
@@ -212,4 +219,23 @@ func OutputToFacts(output ModuleOutput) interface{} {
 	// Placeholder: Directly return the output.
 	// If ModuleOutput is complex, you might need to extract specific fields.
 	return output
+}
+
+// IsExpressionTruthy evaluates a rendered expression string according to Jinja2/Ansible truthiness rules.
+// Explicit "true"/"false" (case-insensitive) are respected.
+// Empty strings are false.
+// All other non-empty strings are true.
+func IsExpressionTruthy(renderedExpr string) bool {
+	trimmedResult := strings.TrimSpace(renderedExpr)
+	lowerTrimmedResult := strings.ToLower(trimmedResult)
+
+	parsedBool, err := strconv.ParseBool(lowerTrimmedResult)
+	if err == nil {
+		// Explicit true/false
+		return parsedBool
+	}
+
+	// Not "true" or "false", evaluate truthiness:
+	// Empty string is false, everything else is true.
+	return trimmedResult != ""
 }

@@ -79,7 +79,7 @@ fi
 echo "Running file operations test..."
 go run main.go generate -p $TESTS_DIR/playbooks/file_playbook.yaml -o generated_tasks.go
 go build -o generated_tasks generated_tasks.go
-./generated_tasks -config tests/configs/default.yaml
+./generated_tasks -config tests/configs/sequential.yaml
 
 # Check if test file exists with correct content
 if [ ! -f /tmp/spage_test_file.txt ]; then

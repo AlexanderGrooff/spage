@@ -3,7 +3,6 @@ package modules
 import (
 	"fmt"
 	"reflect"
-	"strconv"
 	"strings"
 
 	"github.com/AlexanderGrooff/spage/pkg"
@@ -84,7 +83,7 @@ func (m AssertModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs 
 		// TODO: Implement a more robust expression evaluation engine like CEL or leverage existing 'when' logic.
 		// For now, we'll do a simple check: treat the string as a boolean.
 		// Render any variables first
-		renderedAssertion, err := pkg.TemplateString(assertion, c.Facts)
+		renderedAssertion, err := pkg.EvaluateExpression(assertion, c.Facts)
 		if err != nil {
 			output.FailedAssertion = assertion // Use original assertion on render error
 			errMsg := fmt.Sprintf("failed to render assertion template %q: %v", assertion, err)
@@ -99,9 +98,15 @@ func (m AssertModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs 
 			return output, fmt.Errorf(errMsg)
 		}
 
-		// Simple boolean evaluation
-		result, err := strconv.ParseBool(strings.TrimSpace(renderedAssertion))
-		if err != nil || !result {
+		// Evaluate truthiness using the helper function
+		assertionPassed := pkg.IsExpressionTruthy(renderedAssertion)
+		trimmedResult := strings.TrimSpace(renderedAssertion) // Still needed for logging
+
+		// Log the evaluation
+		common.DebugOutput("Evaluated assertion %q -> %q: %t",
+			assertion, trimmedResult, assertionPassed)
+
+		if !assertionPassed { // Use the evaluated truthiness
 			output.FailedAssertion = assertion // Use original assertion string
 			errMsg := fmt.Sprintf("assertion failed: %q (evaluated to %q)", assertion, renderedAssertion)
 			if p.Msg != "" {
