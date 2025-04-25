@@ -161,5 +161,7 @@ func init() {
 
 // ParameterAliases defines aliases for module parameters.
 func (m ShellModule) ParameterAliases() map[string]string {
-	return nil // No aliases defined for this module
+	return map[string]string{
+		"cmd": "execute",
+	}
 }
