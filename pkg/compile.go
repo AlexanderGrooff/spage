@@ -118,50 +118,27 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			continue
 		}
 
-		// Validate that there are no extra keys in the block, only if params was originally a map
-		// Check the original moduleParams type, not the result of unmarshaling
-		if _, isMap := moduleParams.(map[string]interface{}); isMap {
-			structType := module.InputType()
-			// If the input type is a pointer, get the underlying element type
-			if structType.Kind() == reflect.Ptr {
-				structType = structType.Elem()
-			}
-			// Ensure we have a struct type after potentially dereferencing
-			if structType.Kind() != reflect.Struct {
-				// This should ideally not happen if InputType returns a struct or pointer to struct
-				errors = append(errors, fmt.Errorf("module %s input type is not a struct or pointer to struct (%s)", task.Module, module.InputType().String()))
-				continue
-			}
+		// params is now of type interface{} containing a pointer to the InputType (e.g., **AptInput).
+		// We need the value it points to (e.g., *AptInput) to check against the interface.
+		paramsPtrValue := reflect.ValueOf(params).Elem()
 
-			structFields := make(map[string]struct{})
-			// Collect field names from the struct
-			for i := 0; i < structType.NumField(); i++ {
-				field := structType.Field(i)
-				// Use the yaml tag name for matching keys
-				yamlTag := field.Tag.Get("yaml")
-				if yamlTag != "" && yamlTag != "-" { // Ignore fields without tags or explicitly ignored
-					// Handle tags like "field,omitempty"
-					tagName := strings.Split(yamlTag, ",")[0]
-					structFields[tagName] = struct{}{}
-				}
-			}
+		// Ensure the pointed-to value is valid before trying to get its interface
+		if !paramsPtrValue.IsValid() {
+			// This might happen if reflect.New failed, though unlikely here
+			errors = append(errors, fmt.Errorf("internal error: invalid pointer created for module %s params", task.Module))
+			continue
+		}
 
-			// Check for extra keys in the module block map
-			paramsBlock := moduleParams.(map[string]interface{}) // We already know it's a map
-			for k := range paramsBlock {
-				if _, ok := structFields[k]; !ok {
-					errors = append(errors, fmt.Errorf("extra key %q found in params for %s task %q", k, task.Module, task.Name))
-				}
-			}
-		} // else: If it wasn't originally a map (e.g., string shorthand handled above), skip key validation.
+		// Get the interface{} representation of the pointed-to value (e.g., *AptInput)
+		paramsInterface := paramsPtrValue.Interface()
 
-		// Ensure params is of the correct type using reflection
-		// We need to get the value pointed to by params, as it's a pointer receiver from reflect.New
-		paramsValue := reflect.ValueOf(params).Elem().Interface()
-		if typedParams, ok := paramsValue.(ModuleInput); ok {
-			task.Params = typedParams
+		// Assert the pointed-to value against the ModuleInput interface
+		if typedParams, ok := paramsInterface.(ModuleInput); ok {
+			task.Params = typedParams // Store the pointer (e.g., *AptInput) that implements the interface
 		} else {
-			errors = append(errors, fmt.Errorf("params (%T) do not implement ModuleInput for module %s", paramsValue, task.Module))
+			// This error case might indicate a fundamental issue with the module's InputType registration
+			// or the interface implementation itself.
+			errors = append(errors, fmt.Errorf("params value (%T) does not implement ModuleInput for module %s", paramsInterface, task.Module))
 			continue
 		}
 

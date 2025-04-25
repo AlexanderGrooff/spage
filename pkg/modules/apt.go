@@ -28,7 +28,7 @@ type AptInput struct {
 	State       string      `yaml:"state"`        // present (default), absent, latest
 	UpdateCache bool        `yaml:"update_cache"` // Run apt-get update before action
 	// Internal storage for parsed package list
-	pkgNames []string
+	PkgNames []string
 	pkg.ModuleInput
 }
 
@@ -43,24 +43,54 @@ type AptOutput struct {
 }
 
 // ToCode converts the AptInput struct into its Go code representation.
-// NOTE: This currently only supports the simple string case for Name.
 func (i *AptInput) ToCode() string {
-	nameStr := "" // Default to empty string if Name is not a simple string
-	// Handle potential list case for Name during code generation
-	// This is simplified; a robust solution might involve marshalling the interface{} back
-	if name, ok := i.Name.(string); ok {
-		nameStr = name
-	} else if nameList, ok := i.Name.([]interface{}); ok {
-		// Represent list as a string for now, might need better codegen
-		nameStr = fmt.Sprintf("%v", nameList) // Crude representation
+	var nameCode string
+	// Format Name field for code gen
+	switch v := i.Name.(type) {
+	case string:
+		nameCode = fmt.Sprintf("%q", v)
+	case []interface{}:
+		var strElements []string
+		for _, item := range v {
+			if strItem, ok := item.(string); ok {
+				strElements = append(strElements, fmt.Sprintf("%q", strItem))
+			} else {
+				strElements = append(strElements, "\"\"")
+			}
+		}
+		// Need to generate the `[]interface{}{...}` representation here if Name is expected
+		// to remain []interface{} in the generated struct, or handle conversion.
+		// Let's assume Name field in generated struct can be []string directly if parsed from list.
+		// If the generated struct's Name must be interface{}, this needs adjustment.
+		nameCode = fmt.Sprintf("[]string{%s}", strings.Join(strElements, ", ")) // Assuming Name can be []string
+	case []string: // Handle case where Name might already be []string (e.g. if ToCode is called later)
+		var strElements []string
+		for _, strItem := range v {
+			strElements = append(strElements, fmt.Sprintf("%q", strItem))
+		}
+		nameCode = fmt.Sprintf("[]string{%s}", strings.Join(strElements, ", "))
+	default:
+		nameCode = "nil"
 	}
 
-	// TODO: Handle list of names more accurately in ToCode representation if needed for generation
-	// Return code for a pointer literal (&modules.AptInput{...})
-	return fmt.Sprintf("&modules.AptInput{Name: %q, State: %q, UpdateCache: %t}",
-		nameStr, // Use the extracted or default string
+	// Format PkgNames field for code gen (should be populated by Validate/parse)
+	var pkgNamesCode string
+	if len(i.PkgNames) > 0 {
+		var pkgNameElements []string
+		for _, pkgName := range i.PkgNames {
+			pkgNameElements = append(pkgNameElements, fmt.Sprintf("%q", pkgName))
+		}
+		pkgNamesCode = fmt.Sprintf("[]string{%s}", strings.Join(pkgNameElements, ", "))
+	} else {
+		pkgNamesCode = "nil" // Generate nil if empty
+	}
+
+	// Return code for a pointer literal including PkgNames initialization
+	return fmt.Sprintf("&modules.AptInput{Name: %s, State: %q, UpdateCache: %t, PkgNames: %s}",
+		nameCode,
 		i.State,
 		i.UpdateCache,
+		pkgNamesCode, // Add the generated code for PkgNames
 	)
 }
 
@@ -83,7 +113,7 @@ func (i *AptInput) GetVariableUsage() []string {
 
 // parseAndValidatePackages extracts package names from Name field and validates them.
 func (i *AptInput) parseAndValidatePackages() error {
-	i.pkgNames = []string{}
+	i.PkgNames = []string{}
 	if i.Name == nil {
 		// Allowed if update_cache is true
 		if !i.UpdateCache {
@@ -98,7 +128,7 @@ func (i *AptInput) parseAndValidatePackages() error {
 			return fmt.Errorf("apt module requires non-empty 'name' or 'update_cache=true'")
 		}
 		if v != "" {
-			i.pkgNames = append(i.pkgNames, v)
+			i.PkgNames = append(i.PkgNames, v)
 		}
 	case []interface{}:
 		if len(v) == 0 && !i.UpdateCache {
@@ -109,7 +139,7 @@ func (i *AptInput) parseAndValidatePackages() error {
 				if nameStr == "" {
 					return fmt.Errorf("package name at index %d cannot be empty", idx)
 				}
-				i.pkgNames = append(i.pkgNames, nameStr)
+				i.PkgNames = append(i.PkgNames, nameStr)
 			} else {
 				return fmt.Errorf("invalid type for package name at index %d: expected string, got %T", idx, item)
 			}
@@ -118,8 +148,8 @@ func (i *AptInput) parseAndValidatePackages() error {
 		return fmt.Errorf("invalid type for 'name' parameter: expected string or list of strings, got %T", i.Name)
 	}
 
-	// Check if pkgNames is empty when update_cache is false
-	if len(i.pkgNames) == 0 && !i.UpdateCache {
+	// Check if PkgNames is empty when update_cache is false
+	if len(i.PkgNames) == 0 && !i.UpdateCache {
 		return fmt.Errorf("apt module requires at least one package name or 'update_cache=true'")
 	}
 
@@ -148,10 +178,10 @@ func (i *AptInput) Validate() error {
 func (i *AptInput) HasRevert() bool {
 	// Can revert install/remove if we have package names.
 	// update_cache is not easily revertible.
-	// Assumes parseAndValidatePackages was called.
-	// Need to call parseAndValidatePackages if it wasn't guaranteed by the framework
-	_ = i.parseAndValidatePackages() // Ensure pkgNames is populated, ignore error here
-	return len(i.pkgNames) > 0 && (i.State == "present" || i.State == "absent")
+	// The PkgNames field should be populated correctly either by UnmarshalYAML->parseAndValidatePackages
+	// or by the code generated by ToCode.
+	// _ = i.parseAndValidatePackages() // REMOVED: Redundant and caused issues by resetting PkgNames.
+	return len(i.PkgNames) > 0 && (i.State == "present" || i.State == "absent")
 }
 
 // String provides a string representation of the AptOutput.
@@ -251,15 +281,15 @@ func isPackageInstalled(c *pkg.HostContext, pkgName string) (bool, error) {
 // Execute runs the apt module logic.
 func (m AptModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
 	i := params.(*AptInput)
-	// Ensure pkgNames is populated (Validate should have been called by framework)
-	if i.pkgNames == nil {
+	// Ensure PkgNames is populated (Validate should have been called by framework)
+	if i.PkgNames == nil {
 		if err := i.parseAndValidatePackages(); err != nil {
 			// This path indicates Validate wasn't called or failed silently before Execute
 			return nil, fmt.Errorf("internal state error: packages not parsed before Execute: %w", err)
 		}
 	}
 
-	output := AptOutput{Packages: i.pkgNames, UpdateCache: i.UpdateCache}
+	output := AptOutput{Packages: i.PkgNames, UpdateCache: i.UpdateCache}
 	var overallChanged bool
 
 	// --- Templating package names (already done in parseAndValidatePackages if needed) ---
@@ -267,7 +297,7 @@ func (m AptModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs str
 	// For now, assume Validate is called *after* potential templating by the core engine.
 	// Let's re-template here just in case, though it's inefficient.
 	templatedPkgNames := []string{}
-	for _, name := range i.pkgNames {
+	for _, name := range i.PkgNames {
 		templatedName, err := pkg.TemplateString(name, c.Facts, new(sync.Map))
 		if err != nil {
 			return nil, fmt.Errorf("failed to template package name '%s': %w", name, err)
@@ -354,8 +384,8 @@ func (m AptModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs str
 // Revert attempts to undo the action performed by Execute.
 func (m AptModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
 	i := params.(*AptInput)
-	// Ensure pkgNames is populated
-	if i.pkgNames == nil {
+	// Ensure PkgNames is populated
+	if i.PkgNames == nil {
 		if err := i.parseAndValidatePackages(); err != nil {
 			// This path indicates Validate wasn't called or failed silently before Revert
 			return nil, fmt.Errorf("internal state error: packages not parsed before Revert: %w", err)
@@ -364,7 +394,7 @@ func (m AptModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous p
 
 	// --- Re-template package names ---
 	templatedPkgNames := []string{}
-	for _, name := range i.pkgNames {
+	for _, name := range i.PkgNames {
 		templatedName, err := pkg.TemplateString(name, c.Facts, new(sync.Map))
 		if err != nil {
 			return nil, fmt.Errorf("failed to template package name '%s' for revert: %w", name, err)

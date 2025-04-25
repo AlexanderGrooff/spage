@@ -3,14 +3,15 @@ package runtime
 import (
 	"bytes"
 	"fmt"
-	"github.com/AlexanderGrooff/spage/pkg/common"
-	"github.com/google/shlex"
-	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/agent"
 	"net"
 	"os"
 	"os/exec"
 	"os/user"
+
+	"github.com/AlexanderGrooff/spage/pkg/common"
+	"github.com/google/shlex"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 func RunLocalCommand(command, username string) (string, string, error) {
@@ -19,7 +20,7 @@ func RunLocalCommand(command, username string) (string, string, error) {
 	var cmd *exec.Cmd
 	var cmdToSplit string
 	if username != "" {
-		cmdToSplit = fmt.Sprintf("sudo -nu %s %s", username, command)
+		cmdToSplit = fmt.Sprintf("sudo -u %s %s", username, command)
 	} else {
 		cmdToSplit = command
 	}
@@ -86,7 +87,7 @@ func RunRemoteCommand(host, command, username string) (string, string, error) {
 	var stdout, stderr bytes.Buffer
 	session.Stdout = &stdout
 	session.Stderr = &stderr
-	cmdAsUser := fmt.Sprintf("sudo -nu %s bash -c %q", username, command)
+	cmdAsUser := fmt.Sprintf("sudo -u %s bash -c %q", username, command)
 	if err := session.Run(cmdAsUser); err != nil {
 		return stdout.String(), stderr.String(), fmt.Errorf("failed to run '%v' on host %s: %w", command, host, err)
 	}
