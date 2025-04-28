@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 func WriteLocalFile(filename string, data string) error {
@@ -107,6 +108,38 @@ func copyLocalFile(src, dst string) error {
 
 	_, err = io.Copy(dstFile, srcFile)
 	return err
+}
+
+// ReadLocalFileBytes reads the content of a local file as raw bytes.
+func ReadLocalFileBytes(filename string) ([]byte, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Return a specific error type or marker for not found?
+			// For now, wrap it for clarity.
+			return nil, fmt.Errorf("file not found: %w", err)
+		}
+		return nil, fmt.Errorf("failed to read local file %s: %w", filename, err)
+	}
+	return data, nil
+}
+
+// ReadRemoteFileBytes reads the content of a remote file as raw bytes.
+func ReadRemoteFileBytes(host, remotePath, username string) ([]byte, error) {
+	// Use cat to read the file content. Ensure no extra processing is done.
+	// Quote the path to handle spaces etc.
+	cmd := fmt.Sprintf("cat %q", remotePath)
+	stdout, stderr, err := RunRemoteCommand(host, cmd, username)
+	if err != nil {
+		// Check stderr for common 'file not found' messages
+		if strings.Contains(stderr, "No such file or directory") {
+			return nil, fmt.Errorf("file not found: %s on host %s", remotePath, host)
+		}
+		// Include stderr in the error message for better diagnostics
+		return nil, fmt.Errorf("failed to read remote file %s on host %s: %w, stderr: %s", remotePath, host, err, stderr)
+	}
+	// Return the raw stdout bytes
+	return []byte(stdout), nil
 }
 
 func parseFileMode(modeStr string) (os.FileMode, error) {

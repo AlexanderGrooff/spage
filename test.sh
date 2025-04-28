@@ -62,6 +62,8 @@ cleanup() {
     rm -f /tmp/spage_when_test_nonexistent.txt
     rm -f /tmp/spage_when_test_simple_true.txt
     rm -f /tmp/spage_when_test_simple_false.txt
+    # Cleanup for slurp module test
+    rm -f /tmp/spage_slurp_test.txt
     echo "Cleanup complete"
 }
 
@@ -518,6 +520,19 @@ if [ -f /tmp/spage_when_test_simple_false.txt ]; then
     exit 1
 fi
 echo "When condition test succeeded."
+
+# Test 20: Slurp module test
+echo "Running slurp module test..."
+go run main.go generate -p $TESTS_DIR/playbooks/slurp_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+./generated_tasks -config tests/configs/sequential.yaml # Use sequential to ensure file creation before slurp
+SLURP_EXIT_CODE=$?
+
+if [ $SLURP_EXIT_CODE -ne 0 ]; then
+    echo "Slurp module test failed: Playbook execution failed unexpectedly (Exit Code: $SLURP_EXIT_CODE)."
+    exit 1
+fi
+echo "Slurp module test succeeded."
 
 echo "All tests completed successfully!"
 

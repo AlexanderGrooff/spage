@@ -105,6 +105,13 @@ func (c HostContext) ReadRemoteFile(filename string, username string) (string, e
 	return stdout, nil
 }
 
+func (c HostContext) ReadFileBytes(filename string, username string) ([]byte, error) {
+	if c.Host.IsLocal {
+		return runtime.ReadLocalFileBytes(filename)
+	}
+	return runtime.ReadRemoteFileBytes(c.Host.Host, filename, username)
+}
+
 func (c HostContext) WriteFile(filename, contents, username string) error {
 	if c.Host.IsLocal {
 		return runtime.WriteLocalFile(filename, contents)
