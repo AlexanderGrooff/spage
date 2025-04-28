@@ -33,6 +33,57 @@ func getStringFromMap(m map[string]interface{}, key string) string {
 	return ""
 }
 
+// parseBoolOrStringBoolValue parses a value from a map that can be a boolean
+// or a string representation of a boolean ("true", "yes", "false", "no").
+// It returns the parsed boolean value, a flag indicating if the key was found, and any error.
+func parseBoolOrStringBoolValue(block map[string]interface{}, key string, taskName string) (value bool, found bool, err error) {
+	rawVal, keyExists := block[key]
+	if !keyExists {
+		return false, false, nil // Return default false, not found, no error
+	}
+
+	switch v := rawVal.(type) {
+	case bool:
+		return v, true, nil
+	case string:
+		lowerV := strings.ToLower(v)
+		if lowerV == "true" || lowerV == "yes" {
+			return true, true, nil
+		} else if lowerV == "false" || lowerV == "no" {
+			return false, true, nil
+		} else {
+			// Invalid string value
+			err = fmt.Errorf("invalid string value (%q) for '%s' key in task %q, expected 'true'/'yes' or 'false'/'no'", v, key, taskName)
+			return false, true, err
+		}
+	default:
+		// Invalid type
+		err = fmt.Errorf("invalid type (%T) for '%s' key in task %q, expected boolean or boolean-like string", rawVal, key, taskName)
+		return false, true, err
+	}
+}
+
+// parseConditionString parses a condition field (like 'when' or 'failed_when')
+// that accepts either a string condition or a boolean literal.
+// It returns the condition as a string (e.g., "true" for boolean true) and any error.
+func parseConditionString(block map[string]interface{}, key string, taskName string) (condition string, err error) {
+	rawVal, keyExists := block[key]
+	if !keyExists {
+		return "", nil // Default empty string, no error
+	}
+
+	switch v := rawVal.(type) {
+	case string:
+		return v, nil
+	case bool:
+		return fmt.Sprintf("%t", v), nil
+	default:
+		// Invalid type
+		err = fmt.Errorf("invalid type (%T) for '%s' key in task %q, expected string or boolean", rawVal, key, taskName)
+		return "", err
+	}
+}
+
 func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 	arguments := []string{
 		"name",
@@ -43,6 +94,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"register",
 		"run_as",
 		"ignore_errors",
+		"failed_when",
 	}
 
 	var tasks []GraphNode
@@ -56,49 +108,40 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			After:    getStringFromMap(block, "after"),
 			Register: getStringFromMap(block, "register"),
 			RunAs:    getStringFromMap(block, "run_as"),
+			// FailedWhen will be handled below
 		}
 
 		// Declare errored flag here
 		var errored bool
 
-		// Handle 'when' specifically to allow boolean values from YAML
-		if whenVal, ok := block["when"]; ok {
-			switch v := whenVal.(type) {
-			case string:
-				task.When = v
-			case bool:
-				// Convert boolean directly to string "true" or "false"
-				task.When = fmt.Sprintf("%t", v)
-			default:
-				// Handle other types if necessary, or error out
-				errors = append(errors, fmt.Errorf("invalid type (%T) for 'when' key in task %q, expected string or boolean", whenVal, task.Name))
-				errored = true // Mark as errored to skip further processing of this task
-			}
+		// Handle 'when' using the helper function
+		whenCond, whenErr := parseConditionString(block, "when", task.Name)
+		if whenErr != nil {
+			errors = append(errors, whenErr)
+			errored = true
 		} else {
-			task.When = "" // Default if 'when' key is not present
+			task.When = whenCond
 		}
 
-		// Handle 'ignore_errors'
-		if ignoreVal, ok := block["ignore_errors"]; ok {
-			switch v := ignoreVal.(type) {
-			case bool:
-				task.IgnoreErrors = v
-			case string:
-				// Attempt to parse boolean string, default to false if invalid
-				if strings.ToLower(v) == "true" || strings.ToLower(v) == "yes" {
-					task.IgnoreErrors = true
-				} else if strings.ToLower(v) == "false" || strings.ToLower(v) == "no" {
-					task.IgnoreErrors = false
-				} else {
-					errors = append(errors, fmt.Errorf("invalid string value (%q) for 'ignore_errors' key in task %q, expected 'true'/'yes' or 'false'/'no'", v, task.Name))
-					errored = true
-				}
-			default:
-				errors = append(errors, fmt.Errorf("invalid type (%T) for 'ignore_errors' key in task %q, expected boolean or boolean-like string", ignoreVal, task.Name))
-				errored = true
-			}
+		// Handle 'ignore_errors' using the helper function
+		ignoreVal, ignoreFound, ignoreErr := parseBoolOrStringBoolValue(block, "ignore_errors", task.Name)
+		if ignoreErr != nil {
+			errors = append(errors, ignoreErr)
+			errored = true
 		} else {
-			task.IgnoreErrors = false // Default if 'ignore_errors' key is not present
+			// If found, use the parsed value, otherwise default to false (handled by initial Task struct value)
+			if ignoreFound {
+				task.IgnoreErrors = ignoreVal
+			} // else task.IgnoreErrors keeps its default zero value (false)
+		}
+
+		// Handle 'failed_when' using the helper function
+		failedWhenCond, failedWhenErr := parseConditionString(block, "failed_when", task.Name)
+		if failedWhenErr != nil {
+			errors = append(errors, failedWhenErr)
+			errored = true
+		} else {
+			task.FailedWhen = failedWhenCond
 		}
 
 		var module Module

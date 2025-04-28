@@ -64,6 +64,11 @@ cleanup() {
     rm -f /tmp/spage_when_test_simple_false.txt
     # Cleanup for slurp module test
     rm -f /tmp/spage_slurp_test.txt
+    # Cleanup for failed_when test
+    rm -f /tmp/failed_when_succeed.txt
+    rm -f /tmp/failed_when_ignore.txt
+    rm -f /tmp/failed_when_fail.txt
+    rm -f /tmp/failed_when_after_actual_fail.txt
     echo "Cleanup complete"
 }
 
@@ -533,6 +538,44 @@ if [ $SLURP_EXIT_CODE -ne 0 ]; then
     exit 1
 fi
 echo "Slurp module test succeeded."
+
+# Test 21: Failed_when condition test
+echo "Running failed_when condition test..."
+go run main.go generate -p $TESTS_DIR/playbooks/failed_when_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+
+# Run and expect failure because the last task uses failed_when without ignore_errors
+echo "Running failed_when playbook (expecting failure)..."
+set +e
+./generated_tasks -config tests/configs/sequential.yaml # Use sequential for predictability
+FAILED_WHEN_EXIT_CODE=$?
+set -e
+
+# Check if the exit code indicates failure (should be non-zero)
+if [ $FAILED_WHEN_EXIT_CODE -eq 0 ]; then
+    echo "Failed_when test failed: Playbook succeeded unexpectedly (Exit Code: $FAILED_WHEN_EXIT_CODE)."
+    exit 1
+fi
+echo "Failed_when playbook failed as expected (Exit Code: $FAILED_WHEN_EXIT_CODE), checking results..."
+
+# Verify file states
+if [ ! -f /tmp/failed_when_succeed.txt ]; then
+    echo "Failed_when test failed: succeed file missing."
+    exit 1
+fi
+if [ ! -f /tmp/failed_when_ignore.txt ]; then
+    echo "Failed_when test failed: ignore file missing."
+    exit 1
+fi
+if [ ! -f /tmp/failed_when_fail.txt ]; then
+    echo "Failed_when test failed: fail file missing."
+    exit 1
+fi
+if [ -f /tmp/failed_when_after_actual_fail.txt ]; then
+    echo "Failed_when test failed: Task after actual failure ran unexpectedly."
+    exit 1
+fi
+echo "Failed_when test succeeded."
 
 echo "All tests completed successfully!"
 

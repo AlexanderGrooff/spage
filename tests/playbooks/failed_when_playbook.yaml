@@ -1,0 +1,56 @@
+---
+- name: Test failed_when functionality
+  hosts: localhost
+  tasks:
+    # Setup tasks to create files with specific content
+    - name: Create file for success test
+      copy:
+        content: "success content here"
+        dest: /tmp/failed_when_succeed.txt
+
+    - name: Create file for ignore test
+      copy:
+        content: "ignore this failure content"
+        dest: /tmp/failed_when_ignore.txt
+
+    - name: Create file for actual failure test
+      copy:
+        content: "actual failure content present"
+        dest: /tmp/failed_when_fail.txt
+
+    # Test 1: Should succeed (failed_when condition is false)
+    - name: Task should succeed
+      shell: cat /tmp/failed_when_succeed.txt
+      register: succeed_task_result
+      failed_when: "'nonexistent pattern' in succeed_task_result.stdout"
+
+    - name: Verify success task result
+      assert:
+        that:
+          - not succeed_task_result.failed
+          - succeed_task_result.stdout == "success content here"
+
+    # Test 2: Should 'fail' based on condition, but be ignored
+    - name: Task should be ignored failure
+      shell: cat /tmp/failed_when_ignore.txt
+      register: ignored_fail_result
+      failed_when: "'ignore this failure content' in ignored_fail_result.stdout" # This condition is TRUE
+      ignore_errors: true
+
+    - name: Verify ignored task result
+      assert:
+        that:
+          - ignored_fail_result.failed # Registered as failed internally
+          - ignored_fail_result.ignored # Registered as ignored
+          - "'failed_when condition' in ignored_fail_result.msg" # Check error message
+
+    # Test 3: Should cause playbook failure (failed_when condition is true)
+    - name: Task should actually fail
+      shell: cat /tmp/failed_when_fail.txt
+      register: actual_fail_result
+      failed_when: "'actual failure content present' in actual_fail_result.stdout" # This condition is TRUE
+      # ignore_errors defaults to false
+
+    # This task should NOT run because the previous task failed the playbook
+    - name: Task after actual fail (Should NOT run)
+      shell: echo "This should not have executed" > /tmp/failed_when_after_actual_fail.txt 
