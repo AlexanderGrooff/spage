@@ -24,7 +24,6 @@ type CopyInput struct {
 	Src     string `yaml:"src"`
 	Dst     string `yaml:"dest"`
 	Mode    string `yaml:"mode"`
-	pkg.ModuleInput
 }
 
 type CopyOutput struct {
@@ -48,6 +47,11 @@ func (i CopyInput) GetVariableUsage() []string {
 	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.Dst)...)
 	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.Mode)...)
 	return vars
+}
+
+// HasRevert indicates that the copy module can be reverted.
+func (i CopyInput) HasRevert() bool {
+	return true
 }
 
 func (i CopyInput) Validate() error {

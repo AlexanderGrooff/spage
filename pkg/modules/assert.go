@@ -22,7 +22,6 @@ func (am AssertModule) OutputType() reflect.Type {
 type AssertInput struct {
 	That []string `yaml:"that"` // List of assertions to evaluate
 	Msg  string   `yaml:"msg"`  // Optional message on failure
-	pkg.ModuleInput
 }
 
 type AssertOutput struct {
@@ -54,6 +53,11 @@ func (i AssertInput) GetVariableUsage() []string {
 	}
 	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.Msg)...)
 	return vars
+}
+
+// HasRevert indicates that the assert module cannot be reverted.
+func (i AssertInput) HasRevert() bool {
+	return false
 }
 
 func (i AssertInput) Validate() error {
