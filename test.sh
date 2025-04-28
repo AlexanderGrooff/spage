@@ -56,6 +56,12 @@ cleanup() {
         echo "Removing sl package installed during test..."
         sudo apt-get remove -y --purge sl || echo "Failed to remove sl, may require manual cleanup."
     fi
+    # Cleanup for when module tests
+    rm -f /tmp/spage_when_test_should_run.txt
+    rm -f /tmp/spage_when_test_should_skip.txt
+    rm -f /tmp/spage_when_test_nonexistent.txt
+    rm -f /tmp/spage_when_test_simple_true.txt
+    rm -f /tmp/spage_when_test_simple_false.txt
     echo "Cleanup complete"
 }
 
@@ -476,6 +482,42 @@ else
     fi
     echo "Apt module test (including list install and revert) succeeded."
 fi # End of apt-get check
+
+# Test 19: When condition test
+echo "Running when condition test..."
+go run main.go generate -p $TESTS_DIR/playbooks/when_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+./generated_tasks -config tests/configs/sequential.yaml
+WHEN_EXIT_CODE=$?
+
+if [ $WHEN_EXIT_CODE -ne 0 ]; then
+    echo "When condition test failed: Playbook execution failed unexpectedly (Exit Code: $WHEN_EXIT_CODE)."
+    exit 1
+fi
+
+# Check results: Expected files should exist, skipped files should not
+if [ ! -f /tmp/spage_when_test_should_run.txt ]; then
+    echo "When test failed: 'should_run' file was not created."
+    exit 1
+fi
+if [ ! -f /tmp/spage_when_test_simple_true.txt ]; then
+    echo "When test failed: 'simple_true' file was not created."
+    exit 1
+fi
+
+if [ -f /tmp/spage_when_test_should_skip.txt ]; then
+    echo "When test failed: 'should_skip' file was created but should have been skipped."
+    exit 1
+fi
+if [ -f /tmp/spage_when_test_nonexistent.txt ]; then
+    echo "When test failed: 'nonexistent' var file was created but should have been skipped."
+    exit 1
+fi
+if [ -f /tmp/spage_when_test_simple_false.txt ]; then
+    echo "When test failed: 'simple_false' file was created but should have been skipped."
+    exit 1
+fi
+echo "When condition test succeeded."
 
 echo "All tests completed successfully!"
 

@@ -53,14 +53,32 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			Validate: getStringFromMap(block, "validate"),
 			Before:   getStringFromMap(block, "before"),
 			After:    getStringFromMap(block, "after"),
-			When:     getStringFromMap(block, "when"),
 			Register: getStringFromMap(block, "register"),
 			RunAs:    getStringFromMap(block, "run_as"),
 		}
 
+		// Declare errored flag here
+		var errored bool
+
+		// Handle 'when' specifically to allow boolean values from YAML
+		if whenVal, ok := block["when"]; ok {
+			switch v := whenVal.(type) {
+			case string:
+				task.When = v
+			case bool:
+				// Convert boolean directly to string "true" or "false"
+				task.When = fmt.Sprintf("%t", v)
+			default:
+				// Handle other types if necessary, or error out
+				errors = append(errors, fmt.Errorf("invalid type (%T) for 'when' key in task %q, expected string or boolean", whenVal, task.Name))
+				errored = true // Mark as errored to skip further processing of this task
+			}
+		} else {
+			task.When = "" // Default if 'when' key is not present
+		}
+
 		var module Module
 		var moduleParams interface{}
-		var errored bool
 		for k, v := range block {
 			if !containsInSlice(arguments, k) {
 				if m, ok := GetModule(k); ok {
@@ -74,6 +92,11 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 				}
 			}
 		}
+		if errored {
+			continue
+		}
+
+		// Skip processing module if we already errored on 'when'
 		if errored {
 			continue
 		}
