@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -16,17 +17,72 @@ import (
 // registerVariableIfNeeded checks if a task result should be registered as a variable
 // and stores it in the HostContext's Facts if necessary.
 func registerVariableIfNeeded(result TaskResult, task Task, c *HostContext) {
-	if result.Error == nil && task.Register != "" {
-		valueToStore := convertOutputToFactsMap(result.Output)
-		if valueToStore != nil {
-			common.LogDebug("Registering variable (inline)", map[string]interface{}{ // Use valueToStore in log
-				"task":     result.Task.Name,
-				"host":     result.Context.Host.Name,
-				"variable": result.Task.Register,
-				"value":    valueToStore,
-			})
-			c.Facts.Store(task.Register, valueToStore)
+	// Only register if the task has a name assigned to the 'register' key
+	if task.Register == "" {
+		return
+	}
+
+	var valueToStore interface{}
+	var ignoredErr *IgnoredTaskError
+
+	// Check if the error is an IgnoredTaskError or just a regular error
+	if errors.As(result.Error, &ignoredErr) {
+		// It's an ignored error
+		originalErr := ignoredErr.Unwrap()    // Get the original error
+		failureMap := map[string]interface{}{ // Register failure details
+			"failed":  true,
+			"changed": false,
+			"msg":     originalErr.Error(),
+			"ignored": true, // Add an explicit ignored flag
 		}
+		// Include output facts if available
+		if result.Output != nil {
+			if factProvider, ok := result.Output.(FactProvider); ok {
+				outputFacts := factProvider.AsFacts()
+				for k, v := range outputFacts {
+					failureMap[k] = v
+				}
+			}
+		}
+		valueToStore = failureMap
+	} else if result.Error != nil {
+		// It's a regular, non-ignored error
+		failureMap := map[string]interface{}{ // Register failure details
+			"failed":  true,
+			"changed": false,
+			"msg":     result.Error.Error(),
+		}
+		// Include output facts if available
+		if result.Output != nil {
+			if factProvider, ok := result.Output.(FactProvider); ok {
+				outputFacts := factProvider.AsFacts()
+				for k, v := range outputFacts {
+					failureMap[k] = v
+				}
+			}
+		}
+		valueToStore = failureMap
+	} else if result.Output != nil {
+		// If successful and output exists, register the output facts
+		valueToStore = convertOutputToFactsMap(result.Output)
+	} else {
+		// If successful but no output (e.g., skipped task), register a minimal success map
+		valueToStore = map[string]interface{}{ // Ensure something is registered for skipped/ok tasks
+			"failed":  false,
+			"changed": false,
+			"skipped": result.Output == nil, // Mark as skipped if output is nil
+			"ignored": false,                // Explicitly false for non-ignored cases
+		}
+	}
+
+	if valueToStore != nil {
+		common.LogDebug("Registering variable", map[string]interface{}{
+			"task":     task.Name,
+			"host":     c.Host.Name,
+			"variable": task.Register,
+			"value":    valueToStore, // Log the actual map being stored
+		})
+		c.Facts.Store(task.Register, valueToStore)
 	}
 }
 
@@ -155,7 +211,26 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 				"duration": duration.String(),
 			}
 
-			if result.Error != nil {
+			var ignoredErr *IgnoredTaskError
+			if errors.As(result.Error, &ignoredErr) { // Check specifically for IgnoredTaskError
+				// Task failed but error was ignored
+				originalErr := ignoredErr.Unwrap()
+				logData["status"] = "failed"
+				logData["ignored"] = true
+				logData["error"] = originalErr.Error() // Use the original error message
+				if result.Output != nil {              // Include output details if available
+					logData["output"] = result.Output.String()
+				}
+				recapStats[hostname]["failed"]++ // Count as failed in recap
+				if cfg.Logging.Format == "plain" {
+					fmt.Printf("failed: [%s] => (ignored error: %v)\n", hostname, originalErr)
+					PPrintOutput(result.Output, originalErr)
+				} else {
+					common.LogWarn("Task failed (ignored)", logData)
+				}
+				// DO NOT set errored = true here
+			} else if result.Error != nil {
+				// Genuine, non-ignored task failure
 				logData["status"] = "failed"
 				logData["error"] = result.Error.Error()
 				if result.Output != nil { // Include output details even on failure if available
@@ -169,7 +244,7 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 					common.LogError("Task failed", logData)
 				}
 				common.DebugOutput("error executing '%s': %v\n\nREVERTING\n\n", task, result.Error)
-				errored = true
+				errored = true // This task failure triggers revert
 			} else if result.Output != nil && result.Output.Changed() {
 				logData["status"] = "changed"
 				logData["changed"] = true
@@ -180,7 +255,7 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 				} else {
 					common.LogInfo("Task changed", logData)
 				}
-			} else if result.Output == nil && result.Error == nil { // Skipped task
+			} else if result.Output == nil && result.Error == nil { // Skipped task (Error is nil, and not an IgnoredTaskError)
 				logData["status"] = "skipped"
 				recapStats[hostname]["skipped"]++
 				if cfg.Logging.Format == "plain" {
@@ -188,7 +263,7 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 				} else {
 					common.LogInfo("Task skipped", logData)
 				}
-			} else { // OK task
+			} else { // OK task (Error is nil, not IgnoredTaskError, and Output exists but not changed)
 				logData["status"] = "ok"
 				logData["changed"] = false
 				if result.Output != nil {

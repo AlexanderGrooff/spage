@@ -13,32 +13,60 @@ import (
 // Useful for having a single type to pass around in channels
 type TaskResult struct {
 	Output   ModuleOutput
-	Error    error
+	Error    error // This can now be nil, a normal error, or an IgnoredTaskError
 	Context  *HostContext
 	Task     Task
 	Duration time.Duration
 }
 
+// IgnoredTaskError is a custom error type used when a task fails
+// but IgnoreErrors is set to true.
+// It wraps the original error.
+type IgnoredTaskError struct {
+	OriginalErr error
+}
+
+// Error implements the error interface for IgnoredTaskError.
+func (e *IgnoredTaskError) Error() string {
+	if e.OriginalErr != nil {
+		return fmt.Sprintf("ignored: %s", e.OriginalErr.Error())
+	}
+	return "ignored error (no original error specified)"
+}
+
+// Unwrap allows errors.Is and errors.As to work with the wrapped original error.
+func (e *IgnoredTaskError) Unwrap() error {
+	return e.OriginalErr
+}
+
+// FactProvider is an interface that module outputs can implement
+// to provide a map representation suitable for registering as facts.
+type FactProvider interface {
+	AsFacts() map[string]interface{}
+}
+
 type Task struct {
-	Name     string      `yaml:"name"`
-	Module   string      `yaml:"module"`
-	Params   ModuleInput `yaml:"params"`
-	Validate string      `yaml:"validate"`
-	Before   string      `yaml:"before"`
-	After    string      `yaml:"after"`
-	When     string      `yaml:"when"`
-	Register string      `yaml:"register"`
-	RunAs    string      `yaml:"run_as"`
+	Name         string      `yaml:"name"`
+	Module       string      `yaml:"module"`
+	Params       ModuleInput `yaml:"params"`
+	Validate     string      `yaml:"validate"`
+	Before       string      `yaml:"before"`
+	After        string      `yaml:"after"`
+	When         string      `yaml:"when"`
+	Register     string      `yaml:"register"`
+	RunAs        string      `yaml:"run_as"`
+	IgnoreErrors bool        `yaml:"ignore_errors,omitempty"`
 }
 
 func (t Task) ToCode() string {
-	return fmt.Sprintf("pkg.Task{Name: %q, Module: %q, Register: %q, Params: %s, RunAs: %q, When: %q},\n",
+	return fmt.Sprintf("pkg.Task{Name: %q, Module: %q, Register: %q, Params: %s, RunAs: %q, When: %q, IgnoreErrors: %t},\n",
 		t.Name,
 		t.Module,
 		t.Register,
 		t.Params.ToCode(),
 		t.RunAs,
 		t.When,
+		t.IgnoreErrors,
 	)
 }
 
@@ -98,6 +126,17 @@ func (t Task) ExecuteModule(c *HostContext) TaskResult {
 	duration := time.Since(startTime)
 	r.Duration = duration
 
+	// Handle IgnoreErrors
+	if r.Error != nil && t.IgnoreErrors {
+		common.LogWarn("Task failed but error ignored due to ignore_errors=true", map[string]interface{}{
+			"task":  t.Name,
+			"host":  c.Host.Name,
+			"error": r.Error.Error(),
+		})
+		// Wrap the original error in IgnoredTaskError
+		r.Error = &IgnoredTaskError{OriginalErr: r.Error}
+	}
+
 	return r
 }
 
@@ -143,6 +182,17 @@ func (t Task) RevertModule(c *HostContext) TaskResult {
 	r.Output, r.Error = module.Revert(t.Params, c, previousOutput, t.RunAs) // Pass potentially nil previousOutput
 	duration := time.Since(startTime)
 	r.Duration = duration
+
+	// Handle IgnoreErrors for revert
+	if r.Error != nil && t.IgnoreErrors {
+		common.LogWarn("Revert failed but error ignored due to ignore_errors=true", map[string]interface{}{
+			"task":  t.Name,
+			"host":  c.Host.Name,
+			"error": r.Error.Error(),
+		})
+		// Wrap the original error in IgnoredTaskError
+		r.Error = &IgnoredTaskError{OriginalErr: r.Error}
+	}
 
 	return r
 }

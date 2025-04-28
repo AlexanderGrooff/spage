@@ -42,6 +42,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"when",
 		"register",
 		"run_as",
+		"ignore_errors",
 	}
 
 	var tasks []GraphNode
@@ -75,6 +76,29 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			}
 		} else {
 			task.When = "" // Default if 'when' key is not present
+		}
+
+		// Handle 'ignore_errors'
+		if ignoreVal, ok := block["ignore_errors"]; ok {
+			switch v := ignoreVal.(type) {
+			case bool:
+				task.IgnoreErrors = v
+			case string:
+				// Attempt to parse boolean string, default to false if invalid
+				if strings.ToLower(v) == "true" || strings.ToLower(v) == "yes" {
+					task.IgnoreErrors = true
+				} else if strings.ToLower(v) == "false" || strings.ToLower(v) == "no" {
+					task.IgnoreErrors = false
+				} else {
+					errors = append(errors, fmt.Errorf("invalid string value (%q) for 'ignore_errors' key in task %q, expected 'true'/'yes' or 'false'/'no'", v, task.Name))
+					errored = true
+				}
+			default:
+				errors = append(errors, fmt.Errorf("invalid type (%T) for 'ignore_errors' key in task %q, expected boolean or boolean-like string", ignoreVal, task.Name))
+				errored = true
+			}
+		} else {
+			task.IgnoreErrors = false // Default if 'ignore_errors' key is not present
 		}
 
 		var module Module

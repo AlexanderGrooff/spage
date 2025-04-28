@@ -19,15 +19,15 @@
           - slurped_file.source == "/tmp/spage_slurp_test.txt"
           - slurped_file.encoding == "base64"
 
-    # - name: Try to slurp a non-existent file (should fail)
-    #   slurp:
-    #     src: /tmp/non_existent_spage_file.txt
-    #   register: slurp_fail_result
-    #   ignore_errors: true # We expect this to fail
+    - name: Try to slurp a non-existent file (should fail)
+      slurp:
+        src: /tmp/non_existent_spage_file.txt
+      register: slurp_fail_result
+      ignore_errors: true # We expect this to fail
 
-    # - name: Verify slurp failure
-    #   assert:
-    #     that:
-    #       - slurp_fail_result.failed
-    #       # Check for a part of the expected error message
-    #       - "'source file not found' in slurp_fail_result.msg" 
+    - name: Verify slurp failure
+      assert:
+        that:
+          - slurp_fail_result.failed
+          # Check for a part of the expected error message
+          - "'source file not found' in slurp_fail_result.msg" 
