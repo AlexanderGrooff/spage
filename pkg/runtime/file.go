@@ -6,37 +6,15 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
+
+	"github.com/pkg/sftp"
+	"golang.org/x/crypto/ssh"
 )
+
+// --- Local File Operations ---
 
 func WriteLocalFile(filename string, data string) error {
 	return os.WriteFile(filename, []byte(data), 0644)
-}
-
-func WriteRemoteFile(host, remotePath, data, username string) error {
-	tmpFile, err := os.CreateTemp("", "tempfile")
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %v", err)
-	}
-	defer os.Remove(tmpFile.Name())
-
-	if _, err := tmpFile.Write([]byte(data)); err != nil {
-		return fmt.Errorf("failed to write to temp file: %v", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("failed to close temp file: %v", err)
-	}
-
-	_, stderr, err := RunLocalCommand(fmt.Sprintf("scp %q %s:%s", tmpFile.Name(), host, tmpFile.Name()), "")
-	if err != nil {
-		return fmt.Errorf("failed to transfer file to remote host: %v, %s", err, stderr)
-	}
-	_, _, err = RunRemoteCommand(host, fmt.Sprintf("mv %s %s", tmpFile.Name(), remotePath), username)
-	if err != nil {
-		return fmt.Errorf("failed to move file to final location: %v", err)
-	}
-
-	return nil
 }
 
 func CopyLocal(src, dst string) error {
@@ -49,11 +27,6 @@ func CopyLocal(src, dst string) error {
 		return copyLocalDir(src, dst)
 	}
 	return copyLocalFile(src, dst)
-}
-
-func CopyRemote(src, dst string) error {
-	_, _, err := RunRemoteCommand("cp -r %s %s", src, dst)
-	return err
 }
 
 func copyLocalDir(src, dst string) error {
@@ -110,13 +83,10 @@ func copyLocalFile(src, dst string) error {
 	return err
 }
 
-// ReadLocalFileBytes reads the content of a local file as raw bytes.
 func ReadLocalFileBytes(filename string) ([]byte, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Return a specific error type or marker for not found?
-			// For now, wrap it for clarity.
 			return nil, fmt.Errorf("file not found: %w", err)
 		}
 		return nil, fmt.Errorf("failed to read local file %s: %w", filename, err)
@@ -124,24 +94,7 @@ func ReadLocalFileBytes(filename string) ([]byte, error) {
 	return data, nil
 }
 
-// ReadRemoteFileBytes reads the content of a remote file as raw bytes.
-func ReadRemoteFileBytes(host, remotePath, username string) ([]byte, error) {
-	// Use cat to read the file content. Ensure no extra processing is done.
-	// Quote the path to handle spaces etc.
-	cmd := fmt.Sprintf("cat %q", remotePath)
-	stdout, stderr, err := RunRemoteCommand(host, cmd, username)
-	if err != nil {
-		// Check stderr for common 'file not found' messages
-		if strings.Contains(stderr, "No such file or directory") {
-			return nil, fmt.Errorf("file not found: %s on host %s", remotePath, host)
-		}
-		// Include stderr in the error message for better diagnostics
-		return nil, fmt.Errorf("failed to read remote file %s on host %s: %w, stderr: %s", remotePath, host, err, stderr)
-	}
-	// Return the raw stdout bytes
-	return []byte(stdout), nil
-}
-
+// parseFileMode is used by both local and remote mode setting.
 func parseFileMode(modeStr string) (os.FileMode, error) {
 	// Try parsing as octal first
 	if mode, err := strconv.ParseUint(modeStr, 8, 32); err == nil {
@@ -159,12 +112,171 @@ func SetLocalFileMode(path, modeStr string) error {
 	return os.Chmod(path, mode)
 }
 
-func SetRemoteFileMode(host, path, modeStr, username string) error {
-	// We assume the mode string is numeric/octal for direct use with chmod
-	// Add validation or symbolic mode conversion if necessary
-	_, _, err := RunRemoteCommand(host, fmt.Sprintf("chmod %s %q", modeStr, path), username)
+// --- SFTP-based Remote File Operations ---
+
+// getSftpClient initializes an SFTP client from an SSH client.
+func getSftpClient(sshClient *ssh.Client) (*sftp.Client, error) {
+	if sshClient == nil {
+		return nil, fmt.Errorf("cannot create SFTP client from nil SSH client")
+	}
+	sftpClient, err := sftp.NewClient(sshClient)
 	if err != nil {
-		return fmt.Errorf("failed to set remote file mode: %w", err)
+		// Include remote address for context
+		remoteAddr := "unknown"
+		if sshClient.RemoteAddr() != nil {
+			remoteAddr = sshClient.RemoteAddr().String()
+		}
+		return nil, fmt.Errorf("failed to create SFTP client for %s: %w", remoteAddr, err)
+	}
+	return sftpClient, nil
+}
+
+// WriteRemoteFile writes data to a remote file using SFTP.
+func WriteRemoteFile(sshClient *ssh.Client, remotePath, data string) error {
+	sftpClient, err := getSftpClient(sshClient)
+	if err != nil {
+		return err
+	}
+	defer sftpClient.Close()
+
+	// Ensure the directory exists
+	remoteDir := filepath.Dir(remotePath)
+	if err := sftpClient.MkdirAll(remoteDir); err != nil {
+		// Ignore if directory already exists, but return other errors
+		if !os.IsExist(err) {
+			return fmt.Errorf("failed to create remote directory %s on %s: %w", remoteDir, sshClient.RemoteAddr(), err)
+		}
+	}
+
+	// Create or truncate the remote file
+	f, err := sftpClient.Create(remotePath)
+	if err != nil {
+		return fmt.Errorf("failed to create remote file %s on %s: %w", remotePath, sshClient.RemoteAddr(), err)
+	}
+	defer f.Close()
+
+	// Write the data
+	if _, err := f.Write([]byte(data)); err != nil {
+		return fmt.Errorf("failed to write data to remote file %s on %s: %w", remotePath, sshClient.RemoteAddr(), err)
+	}
+
+	return nil
+}
+
+// ReadRemoteFileBytes reads the content of a remote file as raw bytes using SFTP.
+func ReadRemoteFileBytes(sshClient *ssh.Client, remotePath string) ([]byte, error) {
+	sftpClient, err := getSftpClient(sshClient)
+	if err != nil {
+		return nil, err
+	}
+	defer sftpClient.Close()
+
+	// Open the remote file
+	f, err := sftpClient.Open(remotePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("file not found: %s on host %s", remotePath, sshClient.RemoteAddr())
+		}
+		return nil, fmt.Errorf("failed to open remote file %s on %s: %w", remotePath, sshClient.RemoteAddr(), err)
+	}
+	defer f.Close()
+
+	// Read all bytes from the file
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read data from remote file %s on %s: %w", remotePath, sshClient.RemoteAddr(), err)
+	}
+
+	return data, nil
+}
+
+// SetRemoteFileMode sets the mode of a remote file using SFTP.
+func SetRemoteFileMode(sshClient *ssh.Client, path, modeStr string) error {
+	mode, err := parseFileMode(modeStr)
+	if err != nil {
+		return err // Error parsing mode string
+	}
+
+	sftpClient, err := getSftpClient(sshClient)
+	if err != nil {
+		return err
+	}
+	defer sftpClient.Close()
+
+	// Set the mode using SFTP
+	err = sftpClient.Chmod(path, mode)
+	if err != nil {
+		return fmt.Errorf("failed to set mode %s (%o) on remote file %s on %s: %w", modeStr, mode, path, sshClient.RemoteAddr(), err)
+	}
+	return nil
+}
+
+// CopyRemote copies a file or directory recursively on the remote host using SFTP.
+func CopyRemote(sshClient *ssh.Client, src, dst string) error {
+	sftpClient, err := getSftpClient(sshClient)
+	if err != nil {
+		return err
+	}
+	defer sftpClient.Close()
+
+	return copyRemoteRecursive(sftpClient, src, dst)
+}
+
+func copyRemoteRecursive(sftpClient *sftp.Client, src, dst string) error {
+	srcInfo, err := sftpClient.Lstat(src) // Use Lstat to handle symlinks correctly if needed later
+	if err != nil {
+		return fmt.Errorf("failed to stat remote source %s: %w", src, err)
+	}
+
+	if srcInfo.IsDir() {
+		// Create destination directory
+		if err := sftpClient.MkdirAll(dst); err != nil && !os.IsExist(err) {
+			return fmt.Errorf("failed to create remote directory %s: %w", dst, err)
+		}
+		// Set permissions explicitly after creation/check
+		if err := sftpClient.Chmod(dst, srcInfo.Mode().Perm()); err != nil { // Use Perm() for chmod
+			return fmt.Errorf("failed to set mode on remote directory %s: %w", dst, err)
+		}
+
+		entries, err := sftpClient.ReadDir(src)
+		if err != nil {
+			return fmt.Errorf("failed to read remote directory %s: %w", src, err)
+		}
+
+		for _, entry := range entries {
+			srcPath := sftpClient.Join(src, entry.Name()) // Use sftpClient.Join for remote paths
+			dstPath := sftpClient.Join(dst, entry.Name())
+			if err := copyRemoteRecursive(sftpClient, srcPath, dstPath); err != nil {
+				return err // Propagate error up
+			}
+		}
+	} else {
+		// Copy file content
+		srcFile, err := sftpClient.Open(src)
+		if err != nil {
+			return fmt.Errorf("failed to open remote source file %s: %w", src, err)
+		}
+		defer srcFile.Close()
+
+		// Ensure destination directory exists before creating file
+		dstDir := filepath.Dir(dst) // filepath.Dir should be okay here
+		if err := sftpClient.MkdirAll(dstDir); err != nil && !os.IsExist(err) {
+			return fmt.Errorf("failed to create remote directory %s for file %s: %w", dstDir, dst, err)
+		}
+
+		dstFile, err := sftpClient.Create(dst) // Create truncates if exists
+		if err != nil {
+			return fmt.Errorf("failed to create remote destination file %s: %w", dst, err)
+		}
+		defer dstFile.Close()
+
+		if _, err := io.Copy(dstFile, srcFile); err != nil {
+			return fmt.Errorf("failed to copy content from %s to %s: %w", src, dst, err)
+		}
+		// Set permissions after writing content
+		if err := sftpClient.Chmod(dst, srcInfo.Mode().Perm()); err != nil { // Use Perm()
+			return fmt.Errorf("failed to set mode on remote file %s: %w", dst, err)
+		}
 	}
 	return nil
 }

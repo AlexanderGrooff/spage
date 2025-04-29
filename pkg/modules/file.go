@@ -2,6 +2,7 @@ package modules
 
 import (
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 
@@ -25,7 +26,6 @@ type FileInput struct {
 	State string `yaml:"state"`
 	Mode  string `yaml:"mode"`
 	Src   string `yaml:"src,omitempty"` // Source path for state=link
-	pkg.ModuleInput
 }
 
 type FileOutput struct {
@@ -79,6 +79,10 @@ func (i FileInput) Validate() error {
 	return nil
 }
 
+func (i FileInput) HasRevert() bool {
+	return true
+}
+
 func (o FileOutput) String() string {
 	parts := []string{}
 	if o.Exists.Changed() {
@@ -116,48 +120,47 @@ func (o FileOutput) Changed() bool {
 }
 
 func getOriginalState(p FileInput, c *pkg.HostContext, runAs string) (exists bool, state, mode, linkTarget string, isLink bool, err error) {
-	// Use stat to determine type and mode, works for files, dirs, and links (without -L)
-	stdout, stderr, statErr := c.Stat(p.Path, runAs)
+	// Use c.Stat to determine type and mode
+	// Note: runAs is currently ignored by c.Stat for remote SFTP operations
+	fileInfo, statErr := c.Stat(p.Path, runAs)
 
 	if statErr != nil {
-		if strings.Contains(stderr, "No such file or directory") {
+		if os.IsNotExist(statErr) {
 			return false, "absent", "", "", false, nil // File doesn't exist
 		}
-		return false, "", "", "", false, fmt.Errorf("failed to stat %s: %v, stderr: %s", p.Path, statErr, stderr)
+		// Other error (permissions, etc.)
+		return false, "", "", "", false, fmt.Errorf("failed to stat %s: %w", p.Path, statErr)
 	}
 
 	exists = true
-	parts := strings.Split(strings.TrimSpace(stdout), "\n")
-	if len(parts) < 16 {
-		return true, "", "", "", false, fmt.Errorf("unexpected stat output: %q", stdout)
-	}
+	fileMode := fileInfo.Mode()
+	mode = fmt.Sprintf("0%o", fileMode.Perm()) // Get octal mode string
 
-	fileType := parts[8]
-	mode = parts[0] // Octal mode
-
-	switch fileType {
-	case "symbolic link":
+	// Determine file state based on mode
+	if fileMode.IsDir() {
+		state = "directory"
+		isLink = false
+	} else if fileMode&os.ModeSymlink != 0 {
 		state = "link"
 		isLink = true
-		// Get link target
-		readlinkCmd := fmt.Sprintf("readlink %s", p.Path)
+		// Get link target using readlink command (os.Readlink or sftp ReadLink might be alternatives)
+		// Note: Using runAs here for the command, which might differ from the SFTP user.
+		readlinkCmd := fmt.Sprintf("readlink %s", fmt.Sprintf("%q", p.Path)) // Quote path
 		targetStdout, targetStderr, targetErr := c.RunCommand(readlinkCmd, runAs)
 		if targetErr != nil {
-			// Log warning but continue? Or return error?
 			common.DebugOutput("WARNING: Failed to read link target for %s: %v, stderr: %s", p.Path, targetErr, targetStderr)
-			linkTarget = ""
+			linkTarget = "" // Treat as broken link or unknown target
 		} else {
 			linkTarget = strings.TrimSpace(targetStdout)
 		}
-	case "directory":
-		state = "directory"
-		isLink = false
-	case "regular file", "regular empty file":
+	} else if fileMode.IsRegular() {
 		state = "file"
 		isLink = false
-	default: // fifo, socket, character special file, block special file, unknown
-		common.DebugOutput("Treating file type %q as 'file' state for %s", fileType, p.Path)
-		state = "file" // Treat other types as 'file' for state purposes?
+	} else {
+		// Treat other types (fifo, socket, char/block device) as 'file' for state management purposes?
+		// This matches the previous behavior but might need refinement.
+		common.DebugOutput("Treating file mode %s as 'file' state for %s", fileMode.String(), p.Path)
+		state = "file"
 		isLink = false
 	}
 

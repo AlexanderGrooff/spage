@@ -2,8 +2,8 @@ package modules
 
 import (
 	"fmt"
+	"os"
 	"reflect"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -131,88 +131,15 @@ func (o StatOutput) Changed() bool {
 	return false
 }
 
-func parseStatOutput(output string) (*StatOutput, error) {
-	// Expected format: %a %u %g %s %W %X %Y %Z %F %N %d %i %h %r %b %B %U %G
-	// OctalPerms UID GID Size CreationTime AccessTime ModifyTime ChangeTime FileType FileName DeviceNumber InodeNum HardLinks RawDeviceNum AllocBlocks BlockSize UserName GroupName
-	fields := strings.Split(strings.TrimSpace(output), "\n")
-	if len(fields) < 16 { // Check minimum expected fields based on format string below
-		return nil, fmt.Errorf("unexpected stat output format: received %d fields, expected at least 16. Output: %q", len(fields), output)
-	}
-
-	out := &StatOutput{}
-	out.Stat.Exists = true // If we got output, it exists
-
-	var err error
-	out.Stat.Mode = fields[0]                                    // %a Octal permissions
-	if out.Stat.UID, err = strconv.Atoi(fields[1]); err != nil { // %u UID
-		return nil, fmt.Errorf("failed to parse UID: %v", err)
-	}
-	if out.Stat.GID, err = strconv.Atoi(fields[2]); err != nil { // %g GID
-		return nil, fmt.Errorf("failed to parse GID: %v", err)
-	}
-	if out.Stat.Size, err = strconv.ParseInt(fields[3], 10, 64); err != nil { // %s Size
-		return nil, fmt.Errorf("failed to parse Size: %v", err)
-	}
-	// %W Creation time (birth) - skip for now, often 0
-	if out.Stat.Atime, err = strconv.ParseFloat(fields[5], 64); err != nil { // %X Access time epoch
-		return nil, fmt.Errorf("failed to parse Atime: %v", err)
-	}
-	if out.Stat.Mtime, err = strconv.ParseFloat(fields[6], 64); err != nil { // %Y Modify time epoch
-		return nil, fmt.Errorf("failed to parse Mtime: %v", err)
-	}
-	if out.Stat.Ctime, err = strconv.ParseFloat(fields[7], 64); err != nil { // %Z Change time epoch
-		return nil, fmt.Errorf("failed to parse Ctime: %v", err)
-	}
-
-	// %F File type
-	fileType := fields[8]
-	out.Stat.IsReg = fileType == "regular file" || fileType == "regular empty file"
-	out.Stat.IsDir = fileType == "directory"
-	out.Stat.IsLnk = fileType == "symbolic link"
-	out.Stat.IsFifo = fileType == "fifo"
-	out.Stat.IsSock = fileType == "socket"
-	out.Stat.IsChr = fileType == "character special file"
-	out.Stat.IsBlk = fileType == "block special file"
-
-	// %N File name (includes link target if symlink) - Use input path for consistency
-	out.Stat.Path = fields[9] // Actually the path resolved by stat, might differ slightly from input
-
-	// %d Device number (decimal)
-	if out.Stat.Device, err = strconv.ParseUint(fields[10], 10, 64); err != nil {
-		return nil, fmt.Errorf("failed to parse Device: %v", err)
-	}
-	// %i Inode number (decimal)
-	if out.Stat.Inode, err = strconv.ParseUint(fields[11], 10, 64); err != nil {
-		return nil, fmt.Errorf("failed to parse Inode: %v", err)
-	}
-	// %h Number of hard links
-	if out.Stat.NLink, err = strconv.ParseUint(fields[12], 10, 64); err != nil {
-		return nil, fmt.Errorf("failed to parse NLink: %v", err)
-	}
-	// %r Raw device number (hexadecimal) - convert from hex
-	if fields[13] != "?" { // stat outputs '?' if not applicable
-		if out.Stat.Rdev, err = strconv.ParseUint(fields[13], 16, 64); err != nil {
-			return nil, fmt.Errorf("failed to parse Rdev (hex): %v", err)
-		}
-	}
-	// %b Number of blocks allocated (like du)
-	if out.Stat.Blocks, err = strconv.ParseInt(fields[14], 10, 64); err != nil {
-		return nil, fmt.Errorf("failed to parse Blocks: %v", err)
-	}
-	// %B The size in bytes of each block reported by %b
-	if out.Stat.BlockSize, err = strconv.ParseInt(fields[15], 10, 64); err != nil {
-		return nil, fmt.Errorf("failed to parse BlockSize: %v", err)
-	}
-	// %U User name of owner
-	out.Stat.Owner = fields[16]
-	// %G Group name of owner
-	out.Stat.Group = fields[17]
-
-	return out, nil
+// Function to convert syscall.Timespec to float64 seconds since epoch
+func timespecToFloat(ts syscall.Timespec) float64 {
+	return float64(ts.Sec) + float64(ts.Nsec)/1e9
 }
 
 func (m StatModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
 	p := params.(StatInput)
+	out := StatOutput{}
+	out.Stat.Path = p.Path // Set path initially
 
 	// Set default checksum algorithm if it's empty
 	checksumAlgo := p.ChecksumAlgorithm
@@ -220,66 +147,93 @@ func (m StatModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 		checksumAlgo = "sha1"
 	}
 
-	// TODO: pass p.Follow
-	stdout, stderr, err := c.Stat(p.Path, runAs)
+	// TODO: Handle p.Follow. Currently, c.Stat uses Lstat (doesn't follow links) for remote
+	// and os.Stat (follows links) for local. We might need a flag in c.Stat or separate methods.
+	fileInfo, err := c.Stat(p.Path, runAs)
 
-	// Handle "file not found" or other errors during stat
+	// Handle errors from c.Stat
 	if err != nil {
-		// Check if the error is specifically "No such file or directory"
-		// This check might need refinement based on actual stderr content across systems
-		if strings.Contains(stderr, "No such file or directory") || strings.Contains(stderr, "cannot stat") {
-			common.DebugOutput("Stat: Path %s not found (stderr: %s)", p.Path, stderr)
-			// Return Exists: false
-			out := &StatOutput{}
-			out.Stat.Path = p.Path // Keep the original path
+		if os.IsNotExist(err) {
+			common.DebugOutput("Stat: Path %s not found: %v", p.Path, err)
 			out.Stat.Exists = false
-			return *out, nil // Not an error from the module's perspective, just file not found
+			return out, nil // File not existing is not a module execution error
+		} else {
+			// Other error during stat (permissions, etc.)
+			return nil, fmt.Errorf("failed to stat path %s: %w", p.Path, err)
 		}
-		// Otherwise, it's a different error
-		return nil, fmt.Errorf("failed to run stat command on %s: %v, stderr: %s", p.Path, err, stderr)
 	}
 
-	// Parse the main stat output
-	out, err := parseStatOutput(stdout)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse stat output for %s: %v", p.Path, err)
-	}
-	// Ensure the path in the output matches the input path for clarity, as %N might resolve links etc.
-	out.Stat.Path = p.Path
+	// --- File exists, populate StatOutput from os.FileInfo ---
+	out.Stat.Exists = true
+	out.Stat.Size = fileInfo.Size()
+	out.Stat.Mode = fmt.Sprintf("0%o", fileInfo.Mode().Perm()) // Octal permissions
 
-	// --- Optional Getters ---
+	// File type flags
+	mode := fileInfo.Mode()
+	out.Stat.IsReg = mode.IsRegular()
+	out.Stat.IsDir = mode.IsDir()
+	out.Stat.IsLnk = mode&os.ModeSymlink != 0
+	out.Stat.IsFifo = mode&os.ModeNamedPipe != 0
+	out.Stat.IsSock = mode&os.ModeSocket != 0
+	out.Stat.IsChr = mode&os.ModeCharDevice != 0
+	out.Stat.IsBlk = mode&os.ModeDevice != 0 && mode&os.ModeCharDevice == 0 // Is device but not char
+
+	// Access OS-specific stat data (syscall.Stat_t)
+	sysStat, ok := fileInfo.Sys().(*syscall.Stat_t)
+	if !ok {
+		// Could log a warning that detailed info isn't available
+		common.LogWarn("Could not get detailed syscall.Stat_t for path", map[string]interface{}{"path": p.Path})
+	} else {
+		out.Stat.UID = int(sysStat.Uid)
+		out.Stat.GID = int(sysStat.Gid)
+		out.Stat.Device = uint64(sysStat.Dev)
+		out.Stat.Inode = uint64(sysStat.Ino)
+		out.Stat.NLink = uint64(sysStat.Nlink)
+		out.Stat.Rdev = uint64(sysStat.Rdev)
+		out.Stat.Blocks = sysStat.Blocks
+		out.Stat.BlockSize = sysStat.Blksize
+
+		// Timestamps
+		out.Stat.Atime = timespecToFloat(sysStat.Atim)
+		out.Stat.Mtime = timespecToFloat(sysStat.Mtim)
+		out.Stat.Ctime = timespecToFloat(sysStat.Ctim)
+		// Note: Go's os.FileInfo ModTime() is generally preferred over accessing syscall directly for Mtime
+		// out.Stat.Mtime = float64(fileInfo.ModTime().UnixNano()) / 1e9
+
+		// TODO: Lookup Owner and Group names from UID/GID if needed
+		// This would likely require c.RunCommand("id -un <uid>") etc. or OS-specific libraries
+		// out.Stat.Owner = ...
+		// out.Stat.Group = ...
+	}
+
+	// --- Optional Getters (Checksum, Mime, Attributes) ---
+	// These still require running commands as os.FileInfo doesn't provide them.
 
 	// Get Checksum
-	if p.GetChecksum {
+	if p.GetChecksum && out.Stat.IsReg { // Only checksum regular files
 		checksumCmd := ""
 		switch checksumAlgo {
 		case "sha1", "md5", "sha224", "sha256", "sha384", "sha512":
-			// Note: No shell escaping applied here for simplicity. Assumes path is safe.
-			checksumCmd = fmt.Sprintf("%ssum %s", checksumAlgo, p.Path)
+			// Quote path using Sprintf %q for basic shell safety
+			checksumCmd = fmt.Sprintf("%ssum %s", checksumAlgo, fmt.Sprintf("%q", p.Path))
 		default:
-			return nil, fmt.Errorf("unsupported checksum algorithm: %s", checksumAlgo) // Should be caught by Validate, but double-check
+			return nil, fmt.Errorf("internal error: unsupported checksum algorithm: %s", checksumAlgo)
 		}
 
-		// If the file is a directory, checksum command will likely fail or checksum the contents recursively.
-		// Ansible's stat returns checksum only for regular files.
-		if out.Stat.IsReg {
-			common.DebugOutput("Running checksum: %s", checksumCmd)
-			chkStdout, chkStderr, chkErr := c.RunCommand(checksumCmd, runAs)
-			if chkErr != nil {
-				// Don't fail the whole module, just log or skip checksum
-				common.DebugOutput("WARNING: Failed to calculate checksum for %s: %v, stderr: %s", p.Path, chkErr, chkStderr)
-			} else {
-				// Output format is typically "checksum  filename"
-				parts := strings.Fields(chkStdout)
-				if len(parts) > 0 {
-					out.Stat.Checksum = parts[0]
-				} else {
-					common.DebugOutput("WARNING: Could not parse checksum output for %s: %q", p.Path, chkStdout)
-				}
-			}
+		common.DebugOutput("Running checksum: %s", checksumCmd)
+		chkStdout, chkStderr, chkErr := c.RunCommand(checksumCmd, runAs)
+		if chkErr != nil {
+			common.DebugOutput("WARNING: Failed to calculate checksum for %s: %v, stderr: %s", p.Path, chkErr, chkStderr)
 		} else {
-			common.DebugOutput("Skipping checksum calculation for non-regular file: %s", p.Path)
+			parts := strings.Fields(chkStdout)
+			if len(parts) > 0 {
+				out.Stat.Checksum = parts[0]
+			} else {
+				common.DebugOutput("WARNING: Could not parse checksum output for %s: %q", p.Path, chkStdout)
+			}
 		}
+	} else if p.GetChecksum {
+		common.DebugOutput("Skipping checksum calculation for non-regular file: %s", p.Path)
 	}
 
 	// Get Mime Type
@@ -288,8 +242,8 @@ func (m StatModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 		if p.Follow {
 			mimeCmd += " -L" // Follow symlinks
 		}
-		// Note: No shell escaping applied here for simplicity. Assumes path is safe.
-		mimeCmd += " --mime-type " + p.Path
+		// Quote path using Sprintf %q
+		mimeCmd += fmt.Sprintf(" --mime-type %s", fmt.Sprintf("%q", p.Path))
 
 		common.DebugOutput("Running mime-type: %s", mimeCmd)
 		mimeStdout, mimeStderr, mimeErr := c.RunCommand(mimeCmd, runAs)
@@ -302,23 +256,17 @@ func (m StatModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 
 	// Get Attributes (Linux specific using lsattr)
 	if p.GetAttributes {
-		// lsattr might not exist or work on non-Linux systems.
-		// Ansible module likely has more robust platform detection.
-		// We'll try it and warn if it fails.
-		// -d is needed for directories, otherwise it lists contents. Works for files too.
-		// Note: No shell escaping applied here for simplicity. Assumes path is safe.
-		attrCmd := "lsattr -d " + p.Path
+		// Quote path using Sprintf %q
+		attrCmd := fmt.Sprintf("lsattr -d %s", fmt.Sprintf("%q", p.Path))
 		common.DebugOutput("Running lsattr: %s", attrCmd)
 		attrStdout, attrStderr, attrErr := c.RunCommand(attrCmd, runAs)
 		if attrErr != nil {
-			// Check if lsattr command not found, common case.
 			if strings.Contains(attrStderr, "command not found") || strings.Contains(attrStderr, "not found") {
 				common.DebugOutput("lsattr command not found on host, cannot get attributes for %s", p.Path)
 			} else {
 				common.DebugOutput("WARNING: Failed to get attributes for %s: %v, stderr: %s", p.Path, attrErr, attrStderr)
 			}
 		} else {
-			// Output is typically "Attributes  Filename"
 			parts := strings.Fields(attrStdout)
 			if len(parts) > 0 {
 				out.Stat.Attributes = parts[0]
@@ -328,7 +276,7 @@ func (m StatModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 		}
 	}
 
-	return *out, nil
+	return out, nil
 }
 
 // Stat module is read-only, so Revert does nothing.

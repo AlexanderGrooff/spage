@@ -3,15 +3,11 @@ package runtime
 import (
 	"bytes"
 	"fmt"
-	"net"
-	"os"
 	"os/exec"
-	"os/user"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/google/shlex"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/agent"
 )
 
 func RunLocalCommand(command, username string) (string, string, error) {
@@ -47,38 +43,14 @@ func RunLocalCommand(command, username string) (string, string, error) {
 	return stdout.String(), stderr.String(), nil
 }
 
-func RunRemoteCommand(host, command, username string) (string, string, error) {
-	// Get active SSH keys from ssh-agent
-	socket := os.Getenv("SSH_AUTH_SOCK")
-	conn, err := net.Dial("unix", socket)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to open SSH_AUTH_SOCK: %v", err)
-	}
-	agentClient := agent.NewClient(conn)
-	currentUser, err := user.Current()
-	if err != nil {
-		return "", "", fmt.Errorf("failed to get current user: %v", err)
-	}
-	// SSH as the current user
-	// TODO: fetch ssh from config/strategy
-	config := &ssh.ClientConfig{
-		User: currentUser.Username,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeysCallback(agentClient.Signers),
-		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	}
-	client, err := ssh.Dial("tcp", net.JoinHostPort(host, "22"), config)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to dial host %s: %w", host, err)
-	}
-	defer client.Close()
-
+// RunRemoteCommand executes a command on a remote host using an existing SSH client connection.
+func RunRemoteCommand(client *ssh.Client, command, username string) (string, string, error) {
 	// Each ClientConn can support multiple interactive sessions,
 	// represented by a Session. It's one session per command.
 	session, err := client.NewSession()
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create ssh session to %s: %w", host, err)
+		// Include the host address in the error if possible. client.RemoteAddr()
+		return "", "", fmt.Errorf("failed to create ssh session to %s: %w", client.RemoteAddr(), err)
 	}
 	defer session.Close()
 
@@ -89,12 +61,16 @@ func RunRemoteCommand(host, command, username string) (string, string, error) {
 	session.Stderr = &stderr
 	var cmdToRun string
 	if username != "" {
+		// Use sh -c for compatibility, quoting handled by Sprintf %q
 		cmdToRun = fmt.Sprintf("sudo -u %s sh -c %q", username, command)
 	} else {
 		cmdToRun = fmt.Sprintf("sh -c %q", command)
 	}
+
+	common.DebugOutput("Running remote command on %s: %s", client.RemoteAddr(), cmdToRun)
 	if err := session.Run(cmdToRun); err != nil {
-		return stdout.String(), stderr.String(), fmt.Errorf("failed to run '%v' on host %s: %w", command, host, err)
+		// Include more context in the error message
+		return stdout.String(), stderr.String(), fmt.Errorf("failed to run remote command '%s' (original: '%s') on host %s: %w, stderr: %s", cmdToRun, command, client.RemoteAddr(), err, stderr.String())
 	}
 	return stdout.String(), stderr.String(), nil
 }

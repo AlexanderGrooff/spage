@@ -2,6 +2,9 @@ package runtime
 
 import (
 	"fmt"
+	"os"
+
+	"golang.org/x/crypto/ssh"
 )
 
 // Use GNU stat --printf for detailed info. Handle non-GNU stat later if needed.
@@ -54,26 +57,54 @@ var statMacOSFlags = `%Lp
 //	statCmd += " -L" // Follow symlinks
 //}
 
-func StatLocal(path, runAs string) (string, string, error) {
-	// TODO: use go's local os.Stat
-	fullCmd := fmt.Sprintf("stat --printf=\"%s\" %s", statGNUFlags, path)
-	stdout, stderr, err := RunLocalCommand(fullCmd, runAs)
+// func StatLocal(path, runAs string) (string, string, error) {
+// 	// TODO: use go's local os.Stat
+// 	fullCmd := fmt.Sprintf("stat --printf=\"%s\" %s", statGNUFlags, path)
+// 	stdout, stderr, err := RunLocalCommand(fullCmd, runAs)
+// 	if err != nil {
+// 		// Try MacOS-specific stat
+// 		fullCmd := fmt.Sprintf("stat -f \"%s\" %s", statMacOSFlags, path)
+// 		return RunLocalCommand(fullCmd, runAs)
+// 	}
+// 	return stdout, stderr, err
+// }
+
+//	func StatRemote(path, host, runAs string) (string, string, error) {
+//		// TODO: separate into StatMacOS, StatGNU
+//		fullCmd := fmt.Sprintf("stat --printf=\"%s\" %s", statGNUFlags, path)
+//		stdout, stderr, err := RunLocalCommand(fullCmd, runAs)
+//		if err != nil {
+//			// Try MacOS-specific stat
+//			fullCmd := fmt.Sprintf("stat -f \"%s\" %s", statMacOSFlags, path)
+//			return RunLocalCommand(fullCmd, runAs)
+//		}
+//		return stdout, stderr, err
+//	}
+func StatLocal(path string) (os.FileInfo, error) {
+	info, err := os.Stat(path)
 	if err != nil {
-		// Try MacOS-specific stat
-		fullCmd := fmt.Sprintf("stat -f \"%s\" %s", statMacOSFlags, path)
-		return RunLocalCommand(fullCmd, runAs)
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("file/dir not found: %s: %w", path, err)
+		}
+		return nil, fmt.Errorf("failed to stat local path %s: %w", path, err)
 	}
-	return stdout, stderr, err
+	return info, nil
 }
 
-func StatRemote(path, host, runAs string) (string, string, error) {
-	// TODO: separate into StatMacOS, StatGNU
-	fullCmd := fmt.Sprintf("stat --printf=\"%s\" %s", statGNUFlags, path)
-	stdout, stderr, err := RunLocalCommand(fullCmd, runAs)
+func StatRemote(sshClient *ssh.Client, path string) (os.FileInfo, error) {
+	sftpClient, err := getSftpClient(sshClient)
 	if err != nil {
-		// Try MacOS-specific stat
-		fullCmd := fmt.Sprintf("stat -f \"%s\" %s", statMacOSFlags, path)
-		return RunLocalCommand(fullCmd, runAs)
+		return nil, err
 	}
-	return stdout, stderr, err
+	defer sftpClient.Close()
+
+	info, err := sftpClient.Lstat(path) // Use Lstat to handle symlinks correctly
+	if err != nil {
+		// Keep os.IsNotExist check
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("file/dir not found: %s on host %s", path, sshClient.RemoteAddr())
+		}
+		return nil, fmt.Errorf("failed to stat remote path %s on %s: %w", path, sshClient.RemoteAddr(), err)
+	}
+	return info, nil
 }

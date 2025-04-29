@@ -94,7 +94,11 @@ func LoadInventory(path string) (*Inventory, error) {
 }
 
 func (i Inventory) GetContextForHost(host *Host) (*HostContext, error) {
-	ctx := InitializeHostContext(host)
+	ctx, err := InitializeHostContext(host)
+	if err != nil {
+		return nil, err
+	}
+	defer ctx.Close()
 
 	for k, v := range i.Vars {
 		ctx.Facts.Store(k, v)

@@ -3,7 +3,9 @@ package pkg
 import (
 	"bytes"
 	"fmt"
+	"net"
 	"os"
+	"os/user"
 	"regexp"
 	"strconv"
 	"strings"
@@ -13,6 +15,8 @@ import (
 	"github.com/AlexanderGrooff/spage/pkg/runtime"
 
 	"github.com/flosch/pongo2"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 // No longer using type aliases for History and Facts
@@ -59,17 +63,62 @@ func FactsToJinja2(facts *sync.Map) pongo2.Context {
 }
 
 type HostContext struct {
-	Host    *Host
-	Facts   *sync.Map
-	History *sync.Map
+	Host      *Host
+	Facts     *sync.Map
+	History   *sync.Map
+	sshClient *ssh.Client
 }
 
-func InitializeHostContext(host *Host) *HostContext {
-	return &HostContext{
+func InitializeHostContext(host *Host) (*HostContext, error) {
+	hc := &HostContext{
 		Host:    host,
 		Facts:   new(sync.Map),
 		History: new(sync.Map),
 	}
+
+	if !host.IsLocal {
+		socket := os.Getenv("SSH_AUTH_SOCK")
+		if socket == "" {
+			return nil, fmt.Errorf("SSH_AUTH_SOCK environment variable not set, cannot connect to remote host %s", host.Host)
+		}
+		conn, err := net.Dial("unix", socket)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open SSH_AUTH_SOCK for host %s: %v", host.Host, err)
+		}
+		// Note: We're not closing the 'conn' here because the agentClient needs it.
+		// The agentClient itself doesn't have a Close method. The underlying connection
+		// might be closed when the ssh.Client is closed, or it might persist.
+		// This is typical usage for ssh agent.
+
+		agentClient := agent.NewClient(conn)
+		currentUser, err := user.Current() // Consider making username configurable
+		if err != nil {
+			// We might not want to fail initialization just because we can't get the current user
+			// Log a warning and proceed? Or require explicit user configuration?
+			// For now, return error.
+			return nil, fmt.Errorf("failed to get current user for SSH connection to %s: %v", host.Host, err)
+		}
+
+		config := &ssh.ClientConfig{
+			User: currentUser.Username, // Use current user's username
+			Auth: []ssh.AuthMethod{
+				ssh.PublicKeysCallback(agentClient.Signers), // Use keys from ssh-agent
+			},
+			HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TODO: Make host key checking configurable
+		}
+
+		// TODO: Make SSH port configurable
+		addr := net.JoinHostPort(host.Host, "22")
+		client, err := ssh.Dial("tcp", addr, config)
+		if err != nil {
+			// Ensure conn is closed if Dial fails? The Dial usually handles underlying connection closure on error.
+			return nil, fmt.Errorf("failed to dial SSH host %s: %w", host.Host, err)
+		}
+		hc.sshClient = client
+		common.DebugOutput("Established SSH connection to %s", host.Host)
+	}
+
+	return hc, nil
 }
 
 func ReadTemplateFile(filename string) (string, error) {
@@ -90,58 +139,72 @@ func ReadLocalFile(filename string) (string, error) {
 	return string(data), nil
 }
 
-func (c HostContext) ReadFile(filename string, username string) (string, error) {
-	if c.Host.IsLocal {
-		return ReadLocalFile(filename)
-	}
-	return c.ReadRemoteFile(filename, username)
-}
-
-func (c HostContext) ReadRemoteFile(filename string, username string) (string, error) {
-	stdout, _, err := runtime.RunRemoteCommand(c.Host.Host, fmt.Sprintf("cat \"%s\"", filename), username)
+func (c *HostContext) ReadFile(filename string, username string) (string, error) {
+	bytes, err := c.ReadFileBytes(filename, username)
 	if err != nil {
 		return "", err
 	}
-	return stdout, nil
+	return string(bytes), nil
 }
 
-func (c HostContext) ReadFileBytes(filename string, username string) ([]byte, error) {
+func (c *HostContext) ReadFileBytes(filename string, username string) ([]byte, error) {
+	// Note: username is currently ignored for SFTP operations, as the connection
+	// uses the user established during InitializeHostContext.
 	if c.Host.IsLocal {
 		return runtime.ReadLocalFileBytes(filename)
 	}
-	return runtime.ReadRemoteFileBytes(c.Host.Host, filename, username)
+	if c.sshClient == nil {
+		return nil, fmt.Errorf("ssh client not initialized for remote host %s", c.Host.Host)
+	}
+	return runtime.ReadRemoteFileBytes(c.sshClient, filename)
 }
 
-func (c HostContext) WriteFile(filename, contents, username string) error {
+func (c *HostContext) WriteFile(filename, contents, username string) error {
+	// Note: username is currently ignored for SFTP operations
 	if c.Host.IsLocal {
 		return runtime.WriteLocalFile(filename, contents)
 	}
-	return runtime.WriteRemoteFile(c.Host.Host, filename, contents, username)
+	if c.sshClient == nil {
+		return fmt.Errorf("ssh client not initialized for remote host %s", c.Host.Host)
+	}
+	return runtime.WriteRemoteFile(c.sshClient, filename, contents)
 }
 
-func (c HostContext) Copy(src, dst string) error {
+func (c *HostContext) Copy(src, dst string) error {
 	if c.Host.IsLocal {
 		return runtime.CopyLocal(src, dst)
 	}
-	return runtime.CopyRemote(src, dst)
+	if c.sshClient == nil {
+		return fmt.Errorf("ssh client not initialized for remote host %s", c.Host.Host)
+	}
+	return runtime.CopyRemote(c.sshClient, src, dst)
 }
 
-func (c HostContext) SetFileMode(path, mode, username string) error {
+func (c *HostContext) SetFileMode(path, mode, username string) error {
+	// Note: username is currently ignored for SFTP operations
 	if c.Host.IsLocal {
 		return runtime.SetLocalFileMode(path, mode)
 	}
-	return runtime.SetRemoteFileMode(c.Host.Host, path, mode, username)
-}
-
-func (c HostContext) Stat(path, runAs string) (string, string, error) {
-	if c.Host.IsLocal {
-		return runtime.StatLocal(path, runAs)
+	if c.sshClient == nil {
+		return fmt.Errorf("ssh client not initialized for remote host %s", c.Host.Host)
 	}
-	// TODO: run specific stat flags based on arch in HostContext
-	return runtime.StatRemote(path, c.Host.Host, runAs)
+	return runtime.SetRemoteFileMode(c.sshClient, path, mode)
 }
 
-func (c HostContext) RunCommand(command, username string) (string, string, error) {
+// Stat retrieves file info. For remote hosts, it uses SFTP.
+func (c *HostContext) Stat(path, runAs string) (os.FileInfo, error) {
+	// Note: runAs is currently ignored for SFTP operations.
+	if c.Host.IsLocal {
+		// Need StatLocal in runtime (assuming it exists or adding it)
+		return runtime.StatLocal(path)
+	}
+	if c.sshClient == nil {
+		return nil, fmt.Errorf("ssh client not initialized for remote host %s", c.Host.Host)
+	}
+	return runtime.StatRemote(c.sshClient, path)
+}
+
+func (c *HostContext) RunCommand(command, username string) (string, string, error) {
 	// TODO: why was this necessary?
 	//if username == "" {
 	//	user, err := user.Current()
@@ -153,7 +216,11 @@ func (c HostContext) RunCommand(command, username string) (string, string, error
 	if c.Host.IsLocal {
 		return runtime.RunLocalCommand(command, username)
 	}
-	return runtime.RunRemoteCommand(c.Host.Host, command, username)
+	// Ensure SSH client exists for remote commands
+	if c.sshClient == nil {
+		return "", "", fmt.Errorf("ssh client not initialized for remote host %s", c.Host.Host)
+	}
+	return runtime.RunRemoteCommand(c.sshClient, command, username)
 }
 
 func EvaluateExpression(s string, additionalVars ...*sync.Map) (string, error) {
@@ -252,4 +319,14 @@ func IsExpressionTruthy(renderedExpr string) bool {
 	// Not "true" or "false", evaluate truthiness:
 	// Empty string is false, everything else is true.
 	return trimmedResult != ""
+}
+
+func (c *HostContext) Close() error {
+	if c.sshClient != nil {
+		common.DebugOutput("Closing SSH connection to %s", c.Host.Host)
+		err := c.sshClient.Close()
+		c.sshClient = nil // Ensure it's marked as closed
+		return err
+	}
+	return nil
 }
