@@ -179,6 +179,11 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 	if err != nil {
 		return fmt.Errorf("failed to get contexts for run: %w", err)
 	}
+	defer func() {
+		for _, c := range contexts {
+			c.Close()
+		}
+	}()
 
 	var hostTaskLevelHistory []map[string]chan Task
 	fmt.Printf("\nPLAY [%s] ****************************************************\n", playTarget)

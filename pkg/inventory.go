@@ -98,7 +98,6 @@ func (i Inventory) GetContextForHost(host *Host) (*HostContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer ctx.Close()
 
 	for k, v := range i.Vars {
 		ctx.Facts.Store(k, v)
