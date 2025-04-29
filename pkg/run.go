@@ -342,8 +342,6 @@ func loadLevelSequential(ctx context.Context, tasks []Task, contexts map[string]
 				return
 			default:
 				result := task.ExecuteModule(c)
-				// Register facts immediately after execution
-				registerVariableIfNeeded(result, task, c)
 				resultsCh <- result // Send result AFTER potential registration
 				// If a task fails in sequential mode, stop this level
 				if result.Error != nil {
@@ -368,8 +366,6 @@ func loadLevelParallel(ctx context.Context, tasks []Task, contexts map[string]*H
 					return
 				default:
 					result := task.ExecuteModule(c)
-					// Register facts immediately after execution
-					registerVariableIfNeeded(result, task, c)
 					resultsCh <- result // Send result AFTER potential registration
 				}
 			}(task, c)

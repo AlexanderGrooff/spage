@@ -3,12 +3,20 @@ package pkg
 import (
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	// Remove pongo2 import if no longer needed directly here
 	// "github.com/flosch/pongo2"
+)
+
+type TaskStatus string
+
+const (
+	TaskStatusSkipped TaskStatus = "skipped"
+	TaskStatusFailed  TaskStatus = "failed"
+	TaskStatusChanged TaskStatus = "changed"
+	TaskStatusOk      TaskStatus = "ok"
 )
 
 // Useful for having a single type to pass around in channels
@@ -18,6 +26,7 @@ type TaskResult struct {
 	Context  *HostContext
 	Task     Task
 	Duration time.Duration
+	Status   TaskStatus
 }
 
 // IgnoredTaskError is a custom error type used when a task fails
@@ -58,19 +67,32 @@ type Task struct {
 	RunAs        string      `yaml:"run_as"`
 	IgnoreErrors bool        `yaml:"ignore_errors,omitempty"`
 	FailedWhen   string      `yaml:"failed_when,omitempty"`
+	ChangedWhen  string      `yaml:"changed_when,omitempty"`
 }
 
 func (t Task) ToCode() string {
-	return fmt.Sprintf("pkg.Task{Name: %q, Module: %q, Register: %q, Params: %s, RunAs: %q, When: %q, IgnoreErrors: %t, FailedWhen: %q},\n",
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("pkg.Task{Name: %q, Module: %q, Register: %q, Params: %s, RunAs: %q, When: %q",
 		t.Name,
 		t.Module,
 		t.Register,
 		t.Params.ToCode(),
 		t.RunAs,
 		t.When,
-		t.IgnoreErrors,
-		t.FailedWhen,
-	)
+	))
+
+	if t.IgnoreErrors {
+		sb.WriteString(fmt.Sprintf(", IgnoreErrors: %t", t.IgnoreErrors))
+	}
+	if t.FailedWhen != "" {
+		sb.WriteString(fmt.Sprintf(", FailedWhen: %q", t.FailedWhen))
+	}
+	if t.ChangedWhen != "" {
+		sb.WriteString(fmt.Sprintf(", ChangedWhen: %q", t.ChangedWhen))
+	}
+
+	sb.WriteString("},\n")
+	return sb.String()
 }
 
 func (t Task) String() string {
@@ -108,7 +130,7 @@ func (t Task) ShouldExecute(c *HostContext) bool {
 
 func (t Task) ExecuteModule(c *HostContext) TaskResult {
 	startTime := time.Now()
-	r := TaskResult{Task: t, Context: c}
+	r := TaskResult{Task: t, Context: c, Status: TaskStatusSkipped}
 
 	if !t.ShouldExecute(c) {
 		common.LogDebug("Skipping execution of task", map[string]interface{}{
@@ -129,67 +151,12 @@ func (t Task) ExecuteModule(c *HostContext) TaskResult {
 	duration := time.Since(startTime)
 	r.Duration = duration
 
-	// --- Start FailedWhen Check ---
-	// Evaluate failed_when only if the module execution itself succeeded
-	if r.Error == nil && t.FailedWhen != "" {
-		// Convert module output to facts map for evaluation context
-		var outputFacts *sync.Map
-		if r.Output != nil {
-			if factProvider, ok := r.Output.(FactProvider); ok {
-				factsMap := factProvider.AsFacts()
-				outputFacts = MapToSyncMap(factsMap) // Convert map[string]interface{} to *sync.Map
-			} else {
-				common.LogWarn("Module output does not implement FactProvider, cannot use in failed_when", map[string]interface{}{
-					"task":   t.Name,
-					"module": t.Module,
-					"output": fmt.Sprintf("%T", r.Output),
-				})
-			}
-		}
-
-		// Evaluate the expression, merging host facts and task output facts
-		templatedFailedWhen, err := EvaluateExpression(t.FailedWhen, c.Facts, outputFacts)
-		if err != nil {
-			// Treat evaluation errors as task failure, as we can't determine the condition
-			r.Error = fmt.Errorf("error evaluating failed_when condition '%s': %w", t.FailedWhen, err)
-			common.LogWarn("Error evaluating failed_when condition, marking task as failed", map[string]interface{}{
-				"task":      t.Name,
-				"host":      c.Host.Name,
-				"condition": t.FailedWhen,
-				"error":     err.Error(),
-			})
-		} else {
-			// Evaluate truthiness of the result
-			conditionMet := IsExpressionTruthy(templatedFailedWhen)
-			trimmedResult := strings.TrimSpace(templatedFailedWhen)
-			common.DebugOutput("Evaluated failed_when condition %q -> %q: %t",
-				t.FailedWhen, trimmedResult, conditionMet)
-
-			if conditionMet {
-				// Set the error if the condition is true
-				r.Error = fmt.Errorf("failed_when condition '%s' evaluated to true (%s)", t.FailedWhen, trimmedResult)
-			}
-		}
-	}
-	// --- End FailedWhen Check ---
-
-	// Handle IgnoreErrors - this now runs *after* failed_when might have set an error
-	if r.Error != nil && t.IgnoreErrors {
-		common.LogWarn("Task failed but error ignored due to ignore_errors=true", map[string]interface{}{
-			"task":  t.Name,
-			"host":  c.Host.Name,
-			"error": r.Error.Error(),
-		})
-		// Wrap the original error in IgnoredTaskError
-		r.Error = &IgnoredTaskError{OriginalErr: r.Error}
-	}
-
-	return r
+	return handleResult(&r, t, c)
 }
 
 func (t Task) RevertModule(c *HostContext) TaskResult {
 	startTime := time.Now()
-	r := TaskResult{Task: t, Context: c}
+	r := TaskResult{Task: t, Context: c, Status: TaskStatusSkipped}
 	if !t.ShouldExecute(c) {
 		common.LogDebug("Skipping revert of task", map[string]interface{}{
 			"task": t.Name,
@@ -230,9 +197,50 @@ func (t Task) RevertModule(c *HostContext) TaskResult {
 	duration := time.Since(startTime)
 	r.Duration = duration
 
-	// Handle IgnoreErrors for revert
+	return handleResult(&r, t, c)
+}
+
+func handleResult(r *TaskResult, t Task, c *HostContext) TaskResult {
+	if r.Error != nil {
+		r.Status = TaskStatusFailed
+	} else if r.Output.Changed() {
+		r.Status = TaskStatusChanged
+	} else {
+		r.Status = TaskStatusOk
+	}
+	registerVariableIfNeeded(*r, t, c)
+
+	// Evaluate failed_when only if the module execution itself succeeded
+	if r.Error == nil && t.FailedWhen != "" {
+		// Evaluate the expression, merging host facts and task output facts
+		templatedFailedWhen, err := EvaluateExpression(t.FailedWhen, c.Facts)
+		if err != nil {
+			// TODO: should we return a list of errors?
+			// Treat evaluation errors as task failure, as we can't determine the condition
+			r.Error = fmt.Errorf("error evaluating failed_when condition '%s': %w", t.FailedWhen, err)
+			common.LogWarn("Error evaluating failed_when condition, marking task as failed", map[string]interface{}{
+				"task":      t.Name,
+				"host":      c.Host.Name,
+				"condition": t.FailedWhen,
+				"error":     err.Error(),
+			})
+		} else {
+			// Evaluate truthiness of the result
+			conditionMet := IsExpressionTruthy(templatedFailedWhen)
+			trimmedResult := strings.TrimSpace(templatedFailedWhen)
+			common.DebugOutput("Evaluated failed_when condition %q -> %q: %t",
+				t.FailedWhen, trimmedResult, conditionMet)
+
+			if conditionMet {
+				// Set the error if the condition is true
+				r.Error = fmt.Errorf("failed_when condition '%s' evaluated to true (%s)", t.FailedWhen, trimmedResult)
+				r.Status = TaskStatusFailed
+			}
+		}
+	}
+
 	if r.Error != nil && t.IgnoreErrors {
-		common.LogWarn("Revert failed but error ignored due to ignore_errors=true", map[string]interface{}{
+		common.LogWarn("Task failed but error ignored due to ignore_errors=true", map[string]interface{}{
 			"task":  t.Name,
 			"host":  c.Host.Name,
 			"error": r.Error.Error(),
@@ -241,5 +249,17 @@ func (t Task) RevertModule(c *HostContext) TaskResult {
 		r.Error = &IgnoredTaskError{OriginalErr: r.Error}
 	}
 
-	return r
+	if t.ChangedWhen != "" && r.Status != TaskStatusFailed {
+		templatedChangedWhen, err := EvaluateExpression(t.ChangedWhen, c.Facts)
+		if err != nil {
+			r.Error = fmt.Errorf("error evaluating changed_when condition '%s': %w", t.ChangedWhen, err)
+		}
+		if IsExpressionTruthy(templatedChangedWhen) {
+			r.Status = TaskStatusChanged
+		} else {
+			r.Status = TaskStatusOk
+		}
+	}
+
+	return *r
 }

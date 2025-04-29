@@ -95,6 +95,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"run_as",
 		"ignore_errors",
 		"failed_when",
+		"changed_when",
 	}
 
 	var tasks []GraphNode
@@ -142,6 +143,14 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			errored = true
 		} else {
 			task.FailedWhen = failedWhenCond
+		}
+
+		changedWhenCond, changedWhenErr := parseConditionString(block, "changed_when", task.Name)
+		if changedWhenErr != nil {
+			errors = append(errors, changedWhenErr)
+			errored = true
+		} else {
+			task.ChangedWhen = changedWhenCond
 		}
 
 		var module Module
