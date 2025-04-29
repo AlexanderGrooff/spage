@@ -209,19 +209,19 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 				"host":     hostname,
 				"task":     task.Name,
 				"duration": duration.String(),
+				"status":   result.Status,
 			}
+			recapStats[hostname][result.Status.String()]++
 
 			var ignoredErr *IgnoredTaskError
 			if errors.As(result.Error, &ignoredErr) { // Check specifically for IgnoredTaskError
 				// Task failed but error was ignored
 				originalErr := ignoredErr.Unwrap()
-				logData["status"] = "failed"
 				logData["ignored"] = true
 				logData["error"] = originalErr.Error() // Use the original error message
 				if result.Output != nil {              // Include output details if available
 					logData["output"] = result.Output.String()
 				}
-				recapStats[hostname]["failed"]++ // Count as failed in recap
 				if cfg.Logging.Format == "plain" {
 					fmt.Printf("failed: [%s] => (ignored error: %v)\n", hostname, originalErr)
 					PPrintOutput(result.Output, originalErr)
@@ -231,12 +231,10 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 				// DO NOT set errored = true here
 			} else if result.Error != nil {
 				// Genuine, non-ignored task failure
-				logData["status"] = "failed"
 				logData["error"] = result.Error.Error()
 				if result.Output != nil { // Include output details even on failure if available
 					logData["output"] = result.Output.String()
 				}
-				recapStats[hostname]["failed"]++
 				if cfg.Logging.Format == "plain" {
 					fmt.Printf("failed: [%s] => (%v)\n", hostname, result.Error)
 					PPrintOutput(result.Output, result.Error) // Print details on error for plain format
@@ -246,17 +244,14 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 				common.DebugOutput("error executing '%s': %v\n\nREVERTING\n\n", task, result.Error)
 				errored = true // This task failure triggers revert
 			} else if result.Output != nil && result.Output.Changed() {
-				logData["status"] = "changed"
 				logData["changed"] = true
 				logData["output"] = result.Output.String()
-				recapStats[hostname]["changed"]++
 				if cfg.Logging.Format == "plain" {
 					fmt.Printf("changed: [%s] => \n%v\n", hostname, result.Output)
 				} else {
 					common.LogInfo("Task changed", logData)
 				}
 			} else if result.Output == nil && result.Error == nil { // Skipped task (Error is nil, and not an IgnoredTaskError)
-				logData["status"] = "skipped"
 				recapStats[hostname]["skipped"]++
 				if cfg.Logging.Format == "plain" {
 					fmt.Printf("skipped: [%s]\n", hostname)
@@ -264,12 +259,10 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 					common.LogInfo("Task skipped", logData)
 				}
 			} else { // OK task (Error is nil, not IgnoredTaskError, and Output exists but not changed)
-				logData["status"] = "ok"
 				logData["changed"] = false
 				if result.Output != nil {
 					logData["output"] = result.Output.String()
 				}
-				recapStats[hostname]["ok"]++
 				if cfg.Logging.Format == "plain" {
 					fmt.Printf("ok: [%s]\n", hostname)
 				} else {
@@ -334,6 +327,7 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 
 func loadLevelSequential(ctx context.Context, tasks []Task, contexts map[string]*HostContext, resultsCh chan TaskResult, errCh chan error) {
 	defer close(resultsCh)
+	var ignoredErr *IgnoredTaskError
 	for _, task := range tasks {
 		for _, c := range contexts {
 			select {
@@ -342,9 +336,9 @@ func loadLevelSequential(ctx context.Context, tasks []Task, contexts map[string]
 				return
 			default:
 				result := task.ExecuteModule(c)
-				resultsCh <- result // Send result AFTER potential registration
-				// If a task fails in sequential mode, stop this level
-				if result.Error != nil {
+				resultsCh <- result
+
+				if result.Error != nil && !errors.As(result.Error, &ignoredErr) {
 					return
 				}
 			}
@@ -366,7 +360,7 @@ func loadLevelParallel(ctx context.Context, tasks []Task, contexts map[string]*H
 					return
 				default:
 					result := task.ExecuteModule(c)
-					resultsCh <- result // Send result AFTER potential registration
+					resultsCh <- result
 				}
 			}(task, c)
 		}

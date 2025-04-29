@@ -19,6 +19,10 @@ const (
 	TaskStatusOk      TaskStatus = "ok"
 )
 
+func (s TaskStatus) String() string {
+	return string(s)
+}
+
 // Useful for having a single type to pass around in channels
 type TaskResult struct {
 	Output   ModuleOutput
