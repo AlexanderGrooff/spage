@@ -28,7 +28,6 @@ type StatInput struct {
 	GetAttributes     bool   `yaml:"get_attributes,omitempty"`
 	GetChecksum       bool   `yaml:"get_checksum,omitempty"`
 	GetMime           bool   `yaml:"get_mime,omitempty"`
-	pkg.ModuleInput
 }
 
 type StatOutput struct {
@@ -102,6 +101,10 @@ func (i StatInput) Validate() error {
 	return nil
 }
 
+func (i StatInput) HasRevert() bool {
+	return false
+}
+
 func (o StatOutput) String() string {
 	if !o.Stat.Exists {
 		return fmt.Sprintf("path %s does not exist", o.Stat.Path)
@@ -147,9 +150,9 @@ func (m StatModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 		checksumAlgo = "sha1"
 	}
 
-	// TODO: Handle p.Follow. Currently, c.Stat uses Lstat (doesn't follow links) for remote
-	// and os.Stat (follows links) for local. We might need a flag in c.Stat or separate methods.
-	fileInfo, err := c.Stat(p.Path, runAs)
+	// Pass the follow parameter from the input to c.Stat
+	// Note: runAs is currently ignored by c.Stat
+	fileInfo, err := c.Stat(p.Path, p.Follow)
 
 	// Handle errors from c.Stat
 	if err != nil {
@@ -177,6 +180,10 @@ func (m StatModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 	out.Stat.IsSock = mode&os.ModeSocket != 0
 	out.Stat.IsChr = mode&os.ModeCharDevice != 0
 	out.Stat.IsBlk = mode&os.ModeDevice != 0 && mode&os.ModeCharDevice == 0 // Is device but not char
+
+	common.DebugOutput("Stat: File type flags: %v", out.Stat)
+	common.DebugOutput("Stat: File info: %v", fileInfo)
+	common.DebugOutput("Stat: File mode: %v", mode)
 
 	// Access OS-specific stat data (syscall.Stat_t)
 	sysStat, ok := fileInfo.Sys().(*syscall.Stat_t)

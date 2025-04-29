@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"fmt"
 	"os"
 
 	"golang.org/x/crypto/ssh"
@@ -80,17 +79,19 @@ var statMacOSFlags = `%Lp
 //		}
 //		return stdout, stderr, err
 //	}
-func StatLocal(path string) (os.FileInfo, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("file/dir not found: %s: %w", path, err)
-		}
-		return nil, fmt.Errorf("failed to stat local path %s: %w", path, err)
+
+// StatLocal retrieves local file information. If follow is true, it follows symlinks (os.Stat).
+// If follow is false, it stats the link itself (os.Lstat).
+func StatLocal(path string, follow bool) (os.FileInfo, error) {
+	if follow {
+		return os.Stat(path)
+	} else {
+		return os.Lstat(path)
 	}
-	return info, nil
 }
 
+// StatRemote retrieves remote file information using SFTP Lstat (does not follow symlinks).
+// TODO: Implement follow=true for remote if needed (e.g., sftpClient.Stat or ReadLink+Stat)
 func StatRemote(sshClient *ssh.Client, path string) (os.FileInfo, error) {
 	sftpClient, err := getSftpClient(sshClient)
 	if err != nil {
@@ -98,13 +99,5 @@ func StatRemote(sshClient *ssh.Client, path string) (os.FileInfo, error) {
 	}
 	defer sftpClient.Close()
 
-	info, err := sftpClient.Lstat(path) // Use Lstat to handle symlinks correctly
-	if err != nil {
-		// Keep os.IsNotExist check
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("file/dir not found: %s on host %s", path, sshClient.RemoteAddr())
-		}
-		return nil, fmt.Errorf("failed to stat remote path %s on %s: %w", path, sshClient.RemoteAddr(), err)
-	}
-	return info, nil
+	return sftpClient.Lstat(path) // Use Lstat to handle symlinks correctly
 }

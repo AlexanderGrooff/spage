@@ -191,16 +191,25 @@ func (c *HostContext) SetFileMode(path, mode, username string) error {
 	return runtime.SetRemoteFileMode(c.sshClient, path, mode)
 }
 
-// Stat retrieves file info. For remote hosts, it uses SFTP.
-func (c *HostContext) Stat(path, runAs string) (os.FileInfo, error) {
-	// Note: runAs is currently ignored for SFTP operations.
+// Stat retrieves file info. For remote hosts, it uses SFTP Lstat (no follow).
+// For local hosts, it uses os.Stat (follow=true) or os.Lstat (follow=false).
+func (c *HostContext) Stat(path string, follow bool) (os.FileInfo, error) {
+	// Note: runAs/username associated with the HostContext is currently ignored for SFTP/local stat operations.
 	if c.Host.IsLocal {
-		// Need StatLocal in runtime (assuming it exists or adding it)
-		return runtime.StatLocal(path)
+		return runtime.StatLocal(path, follow)
 	}
+
+	// Remote host logic
 	if c.sshClient == nil {
 		return nil, fmt.Errorf("ssh client not initialized for remote host %s", c.Host.Host)
 	}
+	if follow {
+		// TODO: Implement following links for remote SFTP stat if needed.
+		// This could involve sftp.ReadLink + sftp.Stat or just sftp.Stat
+		common.LogWarn("Following links is not currently implemented for remote stat, using Lstat instead.", map[string]interface{}{"path": path, "host": c.Host.Host})
+		// Fallthrough to Lstat for now
+	}
+	// SFTP StatRemote currently always uses Lstat (no follow)
 	return runtime.StatRemote(c.sshClient, path)
 }
 
