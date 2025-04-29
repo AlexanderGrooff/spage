@@ -87,8 +87,13 @@ func RunRemoteCommand(host, command, username string) (string, string, error) {
 	var stdout, stderr bytes.Buffer
 	session.Stdout = &stdout
 	session.Stderr = &stderr
-	cmdAsUser := fmt.Sprintf("sudo -u %s bash -c %q", username, command)
-	if err := session.Run(cmdAsUser); err != nil {
+	var cmdToRun string
+	if username != "" {
+		cmdToRun = fmt.Sprintf("sudo -u %s sh -c %q", username, command)
+	} else {
+		cmdToRun = fmt.Sprintf("sh -c %q", command)
+	}
+	if err := session.Run(cmdToRun); err != nil {
 		return stdout.String(), stderr.String(), fmt.Errorf("failed to run '%v' on host %s: %w", command, host, err)
 	}
 	return stdout.String(), stderr.String(), nil

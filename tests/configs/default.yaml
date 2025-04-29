@@ -1,4 +1,4 @@
 execution_mode: parallel
 logging:
   format: plain
-  level: debug
+  level: info

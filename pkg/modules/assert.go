@@ -125,7 +125,6 @@ func (m AssertModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs 
 		}
 	}
 
-	common.DebugOutput("All assertions passed")
 	return output, nil
 }
 

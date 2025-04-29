@@ -274,7 +274,7 @@ func handleResult(r *TaskResult, t Task, c *HostContext) TaskResult {
 			r.Changed = false
 		}
 	}
-
+	
 	// failed_when/changed_when might depend on results of this task, so we need to evaluate them after registration
 	// However, we should update the changed/failed status after evaluating these conditions.
 	setTaskStatus(*r, t, c)

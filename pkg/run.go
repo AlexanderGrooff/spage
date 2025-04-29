@@ -21,16 +21,6 @@ func registerVariableIfNeeded(result TaskResult, task Task, c *HostContext) {
 	if task.Register == "" {
 		return
 	}
-	common.LogDebug("Found variable to register under %s: %v", task.Register, map[string]interface{}{
-		"task":     task.Name,
-		"host":     c.Host.Name,
-		"variable": task.Register,
-		"status":   result.Status,
-		"failed":   result.Failed,
-		"changed":  result.Changed,
-		"output":   result.Output,
-		"error":    result.Error,
-	})
 
 	var valueToStore interface{}
 	var ignoredErr *IgnoredTaskError
