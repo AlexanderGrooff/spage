@@ -31,6 +31,8 @@ type TaskResult struct {
 	Task     Task
 	Duration time.Duration
 	Status   TaskStatus
+	Failed   bool
+	Changed  bool
 }
 
 // IgnoredTaskError is a custom error type used when a task fails
@@ -207,8 +209,10 @@ func (t Task) RevertModule(c *HostContext) TaskResult {
 func handleResult(r *TaskResult, t Task, c *HostContext) TaskResult {
 	if r.Error != nil {
 		r.Status = TaskStatusFailed
+		r.Failed = true
 	} else if r.Output.Changed() {
 		r.Status = TaskStatusChanged
+		r.Changed = true
 	} else {
 		r.Status = TaskStatusOk
 	}
@@ -228,6 +232,7 @@ func handleResult(r *TaskResult, t Task, c *HostContext) TaskResult {
 				"condition": t.FailedWhen,
 				"error":     err.Error(),
 			})
+			r.Failed = true
 		} else {
 			// Evaluate truthiness of the result
 			conditionMet := IsExpressionTruthy(templatedFailedWhen)
@@ -239,6 +244,7 @@ func handleResult(r *TaskResult, t Task, c *HostContext) TaskResult {
 				// Set the error if the condition is true
 				r.Error = fmt.Errorf("failed_when condition '%s' evaluated to true (%s)", t.FailedWhen, trimmedResult)
 				r.Status = TaskStatusFailed
+				r.Failed = true
 			}
 		}
 	}
@@ -251,19 +257,26 @@ func handleResult(r *TaskResult, t Task, c *HostContext) TaskResult {
 		})
 		// Wrap the original error in IgnoredTaskError
 		r.Error = &IgnoredTaskError{OriginalErr: r.Error}
+		r.Failed = true
 	}
 
 	if t.ChangedWhen != "" && r.Status != TaskStatusFailed {
 		templatedChangedWhen, err := EvaluateExpression(t.ChangedWhen, c.Facts)
 		if err != nil {
 			r.Error = fmt.Errorf("error evaluating changed_when condition '%s': %w", t.ChangedWhen, err)
+			r.Failed = true
 		}
 		if IsExpressionTruthy(templatedChangedWhen) {
 			r.Status = TaskStatusChanged
+			r.Changed = true
 		} else {
 			r.Status = TaskStatusOk
+			r.Changed = false
 		}
 	}
 
+	// failed_when/changed_when might depend on results of this task, so we need to evaluate them after registration
+	// However, we should update the changed/failed status after evaluating these conditions.
+	setTaskStatus(*r, t, c)
 	return *r
 }

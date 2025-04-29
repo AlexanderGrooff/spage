@@ -21,6 +21,16 @@ func registerVariableIfNeeded(result TaskResult, task Task, c *HostContext) {
 	if task.Register == "" {
 		return
 	}
+	common.LogDebug("Found variable to register under %s: %v", task.Register, map[string]interface{}{
+		"task":     task.Name,
+		"host":     c.Host.Name,
+		"variable": task.Register,
+		"status":   result.Status,
+		"failed":   result.Failed,
+		"changed":  result.Changed,
+		"output":   result.Output,
+		"error":    result.Error,
+	})
 
 	var valueToStore interface{}
 	var ignoredErr *IgnoredTaskError
@@ -45,6 +55,12 @@ func registerVariableIfNeeded(result TaskResult, task Task, c *HostContext) {
 			}
 		}
 		valueToStore = failureMap
+		common.LogDebug("Ignored error", map[string]interface{}{
+			"task":  task.Name,
+			"host":  c.Host.Name,
+			"error": originalErr.Error(),
+			"value": valueToStore,
+		})
 	} else if result.Error != nil {
 		// It's a regular, non-ignored error
 		failureMap := map[string]interface{}{ // Register failure details
@@ -84,6 +100,33 @@ func registerVariableIfNeeded(result TaskResult, task Task, c *HostContext) {
 		})
 		c.Facts.Store(task.Register, valueToStore)
 	}
+}
+
+func setTaskStatus(result TaskResult, task Task, c *HostContext) {
+	if task.Register == "" {
+		return
+	}
+	facts, _ := c.Facts.Load(task.Register)
+	if facts == nil {
+		facts = map[string]interface{}{
+			"failed":  result.Failed,
+			"changed": result.Changed,
+		}
+	} else {
+		if factsMap, ok := facts.(map[string]interface{}); ok {
+			factsMap["failed"] = result.Failed
+			factsMap["changed"] = result.Changed
+			facts = factsMap // Assign back the modified map
+		} else {
+			// Handle cases where the loaded value is not a map[string]interface{}
+			// For now, let's overwrite with a new map, but you might want different logic.
+			facts = map[string]interface{}{
+				"failed":  result.Failed,
+				"changed": result.Changed,
+			}
+		}
+	}
+	c.Facts.Store(task.Register, facts)
 }
 
 // getTasks returns all tasks from a GraphNode, handling both TaskList and Graph types

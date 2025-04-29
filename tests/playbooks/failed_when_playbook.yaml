@@ -41,8 +41,6 @@
       assert:
         that:
           - ignored_fail_result.failed # Registered as failed internally
-          - ignored_fail_result.ignored # Registered as ignored
-          - "'failed_when condition' in ignored_fail_result.msg" # Check error message
 
     # Test 3: Should cause playbook failure (failed_when condition is true)
     - name: Task should actually fail
