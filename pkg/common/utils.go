@@ -23,6 +23,16 @@ func SyncMapToMap(m *sync.Map) map[string]interface{} {
 	return regularMap
 }
 
+func RemoveFromSlice(s []string, item string) []string {
+	for i, v := range s {
+		if v == item {
+			s[i] = s[len(s)-1]
+			return s[:len(s)-1]
+		}
+	}
+	return s
+}
+
 // InterfaceToSlice attempts to convert an interface{} to a []interface{}.
 // It handles cases where the underlying type is already []interface{}
 // or a slice of a specific type (e.g., []string, []int).

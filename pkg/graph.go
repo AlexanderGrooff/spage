@@ -207,6 +207,15 @@ func flattenNodes(nodes []GraphNode) []TaskNode {
 	return flatTasks
 }
 
+func GetVariableUsage(task TaskNode) []string {
+	varsUsage := task.Params.GetVariableUsage()
+	if task.Loop != nil {
+		// TODO: change name of the variable if loopcontrol is used
+		varsUsage = common.RemoveFromSlice(varsUsage, "item")
+	}
+	return varsUsage
+}
+
 func NewGraph(nodes []GraphNode) (Graph, error) {
 	common.LogDebug("NewGraph received nodes.", map[string]interface{}{"count": len(nodes)}) // Log input count
 	g := Graph{RequiredInputs: []string{}}
@@ -237,7 +246,7 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 			common.DebugOutput("Task %q has no params, skipping dependency analysis for params", n.Name)
 			// Continue processing other dependencies like before/after
 		} else {
-			dependsOnVariables[n.Name] = n.Params.GetVariableUsage()
+			dependsOnVariables[n.Name] = GetVariableUsage(n)
 		}
 
 		if n.Before != "" {
