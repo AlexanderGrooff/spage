@@ -5,16 +5,16 @@
     - name: Create a temporary file for stat test
       copy:
         content: "This is a test file for the stat module."
-        dest: /tmp/spage_stat_test_file.txt
+        dest: /tmp/spage/spage_stat_test_file.txt
         mode: '0644'
 
     - name: Create a symlink for stat test
       shell:
-        cmd: ln -sf /tmp/spage_stat_test_file.txt /tmp/spage_stat_test_link.txt
+        cmd: ln -sf /tmp/spage/spage_stat_test_file.txt /tmp/spage/spage_stat_test_link.txt
 
     - name: Stat the regular file
       stat:
-        path: /tmp/spage_stat_test_file.txt
+        path: /tmp/spage/spage_stat_test_file.txt
         get_checksum: true
         get_mime: true
         get_attributes: true # May fail on non-Linux, but let's test
@@ -22,7 +22,7 @@
 
     - name: Stat the symlink (follow=false)
       stat:
-        path: /tmp/spage_stat_test_link.txt
+        path: /tmp/spage/spage_stat_test_link.txt
         follow: false
       register: stat_result_link_nofollow
 

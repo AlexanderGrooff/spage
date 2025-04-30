@@ -1,10 +1,10 @@
 - name: Task Before Role Include
   shell:
-    execute: echo "Before role" > /tmp/include_role_before.txt
+    execute: echo "Before role" > /tmp/spage/include_role_before.txt
 
 - include_role:
     name: test_role
 
 - name: Task After Role Include
   shell:
-    execute: echo "After role" > /tmp/include_role_after.txt 
+    execute: echo "After role" > /tmp/spage/include_role_after.txt 

@@ -5,23 +5,23 @@
     - name: Create a file to slurp
       copy:
         content: "Hello Spage!\nThis is a test file.\n"
-        dest: /tmp/spage_slurp_test.txt
+        dest: /tmp/spage/spage_slurp_test.txt
 
     - name: Slurp the file
       slurp:
-        src: /tmp/spage_slurp_test.txt
+        src: /tmp/spage/spage_slurp_test.txt
       register: slurped_file
 
     - name: Verify slurped content
       assert:
         that:
           - slurped_file.content == "SGVsbG8gU3BhZ2UhClRoaXMgaXMgYSB0ZXN0IGZpbGUuCg=="
-          - slurped_file.source == "/tmp/spage_slurp_test.txt"
+          - slurped_file.source == "/tmp/spage/spage_slurp_test.txt"
           - slurped_file.encoding == "base64"
 
     - name: Try to slurp a non-existent file (should fail)
       slurp:
-        src: /tmp/non_existent_spage_file.txt
+        src: /tmp/spage/non_existent_spage_file.txt
       register: slurp_fail_result
       ignore_errors: true # We expect this to fail
 

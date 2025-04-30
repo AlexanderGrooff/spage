@@ -1,9 +1,9 @@
 - name: Task Before Import
   shell:
-    execute: echo "Before import_tasks" > /tmp/import_tasks_before.txt
+    execute: echo "Before import_tasks" > /tmp/spage/import_tasks_before.txt
 
 - import_tasks: imported_tasks.yaml
 
 - name: Task After Import
   shell:
-    execute: echo "After import_tasks" > /tmp/import_tasks_after.txt 
+    execute: echo "After import_tasks" > /tmp/spage/import_tasks_after.txt 

@@ -1,24 +1,24 @@
 ---
 - name: Create test directory
   shell:
-    execute: mkdir -p /tmp/spage_test
+    execute: mkdir -p /tmp/spage/spage_test
 
 - name: Create test file in directory
   shell:
-    execute: touch /tmp/spage_test/testfile.txt
+    execute: touch /tmp/spage/spage_test/testfile.txt
   after: Create test directory
 
 - name: Write some content to test file
   shell:
-    execute: echo "Shell test successful" > /tmp/spage_test/testfile.txt
+    execute: echo "Shell test successful" > /tmp/spage/spage_test/testfile.txt
   after: Create test file in directory
 
 - name: Short form shell
-  shell: echo "Short form" > /tmp/spage_test/testfile.txt
+  shell: echo "Short form" > /tmp/spage/spage_test/testfile.txt
   after: Create test file in directory
 
 - name: Short form shell with block
   shell: |
-    echo "Short form with block" > /tmp/spage_test/testfile.txt
-    echo "Short form with block" > /tmp/spage_test/testfile2.txt
+    echo "Short form with block" > /tmp/spage/spage_test/testfile.txt
+    echo "Short form with block" > /tmp/spage/spage_test/testfile2.txt
   after: Create test file in directory

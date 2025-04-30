@@ -1,13 +1,13 @@
 ---
 - name: Step 1 - Create first file
   shell:
-    execute: echo "Step 1 complete" > /tmp/step1.txt
+    execute: echo "Step 1 complete" > /tmp/spage/step1.txt
 
 - name: Step 2 - Create second file (depends on step 1)
   shell:
     execute: |
-      if [ -f /tmp/step1.txt ]; then
-        echo 'Step 2 complete' > /tmp/step2.txt
+      if [ -f /tmp/spage/step1.txt ]; then
+        echo 'Step 2 complete' > /tmp/spage/step2.txt
       else
         exit 1
       fi
@@ -16,7 +16,7 @@
 - name: Step 3 - Verify both files exist
   shell:
     execute: |
-      if [ -f /tmp/step1.txt ] && [ -f /tmp/step2.txt ]; then
+      if [ -f /tmp/spage/step1.txt ] && [ -f /tmp/spage/step2.txt ]; then
         echo "All steps completed successfully"
       else
         exit 1

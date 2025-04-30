@@ -61,10 +61,11 @@ func RunRemoteCommand(client *ssh.Client, command, username string) (string, str
 	session.Stderr = &stderr
 	var cmdToRun string
 	if username != "" {
-		// Use sh -c for compatibility, quoting handled by Sprintf %q
-		cmdToRun = fmt.Sprintf("sudo -u %s sh -c %q", username, command)
+		// Use sudo with sh -c, single-quoting the command to preserve its structure
+		cmdToRun = fmt.Sprintf("sudo -u %s sh -c '%s'", username, command)
 	} else {
-		cmdToRun = fmt.Sprintf("sh -c %q", command)
+		// Pass the command directly to session.Run without sh -c wrapper
+		cmdToRun = command
 	}
 
 	common.DebugOutput("Running remote command on %s: %s", client.RemoteAddr(), cmdToRun)

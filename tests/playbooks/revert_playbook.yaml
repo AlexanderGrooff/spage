@@ -4,4 +4,4 @@
 - name: Fail intentionally to trigger revert
   shell:
     execute: "exit 1" 
-    revert: "echo reverted > /tmp/revert_test.txt"
+    revert: "echo reverted > /tmp/spage/revert_test.txt"

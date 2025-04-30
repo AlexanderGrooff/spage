@@ -2,7 +2,7 @@
 - name: test absolute dst
   template:
     src: test.conf.j2
-    dest: /tmp/test.conf
+    dest: /tmp/spage/test.conf
 
 - name: test relative dst
   template:
@@ -12,12 +12,12 @@
 - name: test template with mode
   template:
     src: test.conf.j2
-    dest: /tmp/test_mode.conf
+    dest: /tmp/spage/test_mode.conf
     mode: "0600"
 
 - name: stat file created with mode
   stat:
-    path: /tmp/test_mode.conf
+    path: /tmp/spage/test_mode.conf
   register: mode_stat
   after: test template with mode
 

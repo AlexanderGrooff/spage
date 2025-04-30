@@ -4,21 +4,21 @@
     test_condition_variable: true
 
 - name: Task that should run
-  shell: echo "This task ran because the condition was true" > /tmp/spage_when_test_should_run.txt
+  shell: echo "This task ran because the condition was true" > /tmp/spage/spage_when_test_should_run.txt
   when: test_condition_variable
 
 - name: Task that should be skipped
-  shell: echo "This task should not run" > /tmp/spage_when_test_should_skip.txt
+  shell: echo "This task should not run" > /tmp/spage/spage_when_test_should_skip.txt
   when: not test_condition_variable
 
 - name: Task with condition based on non-existent var (should skip)
-  shell: echo "This task uses a non-existent var" > /tmp/spage_when_test_nonexistent.txt
+  shell: echo "This task uses a non-existent var" > /tmp/spage/spage_when_test_nonexistent.txt
   when: non_existent_variable is defined and non_existent_variable
 
 - name: Task with simple true condition
-  shell: echo "This task has a simple true condition" > /tmp/spage_when_test_simple_true.txt
+  shell: echo "This task has a simple true condition" > /tmp/spage/spage_when_test_simple_true.txt
   when: true
 
 - name: Task with simple false condition
-  shell: echo "This task has a simple false condition" > /tmp/spage_when_test_simple_false.txt
+  shell: echo "This task has a simple false condition" > /tmp/spage/spage_when_test_simple_false.txt
   when: false 

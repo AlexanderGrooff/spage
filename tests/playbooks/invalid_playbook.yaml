@@ -8,6 +8,6 @@
 
 - name: Task with invalid syntax
   file:
-    path: /tmp/test.txt
+    path: /tmp/spage/test.txt
     state: invalid_state
     mode: "invalid_mode" 

@@ -1,3 +1,3 @@
 - name: Task from Included Playbook
   shell:
-    execute: echo "This task comes from the included file" > /tmp/include_test_included.txt
+    execute: echo "This task comes from the included file" > /tmp/spage/include_test_included.txt

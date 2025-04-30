@@ -6,21 +6,21 @@
     - name: Create file for success test
       copy:
         content: "success content here"
-        dest: /tmp/failed_when_succeed.txt
+        dest: /tmp/spage/failed_when_succeed.txt
 
     - name: Create file for ignore test
       copy:
         content: "ignore this failure content"
-        dest: /tmp/failed_when_ignore.txt
+        dest: /tmp/spage/failed_when_ignore.txt
 
     - name: Create file for actual failure test
       copy:
         content: "actual failure content present"
-        dest: /tmp/failed_when_fail.txt
+        dest: /tmp/spage/failed_when_fail.txt
 
     # Test 1: Should succeed (failed_when condition is false)
     - name: Task should succeed
-      shell: cat /tmp/failed_when_succeed.txt
+      shell: cat /tmp/spage/failed_when_succeed.txt
       register: succeed_task_result
       failed_when: "'nonexistent pattern' in succeed_task_result.stdout"
 
@@ -32,7 +32,7 @@
 
     # Test 2: Should 'fail' based on condition, but be ignored
     - name: Task should be ignored failure
-      shell: cat /tmp/failed_when_ignore.txt
+      shell: cat /tmp/spage/failed_when_ignore.txt
       register: ignored_fail_result
       failed_when: "'ignore this failure content' in ignored_fail_result.stdout" # This condition is TRUE
       ignore_errors: true
@@ -44,11 +44,11 @@
 
     # Test 3: Should cause playbook failure (failed_when condition is true)
     - name: Task should actually fail
-      shell: cat /tmp/failed_when_fail.txt
+      shell: cat /tmp/spage/failed_when_fail.txt
       register: actual_fail_result
       failed_when: "'actual failure content present' in actual_fail_result.stdout" # This condition is TRUE
       # ignore_errors defaults to false
 
     # This task should NOT run because the previous task failed the playbook
     - name: Task after actual fail (Should NOT run)
-      shell: echo "This should not have executed" > /tmp/failed_when_after_actual_fail.txt 
+      shell: echo "This should not have executed" > /tmp/spage/failed_when_after_actual_fail.txt 

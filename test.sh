@@ -57,40 +57,7 @@ cleanup() {
     if [ -z "$SPAGE_INVENTORY" ]; then
       rm -f ./test.conf
     fi
-    rm -f /tmp/test.conf
-    rm -f /tmp/spage_test_file.txt
-    rm -f /tmp/spage_test_file2.txt
-    rm -rf /tmp/spage_test
-    rm -f /tmp/step1.txt
-    rm -f /tmp/step2.txt
-    rm -f /tmp/revert_test.txt
-    rm -f /tmp/revert_test.conf
-    rm -rf /tmp/revert_test_dir
-    rm -f generated_tasks
-    rm -f /tmp/exec_mode_test.txt
-    rm -f /tmp/include_test_main_start.txt
-    rm -f /tmp/include_test_included.txt
-    rm -f /tmp/include_test_main_end.txt
-    rm -f /tmp/include_role_before.txt
-    rm -f /tmp/include_role_task.txt
-    rm -f /tmp/include_role_after.txt
-    rm -f /tmp/import_tasks_before.txt
-    rm -f /tmp/import_tasks_imported.txt
-    rm -f /tmp/import_tasks_after.txt
-    rm -f /tmp/import_role_before.txt
-    rm -f /tmp/import_role_after.txt
-    rm -f /tmp/root_playbook_tasks.txt
-    rm -f /tmp/root_playbook_role.txt
-    rm -f /tmp/spage_stat_test_file.txt /tmp/spage_stat_test_link.txt
-    rm -f /tmp/spage_file_test_dest.txt
-    rm -rf /tmp/spage_file_test_name.txt
-    rm -f /tmp/spage_file_test_link_dest.txt
-    # Cleanup for command module tests
-    rm -f /tmp/spage_command_test_file1.txt
-    rm -f /tmp/spage_command_test_file2.txt
-    rm -f /tmp/spage_command_test_no_expand.txt
-    rm -rf /tmp/spage_command_dir
-    rm -f /tmp/spage_command_revert.txt
+    rm -rf /tmp/spage
     # Cleanup for apt module tests (requires sudo, only if run locally)
     if [ -z "$SPAGE_INVENTORY" ]; then
       if command -v cowsay &> /dev/null; then
@@ -101,20 +68,16 @@ cleanup() {
           echo "Removing sl package installed during local test..."
           sudo apt-get remove -y --purge sl || echo "Failed to remove sl locally, may require manual cleanup."
       fi
+    else
+      if ssh theta "command -v cowsay &> /dev/null"; then
+        echo "Removing cowsay package installed during remote test..."
+        ssh theta "sudo apt-get remove -y --purge cowsay || echo 'Failed to remove cowsay remotely, may require manual cleanup.'"
+      fi
+      if ssh theta "command -v sl &> /dev/null"; then
+        echo "Removing sl package installed during remote test..."
+        ssh theta "sudo apt-get remove -y --purge sl || echo 'Failed to remove sl remotely, may require manual cleanup.'"
+      fi
     fi
-    # Cleanup for when module tests
-    rm -f /tmp/spage_when_test_should_run.txt
-    rm -f /tmp/spage_when_test_should_skip.txt
-    rm -f /tmp/spage_when_test_nonexistent.txt
-    rm -f /tmp/spage_when_test_simple_true.txt
-    rm -f /tmp/spage_when_test_simple_false.txt
-    # Cleanup for slurp module test
-    rm -f /tmp/spage_slurp_test.txt
-    # Cleanup for failed_when test
-    rm -f /tmp/failed_when_succeed.txt
-    rm -f /tmp/failed_when_ignore.txt
-    rm -f /tmp/failed_when_fail.txt
-    rm -f /tmp/failed_when_after_actual_fail.txt
     echo "Cleanup complete"
 }
 
@@ -139,8 +102,8 @@ if ! check_target "[ -f ./test.conf ]"; then
     echo "Template test: ./test.conf was not found on target"
     exit 1
 fi
-if ! check_target "[ -f /tmp/test.conf ]"; then
-    echo "Template test: /tmp/test.conf was not found on target"
+if ! check_target "[ -f /tmp/spage/test.conf ]"; then
+    echo "Template test: /tmp/spage/test.conf was not found on target"
     exit 1
 fi
 
@@ -151,8 +114,8 @@ go build -o generated_tasks generated_tasks.go
 ./generated_tasks $INVENTORY_ARG -config tests/configs/default.yaml
 
 # Check if the test directory was created on the target
-if ! check_target "[ -d /tmp/spage_test ]"; then
-    echo "Shell test: test directory /tmp/spage_test was not found on target"
+if ! check_target "[ -d /tmp/spage/spage_test ]"; then
+    echo "Shell test: test directory /tmp/spage/spage_test was not found on target"
     exit 1
 fi
 
@@ -163,11 +126,11 @@ go build -o generated_tasks generated_tasks.go
 ./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml
 
 # Check if test file exists on the target
-if ! check_target "[ -f /tmp/spage_test_file.txt ]"; then
-    echo "File operations test: test file /tmp/spage_test_file.txt was not found on target"
+if ! check_target "[ -f /tmp/spage/spage_test_file.txt ]"; then
+    echo "File operations test: test file /tmp/spage/spage_test_file.txt was not found on target"
     exit 1
 fi
-# Potentially add content check via check_target "grep 'content' /tmp/spage_test_file.txt"
+# Potentially add content check via check_target "grep 'content' /tmp/spage/spage_test_file.txt"
 
 echo "Running copy test..."
 go run main.go generate -p $TESTS_DIR/playbooks/copy_playbook.yaml -o generated_tasks.go
@@ -188,12 +151,12 @@ go build -o generated_tasks generated_tasks.go
 ./generated_tasks $INVENTORY_ARG -config tests/configs/default.yaml
 
 # Check multi-step results on the target
-if ! check_target "[ -f /tmp/step1.txt ]"; then
-    echo "Multi-step test: /tmp/step1.txt was not found on target"
+if ! check_target "[ -f /tmp/spage/step1.txt ]"; then
+    echo "Multi-step test: /tmp/spage/step1.txt was not found on target"
     exit 1
 fi
-if ! check_target "[ -f /tmp/step2.txt ]"; then
-    echo "Multi-step test: /tmp/step2.txt was not found on target"
+if ! check_target "[ -f /tmp/spage/step2.txt ]"; then
+    echo "Multi-step test: /tmp/spage/step2.txt was not found on target"
     exit 1
 fi
 
@@ -201,10 +164,10 @@ fi
 echo "Running revert functionality test..."
 
 # Create initial state
-echo "initial content" > /tmp/revert_test.txt
-chmod 644 /tmp/revert_test.txt
-mkdir -p /tmp/revert_test_dir
-echo "initial template" > /tmp/revert_test.conf
+echo "initial content" > /tmp/spage/revert_test.txt
+chmod 644 /tmp/spage/revert_test.txt
+mkdir -p /tmp/spage/revert_test_dir
+echo "initial template" > /tmp/spage/revert_test.conf
 
 # Run revert test playbook
 go run main.go generate -p $TESTS_DIR/playbooks/revert_playbook.yaml -o generated_tasks.go
@@ -224,10 +187,10 @@ fi
 
 # Verify file was reverted on the target
 # Check existence and content in one command
-if ! check_target "[ -f /tmp/revert_test.txt ] && grep -q 'reverted' /tmp/revert_test.txt"; then
-    echo "Revert test failed: file /tmp/revert_test.txt missing or content incorrect on target"
+if ! check_target "[ -f /tmp/spage/revert_test.txt ] && grep -q 'reverted' /tmp/spage/revert_test.txt"; then
+    echo "Revert test failed: file /tmp/spage/revert_test.txt missing or content incorrect on target"
     # Optionally print remote file content for debugging:
-    # check_target "cat /tmp/revert_test.txt || echo 'file not found'"
+    # check_target "cat /tmp/spage/revert_test.txt || echo 'file not found'"
     exit 1
 fi
 
@@ -245,13 +208,13 @@ set -e
 if [ $PARALLEL_EXIT_CODE -eq 0 ]; then
     echo "Execution mode test failed: Parallel execution succeeded unexpectedly."
     # Optional: check if file content is wrong in case of unexpected success
-    # if [ "$(wc -l < /tmp/exec_mode_test.txt)" -ne 3 ]; then ... fi
+    # if [ "$(wc -l < /tmp/spage/exec_mode_test.txt)" -ne 3 ]; then ... fi
     exit 1
 fi
 echo "Parallel failure confirmed (Exit Code: $PARALLEL_EXIT_CODE)."
 
 # Clean up the potentially partially created file before sequential run
-rm -f /tmp/exec_mode_test.txt
+rm -f /tmp/spage/exec_mode_test.txt
 
 # Run in sequential mode - should succeed
 echo "Running in sequential mode (expecting success)..."
@@ -264,9 +227,9 @@ fi
 
 # Verify sequential results on the target
 # Check existence, line count, and specific content
-if ! check_target "[ -f /tmp/exec_mode_test.txt ] && [ $(wc -l < /tmp/exec_mode_test.txt) -eq 3 ] && grep -q 'step3' /tmp/exec_mode_test.txt"; then
+if ! check_target "[ -f /tmp/spage/exec_mode_test.txt ] && [ $(wc -l < /tmp/spage/exec_mode_test.txt) -eq 3 ] && grep -q 'step3' /tmp/spage/exec_mode_test.txt"; then
     echo "Execution mode test failed: Sequential execution did not produce the expected file content on target."
-    check_target "cat /tmp/exec_mode_test.txt || echo 'file not found'" # Print content for debugging
+    check_target "cat /tmp/spage/exec_mode_test.txt || echo 'file not found'" # Print content for debugging
     exit 1
 fi
 echo "Sequential success confirmed."
@@ -278,16 +241,16 @@ go build -o generated_tasks generated_tasks.go
 ./generated_tasks $INVENTORY_ARG -config tests/configs/default.yaml
 
 # Check if files from both main and included playbooks were created on the target
-if ! check_target "[ -f /tmp/include_test_main_start.txt ]"; then
-    echo "Include test: main start file /tmp/include_test_main_start.txt was not created on target"
+if ! check_target "[ -f /tmp/spage/include_test_main_start.txt ]"; then
+    echo "Include test: main start file /tmp/spage/include_test_main_start.txt was not created on target"
     exit 1
 fi
-if ! check_target "[ -f /tmp/include_test_included.txt ]"; then
-    echo "Include test: included file /tmp/include_test_included.txt was not created on target"
+if ! check_target "[ -f /tmp/spage/include_test_included.txt ]"; then
+    echo "Include test: included file /tmp/spage/include_test_included.txt was not created on target"
     exit 1
 fi
-if ! check_target "[ -f /tmp/include_test_main_end.txt ]"; then
-    echo "Include test: main end file /tmp/include_test_main_end.txt was not created on target"
+if ! check_target "[ -f /tmp/spage/include_test_main_end.txt ]"; then
+    echo "Include test: main end file /tmp/spage/include_test_main_end.txt was not created on target"
     exit 1
 fi
 
@@ -298,16 +261,16 @@ go build -o generated_tasks generated_tasks.go
 ./generated_tasks $INVENTORY_ARG -config tests/configs/default.yaml
 
 # Check if files from before, inside, and after the role include were created on the target
-if ! check_target "[ -f /tmp/include_role_before.txt ]"; then
-    echo "Include Role test: before file /tmp/include_role_before.txt was not created on target"
+if ! check_target "[ -f /tmp/spage/include_role_before.txt ]"; then
+    echo "Include Role test: before file /tmp/spage/include_role_before.txt was not created on target"
     exit 1
 fi
-if ! check_target "[ -f /tmp/include_role_task.txt ]"; then
-    echo "Include Role test: role task file /tmp/include_role_task.txt was not created on target"
+if ! check_target "[ -f /tmp/spage/include_role_task.txt ]"; then
+    echo "Include Role test: role task file /tmp/spage/include_role_task.txt was not created on target"
     exit 1
 fi
-if ! check_target "[ -f /tmp/include_role_after.txt ]"; then
-    echo "Include Role test: after file /tmp/include_role_after.txt was not created on target"
+if ! check_target "[ -f /tmp/spage/include_role_after.txt ]"; then
+    echo "Include Role test: after file /tmp/spage/include_role_after.txt was not created on target"
     exit 1
 fi
 
@@ -318,16 +281,16 @@ go build -o generated_tasks generated_tasks.go
 ./generated_tasks $INVENTORY_ARG -config tests/configs/default.yaml
 
 # Check if files from before, imported, and after were created on the target
-if ! check_target "[ -f /tmp/import_tasks_before.txt ]"; then
-    echo "Import Tasks test: before file /tmp/import_tasks_before.txt was not created on target"
+if ! check_target "[ -f /tmp/spage/import_tasks_before.txt ]"; then
+    echo "Import Tasks test: before file /tmp/spage/import_tasks_before.txt was not created on target"
     exit 1
 fi
-if ! check_target "[ -f /tmp/import_tasks_imported.txt ]"; then
-    echo "Import Tasks test: imported file /tmp/import_tasks_imported.txt was not created on target"
+if ! check_target "[ -f /tmp/spage/import_tasks_imported.txt ]"; then
+    echo "Import Tasks test: imported file /tmp/spage/import_tasks_imported.txt was not created on target"
     exit 1
 fi
-if ! check_target "[ -f /tmp/import_tasks_after.txt ]"; then
-    echo "Import Tasks test: after file /tmp/import_tasks_after.txt was not created on target"
+if ! check_target "[ -f /tmp/spage/import_tasks_after.txt ]"; then
+    echo "Import Tasks test: after file /tmp/spage/import_tasks_after.txt was not created on target"
     exit 1
 fi
 
@@ -338,17 +301,17 @@ go build -o generated_tasks generated_tasks.go
 ./generated_tasks $INVENTORY_ARG -config tests/configs/default.yaml
 
 # Check if files from before, inside (role task), and after the role import were created on the target
-if ! check_target "[ -f /tmp/import_role_before.txt ]"; then
-    echo "Import Role test: before file /tmp/import_role_before.txt was not created on target"
+if ! check_target "[ -f /tmp/spage/import_role_before.txt ]"; then
+    echo "Import Role test: before file /tmp/spage/import_role_before.txt was not created on target"
     exit 1
 fi
-# Role task file is /tmp/include_role_task.txt (reused from include_role test)
-if ! check_target "[ -f /tmp/include_role_task.txt ]"; then
-    echo "Import Role test: role task file /tmp/include_role_task.txt was not created on target"
+# Role task file is /tmp/spage/include_role_task.txt (reused from include_role test)
+if ! check_target "[ -f /tmp/spage/include_role_task.txt ]"; then
+    echo "Import Role test: role task file /tmp/spage/include_role_task.txt was not created on target"
     exit 1
 fi
-if ! check_target "[ -f /tmp/import_role_after.txt ]"; then
-    echo "Import Role test: after file /tmp/import_role_after.txt was not created on target"
+if ! check_target "[ -f /tmp/spage/import_role_after.txt ]"; then
+    echo "Import Role test: after file /tmp/spage/import_role_after.txt was not created on target"
     exit 1
 fi
 
@@ -382,7 +345,7 @@ cat > $TESTS_DIR/playbooks/root_tasks_playbook.yaml << EOF
   hosts: localhost
   tasks:
     - name: Create a test file with tasks
-      shell: echo "Created by root-level tasks section" > /tmp/root_playbook_tasks.txt
+      shell: echo "Created by root-level tasks section" > /tmp/spage/root_playbook_tasks.txt
 EOF
 
 go run main.go generate -p $TESTS_DIR/playbooks/root_tasks_playbook.yaml -o generated_tasks.go
@@ -390,9 +353,9 @@ go build -o generated_tasks generated_tasks.go
 ./generated_tasks $INVENTORY_ARG -config tests/configs/default.yaml
 
 # Check if the file was created and verify content on the target
-if ! check_target "[ -f /tmp/root_playbook_tasks.txt ] && grep -q 'Created by root-level tasks section' /tmp/root_playbook_tasks.txt"; then
-    echo "Root-level tasks test: file /tmp/root_playbook_tasks.txt missing or content incorrect on target"
-    check_target "cat /tmp/root_playbook_tasks.txt || echo 'file not found'"
+if ! check_target "[ -f /tmp/spage/root_playbook_tasks.txt ] && grep -q 'Created by root-level tasks section' /tmp/spage/root_playbook_tasks.txt"; then
+    echo "Root-level tasks test: file /tmp/spage/root_playbook_tasks.txt missing or content incorrect on target"
+    check_target "cat /tmp/spage/root_playbook_tasks.txt || echo 'file not found'"
     exit 1
 fi
 
@@ -404,9 +367,9 @@ go build -o generated_tasks generated_tasks.go
 ./generated_tasks $INVENTORY_ARG -config tests/configs/default.yaml
 
 # Check if the file was created and verify content on the target
-if ! check_target "[ -f /tmp/root_playbook_role.txt ] && grep -q 'Created by root-level roles section' /tmp/root_playbook_role.txt"; then
-    echo "Root-level roles test: file /tmp/root_playbook_role.txt missing or content incorrect on target"
-    check_target "cat /tmp/root_playbook_role.txt || echo 'file not found'"
+if ! check_target "[ -f /tmp/spage/root_playbook_role.txt ] && grep -q 'Created by root-level roles section' /tmp/spage/root_playbook_role.txt"; then
+    echo "Root-level roles test: file /tmp/spage/root_playbook_role.txt missing or content incorrect on target"
+    check_target "cat /tmp/spage/root_playbook_role.txt || echo 'file not found'"
     exit 1
 fi
 
@@ -414,16 +377,16 @@ fi
 echo "Running root-level playbook with both roles and tasks test..."
 
 # First remove any existing file from previous test
-rm -f /tmp/root_playbook_role.txt
+rm -f /tmp/spage/root_playbook_role.txt
 
 go run main.go generate -p $TESTS_DIR/playbooks/root_both_playbook.yaml -o generated_tasks.go
 go build -o generated_tasks generated_tasks.go
 ./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml
 
 # Check if the file was created and verify content on the target
-if ! check_target "[ -f /tmp/root_playbook_role.txt ] && grep -q 'Created by root-level roles section' /tmp/root_playbook_role.txt && grep -q 'Additional task' /tmp/root_playbook_role.txt"; then
-    echo "Root-level both test: file /tmp/root_playbook_role.txt missing or content incorrect on target"
-    check_target "cat /tmp/root_playbook_role.txt || echo 'file not found'"
+if ! check_target "[ -f /tmp/spage/root_playbook_role.txt ] && grep -q 'Created by root-level roles section' /tmp/spage/root_playbook_role.txt && grep -q 'Additional task' /tmp/spage/root_playbook_role.txt"; then
+    echo "Root-level both test: file /tmp/spage/root_playbook_role.txt missing or content incorrect on target"
+    check_target "cat /tmp/spage/root_playbook_role.txt || echo 'file not found'"
     exit 1
 fi
 
@@ -460,28 +423,28 @@ fi
 echo "Command playbook failed as expected (Exit Code: $COMMAND_EXIT_CODE), checking results..."
 
 # Check file/dir states on the target
-if ! check_target "[ -f /tmp/spage_command_test_file1.txt ]"; then
-    echo "Command test: file1 /tmp/spage_command_test_file1.txt was not created on target"
+if ! check_target "[ -f /tmp/spage/spage_command_test_file1.txt ]"; then
+    echo "Command test: file1 /tmp/spage/spage_command_test_file1.txt was not created on target"
     exit 1
 fi
-if ! check_target "[ -f /tmp/spage_command_test_file2.txt ]"; then
-    echo "Command test: file2 /tmp/spage_command_test_file2.txt was not created on target"
+if ! check_target "[ -f /tmp/spage/spage_command_test_file2.txt ]"; then
+    echo "Command test: file2 /tmp/spage/spage_command_test_file2.txt was not created on target"
     exit 1
 fi
-if ! check_target "[ -d /tmp/spage_command_dir ]"; then
-    echo "Command test: directory /tmp/spage_command_dir was not created on target"
+if ! check_target "[ -d /tmp/spage/spage_command_dir ]"; then
+    echo "Command test: directory /tmp/spage/spage_command_dir was not created on target"
     exit 1
 fi
 
 # Check for no shell expansion (file 3 created) on the target
-if ! check_target "[ -f /tmp/spage_command_test_no_expand.txt ]"; then
-    echo "Command test: no_expand file /tmp/spage_command_test_no_expand.txt was not created on target"
+if ! check_target "[ -f /tmp/spage/spage_command_test_no_expand.txt ]"; then
+    echo "Command test: no_expand file /tmp/spage/spage_command_test_no_expand.txt was not created on target"
     exit 1
 fi
 
 # Check revert worked (revert file should NOT exist) on the target
-if check_target "[ -f /tmp/spage_command_revert.txt ]"; then # Check if file exists (it shouldn't)
-    echo "Command test: revert failed, revert file /tmp/spage_command_revert.txt still exists on target"
+if check_target "[ -f /tmp/spage/spage_command_revert.txt ]"; then # Check if file exists (it shouldn't)
+    echo "Command test: revert failed, revert file /tmp/spage/spage_command_revert.txt still exists on target"
     exit 1
 fi
 
@@ -549,25 +512,25 @@ if [ $WHEN_EXIT_CODE -ne 0 ]; then
 fi
 
 # Check results on the target: Expected files should exist, skipped files should not
-if ! check_target "[ -f /tmp/spage_when_test_should_run.txt ]"; then
-    echo "When test failed: 'should_run' file /tmp/spage_when_test_should_run.txt was not created on target."
+if ! check_target "[ -f /tmp/spage/spage_when_test_should_run.txt ]"; then
+    echo "When test failed: 'should_run' file /tmp/spage/spage_when_test_should_run.txt was not created on target."
     exit 1
 fi
-if ! check_target "[ -f /tmp/spage_when_test_simple_true.txt ]"; then
-    echo "When test failed: 'simple_true' file /tmp/spage_when_test_simple_true.txt was not created on target."
+if ! check_target "[ -f /tmp/spage/spage_when_test_simple_true.txt ]"; then
+    echo "When test failed: 'simple_true' file /tmp/spage/spage_when_test_simple_true.txt was not created on target."
     exit 1
 fi
 
-if check_target "[ -f /tmp/spage_when_test_should_skip.txt ]"; then
-    echo "When test failed: 'should_skip' file /tmp/spage_when_test_should_skip.txt was created on target but should have been skipped."
+if check_target "[ -f /tmp/spage/spage_when_test_should_skip.txt ]"; then
+    echo "When test failed: 'should_skip' file /tmp/spage/spage_when_test_should_skip.txt was created on target but should have been skipped."
     exit 1
 fi
-if check_target "[ -f /tmp/spage_when_test_nonexistent.txt ]"; then
-    echo "When test failed: 'nonexistent' var file /tmp/spage_when_test_nonexistent.txt was created on target but should have been skipped."
+if check_target "[ -f /tmp/spage/spage_when_test_nonexistent.txt ]"; then
+    echo "When test failed: 'nonexistent' var file /tmp/spage/spage_when_test_nonexistent.txt was created on target but should have been skipped."
     exit 1
 fi
-if check_target "[ -f /tmp/spage_when_test_simple_false.txt ]"; then
-    echo "When test failed: 'simple_false' file /tmp/spage_when_test_simple_false.txt was created on target but should have been skipped."
+if check_target "[ -f /tmp/spage/spage_when_test_simple_false.txt ]"; then
+    echo "When test failed: 'simple_false' file /tmp/spage/spage_when_test_simple_false.txt was created on target but should have been skipped."
     exit 1
 fi
 echo "When condition test succeeded."
@@ -605,20 +568,20 @@ fi
 echo "Failed_when playbook failed as expected (Exit Code: $FAILED_WHEN_EXIT_CODE), checking results..."
 
 # Verify file states on the target
-if ! check_target "[ -f /tmp/failed_when_succeed.txt ]"; then
-    echo "Failed_when test failed: succeed file /tmp/failed_when_succeed.txt missing on target."
+if ! check_target "[ -f /tmp/spage/failed_when_succeed.txt ]"; then
+    echo "Failed_when test failed: succeed file /tmp/spage/failed_when_succeed.txt missing on target."
     exit 1
 fi
-if ! check_target "[ -f /tmp/failed_when_ignore.txt ]"; then
-    echo "Failed_when test failed: ignore file /tmp/failed_when_ignore.txt missing on target."
+if ! check_target "[ -f /tmp/spage/failed_when_ignore.txt ]"; then
+    echo "Failed_when test failed: ignore file /tmp/spage/failed_when_ignore.txt missing on target."
     exit 1
 fi
-if ! check_target "[ -f /tmp/failed_when_fail.txt ]"; then
-    echo "Failed_when test failed: fail file /tmp/failed_when_fail.txt missing on target."
+if ! check_target "[ -f /tmp/spage/failed_when_fail.txt ]"; then
+    echo "Failed_when test failed: fail file /tmp/spage/failed_when_fail.txt missing on target."
     exit 1
 fi
 # This file should *not* exist if the playbook failed correctly before this task
-if check_target "[ -f /tmp/failed_when_after_actual_fail.txt ]"; then
+if check_target "[ -f /tmp/spage/failed_when_after_actual_fail.txt ]"; then
     echo "Failed_when test failed: Task after actual failure ran unexpectedly on target."
     exit 1
 fi

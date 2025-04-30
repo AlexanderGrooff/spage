@@ -1,28 +1,28 @@
 ---
 - name: Create a test file
   file:
-    path: /tmp/spage_test_file.txt
+    path: /tmp/spage/spage_test_file.txt
     state: touch
 
 - name: Write content to file
   copy:
     content: "This is a test file created by spage\n"
-    dest: /tmp/spage_test_file.txt
+    dest: /tmp/spage/spage_test_file.txt
 
 - name: Set file permissions
   file:
-    path: /tmp/spage_test_file.txt
+    path: /tmp/spage/spage_test_file.txt
     mode: "0644"
 
 - name: Create symlink
   file:
-    src: /tmp/spage_test_file.txt
-    path: /tmp/spage_test_link.txt
+    src: /tmp/spage/spage_test_file.txt
+    path: /tmp/spage/spage_test_link.txt
     state: link
 
 - name: Stat the link
   stat:
-    path: /tmp/spage_test_link.txt
+    path: /tmp/spage/spage_test_link.txt
     follow: no
   register: link_stat
 
@@ -34,13 +34,13 @@
 
 - name: Change link target
   file:
-    src: /tmp/non_existent_target.txt # Change target
-    path: /tmp/spage_test_link.txt   # Use path instead of dest
+    src: /tmp/spage/non_existent_target.txt # Change target
+    path: /tmp/spage/spage_test_link.txt   # Use path instead of dest
     state: link
 
 - name: Stat the link again
   stat:
-    path: /tmp/spage_test_link.txt
+    path: /tmp/spage/spage_test_link.txt
     follow: no
   register: link_stat_after_change
 
@@ -53,12 +53,12 @@
 
 - name: Remove the link
   file:
-    path: /tmp/spage_test_link.txt
+    path: /tmp/spage/spage_test_link.txt
     state: absent
 
 - name: Stat the link path after removal
   stat:
-    path: /tmp/spage_test_link.txt
+    path: /tmp/spage/spage_test_link.txt
     follow: no
   register: link_stat_after_removal
 
@@ -69,17 +69,17 @@
 
 - name: Test 'dest' alias for path
   file:
-    dest: /tmp/spage_file_test_dest.txt # Using 'dest' alias
+    dest: /tmp/spage/spage_file_test_dest.txt # Using 'dest' alias
     state: touch
     mode: '0600'
 
 - name: Stat file created with 'dest' alias
   stat:
-    path: /tmp/spage_file_test_dest.txt
+    path: /tmp/spage/spage_file_test_dest.txt
   register: dest_alias_stat
 
 - name: Debug file
-  shell: stat /tmp/spage_file_test_dest.txt
+  shell: stat /tmp/spage/spage_file_test_dest.txt
 
 - name: Assert file created with 'dest' alias
   assert:
@@ -90,13 +90,13 @@
 
 - name: Test 'name' alias for path
   file:
-    name: /tmp/spage_file_test_name.txt # Using 'name' alias
+    name: /tmp/spage/spage_file_test_name.txt # Using 'name' alias
     state: directory
     mode: '0750'
 
 - name: Stat directory created with 'name' alias
   stat:
-    path: /tmp/spage_file_test_name.txt
+    path: /tmp/spage/spage_file_test_name.txt
   register: name_alias_stat
 
 - name: Assert directory created with 'name' alias
@@ -108,13 +108,13 @@
 
 - name: Test 'dest' alias for link creation
   file:
-    dest: /tmp/spage_file_test_link_dest.txt # Using 'dest' alias
-    src: /tmp/spage_test_file.txt
+    dest: /tmp/spage/spage_file_test_link_dest.txt # Using 'dest' alias
+    src: /tmp/spage/spage_test_file.txt
     state: link
 
 - name: Stat link created with 'dest' alias
   stat:
-    path: /tmp/spage_file_test_link_dest.txt
+    path: /tmp/spage/spage_file_test_link_dest.txt
     follow: no
   register: dest_link_alias_stat
 

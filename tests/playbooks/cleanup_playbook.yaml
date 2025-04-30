@@ -1,55 +1,15 @@
 ---
 - name: Clean up test artifacts
   hosts: all # This will run on localhost or remote hosts depending on inventory
-  gather_facts: false
   tasks:
     - name: Remove test files and directories
-      ansible.builtin.file:
-        path: "{{ item }}"
+      file:
+        path: "/tmp/spage"
         state: absent
-      loop:
-        # Files
-        - /tmp/test.conf
-        - /tmp/spage_test_file.txt
-        - /tmp/spage_test_file2.txt
-        - /tmp/step1.txt
-        - /tmp/step2.txt
-        - /tmp/revert_test.txt
-        - /tmp/revert_test.conf
-        - /tmp/exec_mode_test.txt
-        - /tmp/include_test_main_start.txt
-        - /tmp/include_test_included.txt
-        - /tmp/include_test_main_end.txt
-        - /tmp/include_role_before.txt
-        - /tmp/include_role_task.txt
-        - /tmp/include_role_after.txt
-        - /tmp/import_tasks_before.txt
-        - /tmp/import_tasks_imported.txt
-        - /tmp/import_tasks_after.txt
-        - /tmp/import_role_before.txt
-        - /tmp/import_role_after.txt
-        - /tmp/root_playbook_tasks.txt
-        - /tmp/root_playbook_role.txt
-        - /tmp/spage_stat_test_file.txt
-        - /tmp/spage_stat_test_link.txt
-        - /tmp/spage_file_test_dest.txt
-        - /tmp/spage_file_test_link_dest.txt
-        - /tmp/spage_command_test_file1.txt
-        - /tmp/spage_command_test_file2.txt
-        - /tmp/spage_command_test_no_expand.txt
-        - /tmp/spage_command_revert.txt
-        - /tmp/spage_when_test_should_run.txt
-        - /tmp/spage_when_test_should_skip.txt
-        - /tmp/spage_when_test_nonexistent.txt
-        - /tmp/spage_when_test_simple_true.txt
-        - /tmp/spage_when_test_simple_false.txt
-        - /tmp/spage_slurp_test.txt
-        - /tmp/failed_when_succeed.txt
-        - /tmp/failed_when_ignore.txt
-        - /tmp/failed_when_fail.txt
-        - /tmp/failed_when_after_actual_fail.txt
-        # Directories
-        - /tmp/spage_test
-        - /tmp/revert_test_dir
-        - /tmp/spage_file_test_name.txt # Assuming this was intended as a dir based on rm -rf
-        - /tmp/spage_command_dir 
+      before: Create test directory
+
+    - name: Create test directory
+      file:
+        path: "/tmp/spage"
+        state: directory
+        mode: "0755"

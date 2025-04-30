@@ -1,12 +1,12 @@
 - name: Step 1 - Write initial marker
   shell:
     # Added a sleep to mess with the execution order in parallel mode. This should make it fail
-    execute: sleep 0.5 && echo "step1" > /tmp/exec_mode_test.txt
+    execute: sleep 0.5 && echo "step1" > /tmp/spage/exec_mode_test.txt
 
 - name: Step 2 - Append if step 1 marker exists
   shell:
-    execute: grep "step1" /tmp/exec_mode_test.txt && echo "step2" >> /tmp/exec_mode_test.txt
+    execute: grep "step1" /tmp/spage/exec_mode_test.txt && echo "step2" >> /tmp/spage/exec_mode_test.txt
 
 - name: Step 3 - Append if step 2 marker exists
   shell:
-    execute: grep "step2" /tmp/exec_mode_test.txt && echo "step3" >> /tmp/exec_mode_test.txt 
+    execute: grep "step2" /tmp/spage/exec_mode_test.txt && echo "step3" >> /tmp/spage/exec_mode_test.txt 

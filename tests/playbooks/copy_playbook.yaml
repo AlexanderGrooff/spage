@@ -1,38 +1,38 @@
 ---
 - name: Create a test file
   file:
-    path: /tmp/spage_test_file.txt
+    path: /tmp/spage/spage_test_file.txt
     state: touch
 
 - name: Write content to file
   copy:
     content: "This is a test file created by spage\n"
-    dest: /tmp/spage_test_file.txt
+    dest: /tmp/spage/spage_test_file.txt
     mode: "0777"
   after: Create a test file
 
 - name: Copy from src to dst
   copy:
-    src: /tmp/spage_test_file.txt
-    dest: /tmp/spage_test_file2.txt
+    src: /tmp/spage/spage_test_file.txt
+    dest: /tmp/spage/spage_test_file2.txt
   after: Write content to file
 
 - name: Assert file contains content
   shell:
-    execute: "grep 'This is a test file created by spage' /tmp/spage_test_file.txt"
+    execute: "grep 'This is a test file created by spage' /tmp/spage/spage_test_file.txt"
   after: Write content to file
   
 - name: Assert file mode is 0777
   shell:
-    execute: "stat /tmp/spage_test_file.txt | grep '777'"
+    execute: "stat /tmp/spage/spage_test_file.txt | grep '777'"
   after: Write content to file
   
 - name: show file mode
   shell:
-    execute: "stat /tmp/spage_test_file.txt"
+    execute: "stat /tmp/spage/spage_test_file.txt"
   after: Write content to file
 
 - name: Assert copied file exists
   shell:
-    execute: "stat /tmp/spage_test_file2.txt"
+    execute: "stat /tmp/spage/spage_test_file2.txt"
   after: Copy from src to dst
