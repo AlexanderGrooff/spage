@@ -586,5 +586,11 @@ if check_target "[ -f /tmp/spage/failed_when_after_actual_fail.txt ]"; then
 fi
 echo "Failed_when test succeeded."
 
+# Test 22: Loop module test
+echo "Running loop module test..."
+go run main.go generate -p $TESTS_DIR/playbooks/loop_sequential_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml
+
 echo "All tests completed successfully!"
 

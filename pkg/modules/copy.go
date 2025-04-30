@@ -74,19 +74,19 @@ func (o CopyOutput) Changed() bool {
 	return o.Contents.Changed() || o.Mode.Changed()
 }
 
-func (m CopyModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
+func (m CopyModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
 	p := params.(CopyInput)
 
 	// Get original state
 	// Ignore error because dst is allowed to not exist
 	var err error
-	originalContents, _ := c.ReadFile(p.Dst, runAs)
+	originalContents, _ := closure.HostContext.ReadFile(p.Dst, runAs)
 	originalMode := ""
 	newContents := ""
 	// Get mode using ls command if file exists
 	if originalContents != "" {
 		// TODO: get mode with Golang if local
-		stdout, _, err := c.RunCommand(fmt.Sprintf("ls -l %s | cut -d ' ' -f 1", p.Dst), runAs)
+		stdout, _, err := closure.HostContext.RunCommand(fmt.Sprintf("ls -l %s | cut -d ' ' -f 1", p.Dst), runAs)
 		if err == nil {
 			originalMode = stdout[1:4] // Extract numeric mode from ls output
 		}
@@ -95,16 +95,16 @@ func (m CopyModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 	if p.Src != "" {
 		// TODO: copy as user
 		common.DebugOutput("Copying %s to %s", p.Src, p.Dst)
-		if err := c.Copy(p.Src, p.Dst); err != nil {
+		if err := closure.HostContext.Copy(p.Src, p.Dst); err != nil {
 			return nil, fmt.Errorf("failed to copy %s to %s: %v", p.Src, p.Dst, err)
 		}
-		if newContents, err = c.ReadFile(p.Src, runAs); err != nil {
+		if newContents, err = closure.HostContext.ReadFile(p.Src, runAs); err != nil {
 			return nil, fmt.Errorf("failed to read %s: %v", p.Src, err)
 		}
 	}
 
 	if p.Content != "" {
-		if err := c.WriteFile(p.Dst, p.Content, runAs); err != nil {
+		if err := closure.HostContext.WriteFile(p.Dst, p.Content, runAs); err != nil {
 			return nil, fmt.Errorf("failed to place contents in %s: %v", p.Dst, err)
 		}
 		newContents = p.Content
@@ -113,7 +113,7 @@ func (m CopyModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 	// Apply mode if specified
 	newMode := originalMode
 	if p.Mode != "" {
-		if err := c.SetFileMode(p.Dst, p.Mode, runAs); err != nil {
+		if err := closure.HostContext.SetFileMode(p.Dst, p.Mode, runAs); err != nil {
 			return nil, fmt.Errorf("failed to set mode %s on %s: %w", p.Mode, p.Dst, err)
 		}
 		newMode = p.Mode
@@ -131,7 +131,7 @@ func (m CopyModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 	}, nil
 }
 
-func (m CopyModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+func (m CopyModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
 	p := params.(CopyInput)
 	if previous == nil {
 		common.DebugOutput("Not reverting because previous result was nil")
@@ -144,13 +144,13 @@ func (m CopyModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous 
 	}
 
 	// Revert content
-	if err := c.WriteFile(p.Dst, prev.Contents.Before, runAs); err != nil {
+	if err := closure.HostContext.WriteFile(p.Dst, prev.Contents.Before, runAs); err != nil {
 		return nil, fmt.Errorf("failed to revert contents of %s: %v", p.Dst, err)
 	}
 
 	// Revert mode
 	if prev.Mode.Before != "" {
-		if err := c.SetFileMode(p.Dst, prev.Mode.Before, runAs); err != nil {
+		if err := closure.HostContext.SetFileMode(p.Dst, prev.Mode.Before, runAs); err != nil {
 			return nil, fmt.Errorf("failed to revert mode on %s to %s: %w", p.Dst, prev.Mode.Before, err)
 		}
 	}

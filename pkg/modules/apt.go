@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"sync"
 
 	"github.com/AlexanderGrooff/spage/pkg"
 	"github.com/AlexanderGrooff/spage/pkg/common"
@@ -279,7 +278,7 @@ func isPackageInstalled(c *pkg.HostContext, pkgName string) (bool, error) {
 }
 
 // Execute runs the apt module logic.
-func (m AptModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
+func (m AptModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
 	i := params.(*AptInput)
 	// Ensure PkgNames is populated (Validate should have been called by framework)
 	if i.PkgNames == nil {
@@ -298,7 +297,7 @@ func (m AptModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs str
 	// Let's re-template here just in case, though it's inefficient.
 	templatedPkgNames := []string{}
 	for _, name := range i.PkgNames {
-		templatedName, err := pkg.TemplateString(name, c.Facts, new(sync.Map))
+		templatedName, err := pkg.TemplateString(name, closure)
 		if err != nil {
 			return nil, fmt.Errorf("failed to template package name '%s': %w", name, err)
 		}
@@ -308,8 +307,8 @@ func (m AptModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs str
 	// --- End Templating ---
 
 	if i.UpdateCache {
-		common.LogDebug("Updating apt cache", map[string]interface{}{"host": c.Host.Name})
-		_, _, cacheChanged, err := runAptCommand(c, runAs, "update")
+		common.LogDebug("Updating apt cache", map[string]interface{}{"host": closure.HostContext.Host.Name})
+		_, _, cacheChanged, err := runAptCommand(closure.HostContext, runAs, "update")
 		if err != nil {
 			return nil, fmt.Errorf("failed to update apt cache: %w", err)
 		}
@@ -329,7 +328,7 @@ func (m AptModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs str
 	finalState := i.State // Assume this unless something specific happens
 
 	for _, pkgName := range templatedPkgNames {
-		installed, err := isPackageInstalled(c, pkgName)
+		installed, err := isPackageInstalled(closure.HostContext, pkgName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to check package status for %s: %w", pkgName, err)
 		}
@@ -341,22 +340,22 @@ func (m AptModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs str
 				// If any package needs install/upgrade, the overall state is likely 'installed' or 'upgraded'
 				// We'll refine state after the command runs
 			} else {
-				common.LogDebug("Package already present", map[string]interface{}{"host": c.Host.Name, "package": pkgName})
+				common.LogDebug("Package already present", map[string]interface{}{"host": closure.HostContext.Host.Name, "package": pkgName})
 			}
 		case "absent":
 			if installed {
 				pkgsToRemove = append(pkgsToRemove, pkgName)
 			} else {
-				common.LogDebug("Package already absent", map[string]interface{}{"host": c.Host.Name, "package": pkgName})
+				common.LogDebug("Package already absent", map[string]interface{}{"host": closure.HostContext.Host.Name, "package": pkgName})
 			}
 		}
 	}
 
 	// --- Execute apt commands if needed ---
 	if len(pkgsToInstall) > 0 {
-		common.LogDebug("Ensuring packages are present/latest", map[string]interface{}{"host": c.Host.Name, "packages": pkgsToInstall, "state": i.State})
+		common.LogDebug("Ensuring packages are present/latest", map[string]interface{}{"host": closure.HostContext.Host.Name, "packages": pkgsToInstall, "state": i.State})
 		args := append([]string{"install"}, pkgsToInstall...)
-		_, _, changed, err := runAptCommand(c, runAs, args...)
+		_, _, changed, err := runAptCommand(closure.HostContext, runAs, args...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to install/upgrade packages %v: %w", pkgsToInstall, err)
 		}
@@ -365,9 +364,9 @@ func (m AptModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs str
 	}
 
 	if len(pkgsToRemove) > 0 {
-		common.LogDebug("Ensuring packages are absent", map[string]interface{}{"host": c.Host.Name, "packages": pkgsToRemove})
+		common.LogDebug("Ensuring packages are absent", map[string]interface{}{"host": closure.HostContext.Host.Name, "packages": pkgsToRemove})
 		args := append([]string{"remove"}, pkgsToRemove...)
-		_, _, changed, err := runAptCommand(c, runAs, args...)
+		_, _, changed, err := runAptCommand(closure.HostContext, runAs, args...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to remove packages %v: %w", pkgsToRemove, err)
 		}
@@ -382,7 +381,7 @@ func (m AptModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs str
 }
 
 // Revert attempts to undo the action performed by Execute.
-func (m AptModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+func (m AptModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
 	i := params.(*AptInput)
 	// Ensure PkgNames is populated
 	if i.PkgNames == nil {
@@ -395,7 +394,7 @@ func (m AptModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous p
 	// --- Re-template package names ---
 	templatedPkgNames := []string{}
 	for _, name := range i.PkgNames {
-		templatedName, err := pkg.TemplateString(name, c.Facts, new(sync.Map))
+		templatedName, err := pkg.TemplateString(name, closure)
 		if err != nil {
 			return nil, fmt.Errorf("failed to template package name '%s' for revert: %w", name, err)
 		}
@@ -424,9 +423,9 @@ func (m AptModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous p
 	}
 
 	if len(pkgsForRevertAction) > 0 {
-		common.LogDebug("Reverting apt action", map[string]interface{}{"host": c.Host.Name, "packages": pkgsForRevertAction, "revert_action": revertAction})
+		common.LogDebug("Reverting apt action", map[string]interface{}{"host": closure.HostContext.Host.Name, "packages": pkgsForRevertAction, "revert_action": revertAction})
 		args := append([]string{revertAction}, pkgsForRevertAction...)
-		_, _, _, err := runAptCommand(c, runAs, args...)
+		_, _, _, err := runAptCommand(closure.HostContext, runAs, args...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to revert apt action (%s) for packages %v: %w", revertAction, pkgsForRevertAction, err)
 		}

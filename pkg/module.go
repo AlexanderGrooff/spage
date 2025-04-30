@@ -34,12 +34,8 @@ func (r RevertableChange[T]) Changed() bool {
 type Module interface {
 	InputType() reflect.Type
 	OutputType() reflect.Type
-	Execute(params ModuleInput, c *HostContext, runAs string) (ModuleOutput, error)
-	Revert(params ModuleInput, c *HostContext, previous ModuleOutput, runAs string) (ModuleOutput, error)
-
-	// ParameterAliases returns a map of alias names to canonical parameter names.
-	// Example: {"dest": "path", "name": "path"}
-	// Modules can return nil or an empty map if they don't have aliases.
+	Execute(params ModuleInput, c *Closure, runAs string) (ModuleOutput, error)
+	Revert(params ModuleInput, c *Closure, previous ModuleOutput, runAs string) (ModuleOutput, error)
 	ParameterAliases() map[string]string
 }
 

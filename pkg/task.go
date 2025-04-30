@@ -27,7 +27,7 @@ func (s TaskStatus) String() string {
 type TaskResult struct {
 	Output   ModuleOutput
 	Error    error // This can now be nil, a normal error, or an IgnoredTaskError
-	Context  *HostContext
+	Closure  *Closure
 	Task     Task
 	Duration time.Duration
 	Status   TaskStatus
@@ -74,6 +74,7 @@ type Task struct {
 	IgnoreErrors bool        `yaml:"ignore_errors,omitempty"`
 	FailedWhen   string      `yaml:"failed_when,omitempty"`
 	ChangedWhen  string      `yaml:"changed_when,omitempty"`
+	Loop         interface{} `yaml:"loop,omitempty"`
 }
 
 func (t Task) ToCode() string {
@@ -96,8 +97,27 @@ func (t Task) ToCode() string {
 	if t.ChangedWhen != "" {
 		sb.WriteString(fmt.Sprintf(", ChangedWhen: %q", t.ChangedWhen))
 	}
+	// Handle Loop field in ToCode: generate code for string or slice.
+	switch v := t.Loop.(type) {
+	case string:
+		if v != "" {
+			sb.WriteString(fmt.Sprintf(", Loop: %q", v))
+		}
+	case []interface{}:
+		if len(v) > 0 {
+			sb.WriteString(", Loop: []interface{}{")
+			for i, item := range v {
+				sb.WriteString(fmt.Sprintf("%#v", item)) // Use %#v for Go syntax representation
+				if i < len(v)-1 {
+					sb.WriteString(", ")
+				}
+			}
+			sb.WriteString("}")
+		}
+		// Add cases for other expected list types if necessary (e.g., []string)
+	}
 
-	sb.WriteString("},\n")
+	sb.WriteString("},") // Removed the trailing newline here as it's added later if needed
 	return sb.String()
 }
 
@@ -105,14 +125,14 @@ func (t Task) String() string {
 	return t.Name
 }
 
-func (t Task) ShouldExecute(c *HostContext) bool {
+func (t Task) ShouldExecute(closure *Closure) bool {
 	if t.When != "" {
-		templatedWhen, err := EvaluateExpression(t.When, c.Facts)
+		templatedWhen, err := EvaluateExpression(t.When, closure)
 		if err != nil {
 			// If templating fails, we cannot evaluate the condition, so skip the task
 			common.LogWarn("Error templating when condition, skipping task", map[string]interface{}{
 				"task":      t.Name,
-				"host":      c.Host.Name,
+				"host":      closure.HostContext.Host.Name,
 				"condition": t.When,
 				"error":     err.Error(),
 			})
@@ -136,9 +156,10 @@ func (t Task) ShouldExecute(c *HostContext) bool {
 
 func (t Task) ExecuteModule(c *HostContext) TaskResult {
 	startTime := time.Now()
-	r := TaskResult{Task: t, Context: c, Status: TaskStatusSkipped}
+	closure := ConstructClosure(c, t)
+	r := TaskResult{Task: t, Closure: closure, Status: TaskStatusSkipped}
 
-	if !t.ShouldExecute(c) {
+	if !t.ShouldExecute(closure) {
 		common.LogDebug("Skipping execution of task", map[string]interface{}{
 			"task": t.Name,
 			"host": c.Host.Name,
@@ -153,17 +174,19 @@ func (t Task) ExecuteModule(c *HostContext) TaskResult {
 	}
 
 	common.DebugOutput("Executing module %s with params %v and context %v", t.Module, t.Params, c)
-	r.Output, r.Error = module.Execute(t.Params, c, t.RunAs)
+	r.Output, r.Error = module.Execute(t.Params, closure, t.RunAs)
 	duration := time.Since(startTime)
 	r.Duration = duration
 
-	return handleResult(&r, t, c)
+	return handleResult(&r, t, closure)
 }
 
 func (t Task) RevertModule(c *HostContext) TaskResult {
 	startTime := time.Now()
-	r := TaskResult{Task: t, Context: c, Status: TaskStatusSkipped}
-	if !t.ShouldExecute(c) {
+	closure := ConstructClosure(c, t)
+	r := TaskResult{Task: t, Closure: closure, Status: TaskStatusSkipped}
+
+	if !t.ShouldExecute(closure) {
 		common.LogDebug("Skipping revert of task", map[string]interface{}{
 			"task": t.Name,
 			"host": c.Host.Name,
@@ -199,14 +222,14 @@ func (t Task) RevertModule(c *HostContext) TaskResult {
 	}
 
 	// Execute the revert logic of the module
-	r.Output, r.Error = module.Revert(t.Params, c, previousOutput, t.RunAs) // Pass potentially nil previousOutput
+	r.Output, r.Error = module.Revert(t.Params, closure, previousOutput, t.RunAs) // Pass potentially nil previousOutput
 	duration := time.Since(startTime)
 	r.Duration = duration
 
-	return handleResult(&r, t, c)
+	return handleResult(&r, t, closure)
 }
 
-func handleResult(r *TaskResult, t Task, c *HostContext) TaskResult {
+func handleResult(r *TaskResult, t Task, c *Closure) TaskResult {
 	if r.Error != nil {
 		r.Status = TaskStatusFailed
 		r.Failed = true
@@ -221,14 +244,14 @@ func handleResult(r *TaskResult, t Task, c *HostContext) TaskResult {
 	// Evaluate failed_when only if the module execution itself succeeded
 	if r.Error == nil && t.FailedWhen != "" {
 		// Evaluate the expression, merging host facts and task output facts
-		templatedFailedWhen, err := EvaluateExpression(t.FailedWhen, c.Facts)
+		templatedFailedWhen, err := EvaluateExpression(t.FailedWhen, c)
 		if err != nil {
 			// TODO: should we return a list of errors?
 			// Treat evaluation errors as task failure, as we can't determine the condition
 			r.Error = fmt.Errorf("error evaluating failed_when condition '%s': %w", t.FailedWhen, err)
 			common.LogWarn("Error evaluating failed_when condition, marking task as failed", map[string]interface{}{
 				"task":      t.Name,
-				"host":      c.Host.Name,
+				"host":      c.HostContext.Host.Name,
 				"condition": t.FailedWhen,
 				"error":     err.Error(),
 			})
@@ -252,7 +275,7 @@ func handleResult(r *TaskResult, t Task, c *HostContext) TaskResult {
 	if r.Error != nil && t.IgnoreErrors {
 		common.LogWarn("Task failed but error ignored due to ignore_errors=true", map[string]interface{}{
 			"task":  t.Name,
-			"host":  c.Host.Name,
+			"host":  c.HostContext.Host.Name,
 			"error": r.Error.Error(),
 		})
 		// Wrap the original error in IgnoredTaskError
@@ -261,7 +284,7 @@ func handleResult(r *TaskResult, t Task, c *HostContext) TaskResult {
 	}
 
 	if t.ChangedWhen != "" && r.Status != TaskStatusFailed {
-		templatedChangedWhen, err := EvaluateExpression(t.ChangedWhen, c.Facts)
+		templatedChangedWhen, err := EvaluateExpression(t.ChangedWhen, c)
 		if err != nil {
 			r.Error = fmt.Errorf("error evaluating changed_when condition '%s': %w", t.ChangedWhen, err)
 			r.Failed = true
@@ -274,7 +297,7 @@ func handleResult(r *TaskResult, t Task, c *HostContext) TaskResult {
 			r.Changed = false
 		}
 	}
-	
+
 	// failed_when/changed_when might depend on results of this task, so we need to evaluate them after registration
 	// However, we should update the changed/failed status after evaluating these conditions.
 	setTaskStatus(*r, t, c)

@@ -44,21 +44,15 @@ func AddFact(target *sync.Map, k string, v interface{}) {
 }
 
 // FactsToJinja2 converts a *sync.Map (representing Facts) into a pongo2.Context.
-func FactsToJinja2(facts *sync.Map) pongo2.Context {
+func FactsToJinja2(facts map[string]interface{}) pongo2.Context {
 	ctx := pongo2.Context{}
 	if facts == nil {
 		return ctx // Return empty context if map is nil
 	}
-	facts.Range(func(key, value interface{}) bool {
+	for k, v := range facts {
 		// Ensure key is a string for pongo2.Context
-		if k, ok := key.(string); ok {
-			ctx[k] = value
-		} else {
-			// Optionally log or handle non-string keys
-			common.LogWarn("Non-string key found in Facts map during Jinja2 conversion", map[string]interface{}{"key": key})
-		}
-		return true
-	})
+		ctx[k] = v
+	}
 	return ctx
 }
 
@@ -232,14 +226,14 @@ func (c *HostContext) RunCommand(command, username string) (string, string, erro
 	return runtime.RunRemoteCommand(c.sshClient, command, username)
 }
 
-func EvaluateExpression(s string, additionalVars ...*sync.Map) (string, error) {
+func EvaluateExpression(s string, closure *Closure) (string, error) {
 	// TODO: this is a hack to evaluate a string as a Jinja2 template
-	return TemplateString(fmt.Sprintf("{{ %s }}", s), additionalVars...)
+	return TemplateString(fmt.Sprintf("{{ %s }}", s), closure)
 }
 
 // TemplateString processes a Jinja2 template string with provided variables.
 // additionalVars should be a slice of *sync.Map.
-func TemplateString(s string, additionalVars ...*sync.Map) (string, error) {
+func TemplateString(s string, closure *Closure) (string, error) {
 	if s == "" {
 		return "", nil
 	}
@@ -249,10 +243,7 @@ func TemplateString(s string, additionalVars ...*sync.Map) (string, error) {
 	}
 
 	// Merge all provided variable maps into one *sync.Map
-	allVars := new(sync.Map)
-	for _, v := range additionalVars {
-		MergeFacts(allVars, v) // Use the standalone MergeFacts function
-	}
+	allVars := closure.GetFacts()
 	var buf bytes.Buffer
 	// Convert the final *sync.Map to pongo2.Context before executing
 	facts := FactsToJinja2(allVars)

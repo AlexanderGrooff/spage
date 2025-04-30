@@ -87,16 +87,16 @@ func (m GitModule) CheckoutVersion(dest, version string, c *pkg.HostContext, run
 	return "", nil
 }
 
-func (m GitModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
+func (m GitModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
 	gitParams := params.(GitInput)
-	revBefore, err := m.GetCurrentRev(gitParams.Dest, c, runAs)
+	revBefore, err := m.GetCurrentRev(gitParams.Dest, closure.HostContext, runAs)
 	if err != nil {
-		m.CloneRepo(gitParams.Repo, gitParams.Dest, c, runAs)
+		m.CloneRepo(gitParams.Repo, gitParams.Dest, closure.HostContext, runAs)
 	}
 	if gitParams.Version != "" {
-		m.CheckoutVersion(gitParams.Dest, gitParams.Version, c, runAs)
+		m.CheckoutVersion(gitParams.Dest, gitParams.Version, closure.HostContext, runAs)
 	}
-	revAfter, err := m.GetCurrentRev(gitParams.Dest, c, runAs)
+	revAfter, err := m.GetCurrentRev(gitParams.Dest, closure.HostContext, runAs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current rev of repo %s: %w", gitParams.Dest, err)
 	}
@@ -109,12 +109,12 @@ func (m GitModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs str
 	}, nil
 }
 
-func (m GitModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+func (m GitModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
 	gitParams := params.(GitInput)
 	if previous != nil {
 		prev := previous.(GitOutput)
 		if prev.Changed() {
-			m.CheckoutVersion(gitParams.Dest, prev.Rev.Before, c, runAs)
+			m.CheckoutVersion(gitParams.Dest, prev.Rev.Before, closure.HostContext, runAs)
 		}
 		return GitOutput{
 			Rev: pkg.RevertableChange[string]{

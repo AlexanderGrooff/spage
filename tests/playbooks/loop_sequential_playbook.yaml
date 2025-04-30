@@ -1,0 +1,87 @@
+---
+- name: loop_sequential_playbook
+  hosts: localhost
+  tasks:
+    # Test loop list
+    - name: loop over list
+      file:
+        path: /tmp/spage/{{ item }}.txt
+        state: touch
+      loop:
+        - item1
+        - item2
+
+    - name: verify item 1
+      stat:
+        path: /tmp/spage/item1.txt
+      register: item1_stat
+
+    - name: verify item 2
+      stat:
+        path: /tmp/spage/item2.txt
+      register: item2_stat
+
+    - name: assert list items
+      assert:
+        that:
+          - item1_stat.stat.exists
+          - item2_stat.stat.exists
+        fail_msg: "Item 1 or 2 does not exist"
+
+    # Test loop string
+    - name: define list
+      set_fact:
+        loop_list:
+          - item3
+          - item4
+
+    - name: loop over string expression
+      file:
+        path: /tmp/spage/{{ item }}.txt
+        state: touch
+      loop: "{{ loop_list }}"
+
+    - name: verify item 3
+      stat:
+        path: /tmp/spage/item3.txt
+      register: item3_stat
+
+    - name: verify item 4
+      stat:
+        path: /tmp/spage/item4.txt
+      register: item4_stat
+
+    - name: assert string items
+      assert:
+        that:
+          - item3_stat.stat.exists
+          - item4_stat.stat.exists
+        fail_msg: "Item 3 or 4 does not exist"
+
+    # test list with dicts
+    - name: loop over list of dicts
+      file:
+        path: /tmp/spage/{{ item.key }}.txt
+        state: touch
+      loop:
+        - key: item5
+          value: item5_value
+        - key: item6
+          value: item6_value
+
+    - name: verify item 5
+      stat:
+        path: /tmp/spage/item5.txt
+      register: item5_stat
+
+    - name: verify item 6
+      stat:
+        path: /tmp/spage/item6.txt
+      register: item6_stat
+
+    - name: assert dict items
+      assert:
+        that:
+          - item5_stat.stat.exists
+          - item6_stat.stat.exists
+        fail_msg: "Item 5 or 6 does not exist"

@@ -117,23 +117,23 @@ func (m PacmanModule) RemovePackages(packages []string, c *pkg.HostContext, runA
 	return PacmanOutput{}, nil
 }
 
-func (m PacmanModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
+func (m PacmanModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
 	packages := params.(PacmanInput).Name
 	state := params.(PacmanInput).State
 	if state == "absent" {
-		return m.RemovePackages(packages, c, runAs)
+		return m.RemovePackages(packages, closure.HostContext, runAs)
 	} else {
-		return m.InstallPackages(packages, c, runAs)
+		return m.InstallPackages(packages, closure.HostContext, runAs)
 	}
 }
 
-func (m PacmanModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+func (m PacmanModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
 	previousPackages := previous.(PacmanOutput).Installed
 	state := params.(PacmanInput).State
 	if state == "absent" {
-		return m.InstallPackages(previousPackages, c, runAs)
+		return m.InstallPackages(previousPackages, closure.HostContext, runAs)
 	} else {
-		return m.RemovePackages(previousPackages, c, runAs)
+		return m.RemovePackages(previousPackages, closure.HostContext, runAs)
 	}
 }
 

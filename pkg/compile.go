@@ -309,15 +309,14 @@ func compileNode(node GraphNode, host Host) (GraphNode, error) {
 		task := n
 		v := reflect.ValueOf(&task).Elem()
 
-		// Convert host.Vars to *sync.Map once for efficiency
-		hostVarsSyncMap := MapToSyncMap(host.Vars)
+		closure := TempClosureForHost(&host)
 
 		for i := 0; i < v.NumField(); i++ {
 			field := v.Field(i)
 			if field.Kind() == reflect.String {
 				strVal := field.String()
 				// Pass the converted *sync.Map to TemplateString
-				if templated, err := TemplateString(strVal, hostVarsSyncMap); err == nil {
+				if templated, err := TemplateString(strVal, closure); err == nil {
 					// Check if templating actually changed the value before setting
 					// This avoids unnecessary reflection sets if the string doesn't contain variables
 					if templated != strVal {

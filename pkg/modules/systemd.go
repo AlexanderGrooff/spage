@@ -108,31 +108,31 @@ func (m SystemdModule) DaemonReload(c *pkg.HostContext, runAs string) error {
 	return err
 }
 
-func (m SystemdModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
+func (m SystemdModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
 	systemdParams := params.(SystemdInput)
-	stateBeforeExecute, err := m.getCurrentState(systemdParams.Name, c, runAs)
+	stateBeforeExecute, err := m.getCurrentState(systemdParams.Name, closure.HostContext, runAs)
 	if err != nil {
 		return SystemdOutput{}, err
 	}
 	if systemdParams.DaemonReload {
-		err := m.DaemonReload(c, runAs)
+		err := m.DaemonReload(closure.HostContext, runAs)
 		if err != nil {
 			return SystemdOutput{}, err
 		}
 	}
 	if systemdParams.Enabled && !stateBeforeExecute.Enabled {
-		err := m.Enable(systemdParams.Name, c, runAs)
+		err := m.Enable(systemdParams.Name, closure.HostContext, runAs)
 		if err != nil {
 			return SystemdOutput{}, err
 		}
 	}
 	if systemdParams.State == "started" && !stateBeforeExecute.Started {
-		err := m.Start(systemdParams.Name, c, runAs)
+		err := m.Start(systemdParams.Name, closure.HostContext, runAs)
 		if err != nil {
 			return SystemdOutput{}, err
 		}
 	}
-	currentState, err := m.getCurrentState(systemdParams.Name, c, runAs)
+	currentState, err := m.getCurrentState(systemdParams.Name, closure.HostContext, runAs)
 	if err != nil {
 		return SystemdOutput{}, err
 	}
@@ -147,26 +147,26 @@ func (m SystemdModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs
 	}, nil
 }
 
-func (m SystemdModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+func (m SystemdModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
 	systemdParams := params.(SystemdInput)
 	originalState := previous.(SystemdOutput).State.Before
-	stateBeforeRevert, err := m.getCurrentState(systemdParams.Name, c, runAs)
+	stateBeforeRevert, err := m.getCurrentState(systemdParams.Name, closure.HostContext, runAs)
 	if err != nil {
 		return SystemdOutput{}, err
 	}
 	if systemdParams.DaemonReload {
-		err := m.DaemonReload(c, runAs)
+		err := m.DaemonReload(closure.HostContext, runAs)
 		if err != nil {
 			return SystemdOutput{}, err
 		}
 	}
 	if systemdParams.Enabled && !originalState.Enabled {
-		err := m.Disable(systemdParams.Name, c, runAs)
+		err := m.Disable(systemdParams.Name, closure.HostContext, runAs)
 		if err != nil {
 			return SystemdOutput{}, err
 		}
 	}
-	stateAfterRevert, err := m.getCurrentState(systemdParams.Name, c, runAs)
+	stateAfterRevert, err := m.getCurrentState(systemdParams.Name, closure.HostContext, runAs)
 	if err != nil {
 		return SystemdOutput{}, err
 	}

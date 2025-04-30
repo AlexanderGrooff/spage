@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"sync"
 
 	"github.com/AlexanderGrooff/spage/pkg"
 	"gopkg.in/yaml.v3"
@@ -71,17 +70,15 @@ func (o ShellOutput) AsFacts() map[string]interface{} {
 	}
 }
 
-func (m ShellModule) templateAndExecute(command string, c *pkg.HostContext, prev ShellOutput, runAs string) (ShellOutput, error) {
+func (m ShellModule) templateAndExecute(command string, closure *pkg.Closure, prev ShellOutput, runAs string) (ShellOutput, error) {
 	var err error
 
-	// Create a temporary map for the 'Previous' fact
-	prevFactMap := new(sync.Map)
 	if prev != (ShellOutput{}) { // Only add if 'prev' is not the zero value
-		pkg.AddFact(prevFactMap, "Previous", prev)
+		closure.ExtraFacts["Previous"] = prev
 	}
 
 	// Pass both the main Facts map and the temporary map to TemplateString
-	templatedCmd, err := pkg.TemplateString(command, c.Facts, prevFactMap)
+	templatedCmd, err := pkg.TemplateString(command, closure)
 	if err != nil {
 		return ShellOutput{}, fmt.Errorf("failed to template shell command: %w", err) // Added error wrapping
 	}
@@ -95,7 +92,7 @@ func (m ShellModule) templateAndExecute(command string, c *pkg.HostContext, prev
 	commandForShell := fmt.Sprintf("sh -c \"%s\"", escapedCmd)
 
 	// Pass the double-quoted command string to RunCommand
-	stdout, stderr, err := c.RunCommand(commandForShell, runAs)
+	stdout, stderr, err := closure.HostContext.RunCommand(commandForShell, runAs)
 	output := ShellOutput{
 		Stdout:  stdout,
 		Stderr:  stderr,
@@ -109,12 +106,12 @@ func (m ShellModule) templateAndExecute(command string, c *pkg.HostContext, prev
 	return output, nil
 }
 
-func (m ShellModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
+func (m ShellModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
 	shellParams := params.(ShellInput)
-	return m.templateAndExecute(shellParams.Execute, c, ShellOutput{}, runAs)
+	return m.templateAndExecute(shellParams.Execute, closure, ShellOutput{}, runAs)
 }
 
-func (m ShellModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+func (m ShellModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
 	shellParams := params.(ShellInput)
 	var prev ShellOutput
 	if previous != nil {
@@ -122,7 +119,7 @@ func (m ShellModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous
 	} else {
 		prev = ShellOutput{}
 	}
-	return m.templateAndExecute(shellParams.Revert, c, prev, runAs)
+	return m.templateAndExecute(shellParams.Revert, closure, prev, runAs)
 }
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface for ShellInput.

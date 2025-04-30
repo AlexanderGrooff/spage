@@ -110,7 +110,7 @@ func (i *SlurpInput) UnmarshalYAML(node *yaml.Node) error {
 }
 
 // Execute runs the slurp operation on the remote host.
-func (m SlurpModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
+func (m SlurpModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
 	input, ok := params.(SlurpInput)
 	if !ok {
 		return nil, fmt.Errorf("invalid params type (%T) for slurp module", params)
@@ -120,20 +120,20 @@ func (m SlurpModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs s
 		return nil, err
 	}
 
-	templatedSrc, err := pkg.TemplateString(input.Source, c.Facts)
+	templatedSrc, err := pkg.TemplateString(input.Source, closure)
 	if err != nil {
 		return nil, fmt.Errorf("failed to template source path %q: %w", input.Source, err)
 	}
 
-	common.LogDebug("Attempting to slurp file", map[string]interface{}{"host": c.Host.Name, "source": templatedSrc})
+	common.LogDebug("Attempting to slurp file", map[string]interface{}{"host": closure.HostContext.Host.Name, "source": templatedSrc})
 
-	fileBytes, err := c.ReadFileBytes(templatedSrc, runAs)
+	fileBytes, err := closure.HostContext.ReadFileBytes(templatedSrc, runAs)
 	if err != nil {
 		// Check if the error indicates the file was not found
 		// The error message comes from runtime.Read*FileBytes now
 		if strings.Contains(err.Error(), "file not found") {
 			common.LogWarn("Slurp source file not found", map[string]interface{}{ // Keep warning for visibility
-				"host":   c.Host.Name,
+				"host":   closure.HostContext.Host.Name,
 				"source": templatedSrc,
 				"error":  err.Error(), // Log the specific error
 			})
@@ -154,13 +154,16 @@ func (m SlurpModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs s
 	}
 
 	common.LogInfo("Slurp successful", map[string]interface{}{ // Log success
-		"host": c.Host.Name, "source": output.Source, "bytes_read": len(fileBytes), "encoded_len": len(output.Content),
+		"host":        closure.HostContext.Host.Name,
+		"source":      output.Source,
+		"bytes_read":  len(fileBytes),
+		"encoded_len": len(output.Content),
 	})
 	return output, nil
 }
 
 // Revert is a no-op for the read-only slurp module.
-func (m SlurpModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+func (m SlurpModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
 	common.LogDebug("Revert called for slurp module (no-op)")
 	return SlurpOutput{}, nil // Return empty output, no state change
 }

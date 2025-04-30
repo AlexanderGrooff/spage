@@ -16,7 +16,7 @@ import (
 
 // registerVariableIfNeeded checks if a task result should be registered as a variable
 // and stores it in the HostContext's Facts if necessary.
-func registerVariableIfNeeded(result TaskResult, task Task, c *HostContext) {
+func registerVariableIfNeeded(result TaskResult, task Task, c *Closure) {
 	// Only register if the task has a name assigned to the 'register' key
 	if task.Register == "" {
 		return
@@ -47,7 +47,7 @@ func registerVariableIfNeeded(result TaskResult, task Task, c *HostContext) {
 		valueToStore = failureMap
 		common.LogDebug("Ignored error", map[string]interface{}{
 			"task":  task.Name,
-			"host":  c.Host.Name,
+			"host":  c.HostContext.Host.Name,
 			"error": originalErr.Error(),
 			"value": valueToStore,
 		})
@@ -84,19 +84,19 @@ func registerVariableIfNeeded(result TaskResult, task Task, c *HostContext) {
 	if valueToStore != nil {
 		common.LogDebug("Registering variable", map[string]interface{}{
 			"task":     task.Name,
-			"host":     c.Host.Name,
+			"host":     c.HostContext.Host.Name,
 			"variable": task.Register,
 			"value":    valueToStore, // Log the actual map being stored
 		})
-		c.Facts.Store(task.Register, valueToStore)
+		c.HostContext.Facts.Store(task.Register, valueToStore)
 	}
 }
 
-func setTaskStatus(result TaskResult, task Task, c *HostContext) {
+func setTaskStatus(result TaskResult, task Task, c *Closure) {
 	if task.Register == "" {
 		return
 	}
-	facts, _ := c.Facts.Load(task.Register)
+	facts, _ := c.GetFact(task.Register)
 	if facts == nil {
 		facts = map[string]interface{}{
 			"failed":  result.Failed,
@@ -116,7 +116,7 @@ func setTaskStatus(result TaskResult, task Task, c *HostContext) {
 			}
 		}
 	}
-	c.Facts.Store(task.Register, facts)
+	c.HostContext.Facts.Store(task.Register, facts)
 }
 
 // getTasks returns all tasks from a GraphNode, handling both TaskList and Graph types
@@ -232,13 +232,13 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 
 		for result := range resultsCh {
 			resultCount++
-			hostname := result.Context.Host.Name
+			hostname := result.Closure.HostContext.Host.Name
 			task := result.Task
-			c := result.Context
+			c := result.Closure
 			duration := result.Duration
 
 			fmt.Printf("\nTASK [%s] ****************************************************\n", task.Name)
-			c.History.Store(task.Name, result.Output)
+			c.HostContext.History.Store(task.Name, result.Output)
 
 			hostTaskLevelHistory[executionLevel][hostname] <- task
 

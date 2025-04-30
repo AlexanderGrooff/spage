@@ -139,7 +139,7 @@ func timespecToFloat(ts syscall.Timespec) float64 {
 	return float64(ts.Sec) + float64(ts.Nsec)/1e9
 }
 
-func (m StatModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
+func (m StatModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
 	p := params.(StatInput)
 	out := StatOutput{}
 	out.Stat.Path = p.Path // Set path initially
@@ -152,7 +152,7 @@ func (m StatModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 
 	// Pass the follow parameter from the input to c.Stat
 	// Note: runAs is currently ignored by c.Stat
-	fileInfo, err := c.Stat(p.Path, p.Follow)
+	fileInfo, err := closure.HostContext.Stat(p.Path, p.Follow)
 
 	// Handle errors from c.Stat
 	if err != nil {
@@ -228,7 +228,7 @@ func (m StatModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 		}
 
 		common.DebugOutput("Running checksum: %s", checksumCmd)
-		chkStdout, chkStderr, chkErr := c.RunCommand(checksumCmd, runAs)
+		chkStdout, chkStderr, chkErr := closure.HostContext.RunCommand(checksumCmd, runAs)
 		if chkErr != nil {
 			common.DebugOutput("WARNING: Failed to calculate checksum for %s: %v, stderr: %s", p.Path, chkErr, chkStderr)
 		} else {
@@ -253,7 +253,7 @@ func (m StatModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 		mimeCmd += fmt.Sprintf(" --mime-type %s", fmt.Sprintf("%q", p.Path))
 
 		common.DebugOutput("Running mime-type: %s", mimeCmd)
-		mimeStdout, mimeStderr, mimeErr := c.RunCommand(mimeCmd, runAs)
+		mimeStdout, mimeStderr, mimeErr := closure.HostContext.RunCommand(mimeCmd, runAs)
 		if mimeErr != nil {
 			common.DebugOutput("WARNING: Failed to get mime type for %s: %v, stderr: %s", p.Path, mimeErr, mimeStderr)
 		} else {
@@ -266,7 +266,7 @@ func (m StatModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 		// Quote path using Sprintf %q
 		attrCmd := fmt.Sprintf("lsattr -d %s", fmt.Sprintf("%q", p.Path))
 		common.DebugOutput("Running lsattr: %s", attrCmd)
-		attrStdout, attrStderr, attrErr := c.RunCommand(attrCmd, runAs)
+		attrStdout, attrStderr, attrErr := closure.HostContext.RunCommand(attrCmd, runAs)
 		if attrErr != nil {
 			if strings.Contains(attrStderr, "command not found") || strings.Contains(attrStderr, "not found") {
 				common.DebugOutput("lsattr command not found on host, cannot get attributes for %s", p.Path)
@@ -287,7 +287,7 @@ func (m StatModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 }
 
 // Stat module is read-only, so Revert does nothing.
-func (m StatModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+func (m StatModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
 	common.DebugOutput("Stat module does not support revert.")
 	// Return an empty output, indicating no change was reverted.
 	return StatOutput{

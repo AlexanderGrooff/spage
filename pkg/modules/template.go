@@ -72,36 +72,36 @@ func (o TemplateOutput) Changed() bool {
 	return o.Contents.Changed()
 }
 
-func (m TemplateModule) templateContentsToFile(src, dest string, c *pkg.HostContext, runAs string) (string, string, error) {
+func (m TemplateModule) templateContentsToFile(src, dest string, closure *pkg.Closure, runAs string) (string, string, error) {
 	// Get contents from src
 	contents, err := pkg.ReadTemplateFile(src)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to read template file %s: %v", src, err)
 	}
-	templatedContents, err := pkg.TemplateString(contents, c.Facts)
+	templatedContents, err := pkg.TemplateString(contents, closure)
 	if err != nil {
 		return "", "", err
 	}
 
-	originalContents, _ := c.ReadFile(dest, runAs)
-	if err := c.WriteFile(dest, templatedContents, runAs); err != nil {
+	originalContents, _ := closure.HostContext.ReadFile(dest, runAs)
+	if err := closure.HostContext.WriteFile(dest, templatedContents, runAs); err != nil {
 		return "", "", fmt.Errorf("failed to write to file %s: %v", dest, err)
 	}
 
 	return originalContents, templatedContents, nil
 }
 
-func (m TemplateModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
+func (m TemplateModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
 	p := params.(TemplateInput)
-	original, new, err := m.templateContentsToFile(p.Src, p.Dst, c, runAs)
+	original, new, err := m.templateContentsToFile(p.Src, p.Dst, closure, runAs)
 	if err != nil {
 		return nil, err
 	}
 
 	if p.Mode != "" {
-		if err := c.SetFileMode(p.Dst, p.Mode, runAs); err != nil {
+		if err := closure.HostContext.SetFileMode(p.Dst, p.Mode, runAs); err != nil {
 			// Attempt to revert the content change if setting mode fails
-			_ = c.WriteFile(p.Dst, original, runAs) // Best effort revert
+			_ = closure.HostContext.WriteFile(p.Dst, original, runAs) // Best effort revert
 			return nil, fmt.Errorf("failed to set mode %s for file %s: %w", p.Mode, p.Dst, err)
 		}
 	}
@@ -114,13 +114,13 @@ func (m TemplateModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runA
 	}, nil
 }
 
-func (m TemplateModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+func (m TemplateModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
 	// TODO: delete if previously created?
 	p := params.(TemplateInput)
 	if previous != nil {
 		prev := previous.(TemplateOutput)
 		if prev.Changed() {
-			if err := c.WriteFile(p.Dst, prev.Contents.Before, runAs); err != nil {
+			if err := closure.HostContext.WriteFile(p.Dst, prev.Contents.Before, runAs); err != nil {
 				return TemplateOutput{}, fmt.Errorf("failed to place back original contents in %s", p.Dst)
 			}
 		}

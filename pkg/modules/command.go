@@ -3,7 +3,6 @@ package modules
 import (
 	"fmt"
 	"reflect"
-	"sync"
 
 	"github.com/AlexanderGrooff/spage/pkg"
 	"gopkg.in/yaml.v3"
@@ -86,17 +85,15 @@ func (o CommandOutput) AsFacts() map[string]interface{} {
 }
 
 // templateAndExecute templates the command string and executes it directly.
-func (m CommandModule) templateAndExecute(command string, c *pkg.HostContext, prev CommandOutput, runAs string) (CommandOutput, error) {
+func (m CommandModule) templateAndExecute(command string, closure *pkg.Closure, prev CommandOutput, runAs string) (CommandOutput, error) {
 	var err error
 
-	// Create a temporary map for the 'Previous' fact if available
-	prevFactMap := new(sync.Map)
 	if prev != (CommandOutput{}) {
-		pkg.AddFact(prevFactMap, "Previous", prev)
+		closure.ExtraFacts["Previous"] = prev
 	}
 
 	// Template the command string using host facts and previous task facts
-	templatedCmd, err := pkg.TemplateString(command, c.Facts, prevFactMap)
+	templatedCmd, err := pkg.TemplateString(command, closure)
 	if err != nil {
 		return CommandOutput{}, fmt.Errorf("failed to template command: %w", err)
 	}
@@ -104,7 +101,7 @@ func (m CommandModule) templateAndExecute(command string, c *pkg.HostContext, pr
 	// Execute the command directly without shell interpolation.
 	// RunCommand needs to handle this case appropriately (e.g., using exec.Command directly).
 	// We pass the raw templated command.
-	stdout, stderr, err := c.RunCommand(templatedCmd, runAs) // <= NO shell wrapper
+	stdout, stderr, err := closure.HostContext.RunCommand(templatedCmd, runAs) // <= NO shell wrapper
 	output := CommandOutput{
 		Stdout:  stdout,
 		Stderr:  stderr,
@@ -126,13 +123,13 @@ func (m CommandModule) templateAndExecute(command string, c *pkg.HostContext, pr
 }
 
 // Execute runs the main command.
-func (m CommandModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
+func (m CommandModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
 	cmdParams := params.(CommandInput)
-	return m.templateAndExecute(cmdParams.Execute, c, CommandOutput{}, runAs)
+	return m.templateAndExecute(cmdParams.Execute, closure, CommandOutput{}, runAs)
 }
 
 // Revert runs the revert command.
-func (m CommandModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+func (m CommandModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
 	cmdParams := params.(CommandInput)
 	var prev CommandOutput
 	if previous != nil {
@@ -145,7 +142,7 @@ func (m CommandModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previo
 	} else {
 		prev = CommandOutput{}
 	}
-	return m.templateAndExecute(cmdParams.Revert, c, prev, runAs)
+	return m.templateAndExecute(cmdParams.Revert, closure, prev, runAs)
 }
 
 // UnmarshalYAML allows the command module value to be either a string (shorthand)

@@ -172,11 +172,11 @@ func getOriginalState(p FileInput, c *pkg.HostContext) (exists bool, state, mode
 	return exists, state, mode, linkTarget, isLink, nil
 }
 
-func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
+func (m FileModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
 	p := params.(FileInput)
 
 	// 1. Get original state - runAs is needed later for commands like rm, readlink
-	originalExists, originalState, originalMode, originalLinkTarget, originalIsLnk, err := getOriginalState(p, c) // Removed runAs from call
+	originalExists, originalState, originalMode, originalLinkTarget, originalIsLnk, err := getOriginalState(p, closure.HostContext) // Removed runAs from call
 	if err != nil {
 		return nil, err // Propagate error from getOriginalState
 	}
@@ -208,7 +208,7 @@ func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 		actionTaken = true
 		// If target state is different from absent, ensure path is clear first unless creating a directory
 		if originalExists && desiredState != originalState && desiredState != "absent" && desiredState != "directory" {
-			if _, _, err := c.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", p.Path)), runAs); err != nil {
+			if _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", p.Path)), runAs); err != nil {
 				return nil, fmt.Errorf("failed to remove existing path %s before changing state: %v", p.Path, err)
 			}
 		}
@@ -216,7 +216,7 @@ func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 		switch desiredState {
 		case "file":
 			// Ensure path exists as a file (touch)
-			if err := c.WriteFile(p.Path, "", runAs); err != nil {
+			if err := closure.HostContext.WriteFile(p.Path, "", runAs); err != nil {
 				return nil, fmt.Errorf("failed to touch file %s: %v", p.Path, err)
 			}
 			newState = "file"
@@ -225,7 +225,7 @@ func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 			newExists = true
 		case "directory":
 			// Ensure path exists as a directory
-			if _, _, err := c.RunCommand(fmt.Sprintf("mkdir -p %s", fmt.Sprintf("%q", p.Path)), runAs); err != nil {
+			if _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("mkdir -p %s", fmt.Sprintf("%q", p.Path)), runAs); err != nil {
 				return nil, fmt.Errorf("failed to create directory %s: %v", p.Path, err)
 			}
 			newState = "directory"
@@ -235,7 +235,7 @@ func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 		case "absent":
 			// Ensure path does not exist
 			if originalExists {
-				if _, _, err := c.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", p.Path)), runAs); err != nil {
+				if _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", p.Path)), runAs); err != nil {
 					return nil, fmt.Errorf("failed to remove %s: %v", p.Path, err)
 				}
 			}
@@ -247,12 +247,12 @@ func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 			// Ensure path exists as a link pointing to Src
 			// Remove existing path first to ensure correct link creation
 			if originalExists {
-				if _, _, err := c.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", p.Path)), runAs); err != nil {
+				if _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", p.Path)), runAs); err != nil {
 					return nil, fmt.Errorf("failed to remove existing path %s before creating link: %v", p.Path, err)
 				}
 			}
 			linkCmd := fmt.Sprintf("ln -sf %s %s", fmt.Sprintf("%q", p.Src), fmt.Sprintf("%q", p.Path)) // Quote src and path
-			if _, _, err := c.RunCommand(linkCmd, runAs); err != nil {
+			if _, _, err := closure.HostContext.RunCommand(linkCmd, runAs); err != nil {
 				return nil, fmt.Errorf("failed to create link %s -> %s: %v", p.Path, p.Src, err)
 			}
 			newState = "link"
@@ -266,7 +266,7 @@ func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 		actionTaken = true
 		// Recreate the link with the new target
 		linkCmd := fmt.Sprintf("ln -sf %s %s", fmt.Sprintf("%q", p.Src), fmt.Sprintf("%q", p.Path)) // Quote src and path
-		if _, _, err := c.RunCommand(linkCmd, runAs); err != nil {
+		if _, _, err := closure.HostContext.RunCommand(linkCmd, runAs); err != nil {
 			return nil, fmt.Errorf("failed to update link %s -> %s: %v", p.Path, p.Src, err)
 		}
 		newLinkTarget = p.Src // Only target changes
@@ -280,7 +280,7 @@ func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 		finalMode := p.Mode                           // Assume p.Mode is octal for now
 		if finalMode != originalMode || actionTaken { // Apply if mode differs or if file was just created/state changed
 			common.DebugOutput("Applying mode %s to %s", finalMode, p.Path)
-			if err := c.SetFileMode(p.Path, finalMode, runAs); err != nil {
+			if err := closure.HostContext.SetFileMode(p.Path, finalMode, runAs); err != nil {
 				// Attempting to chmod a link target might fail if the link is broken
 				// SetFileMode handles local/remote automatically
 				// It might still fail for links, keep the warning
@@ -322,7 +322,7 @@ func (m FileModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs st
 	return out, nil
 }
 
-func (m FileModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+func (m FileModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
 	p := params.(FileInput)
 	if previous == nil {
 		common.DebugOutput("Not reverting file module because previous result was nil")
@@ -343,14 +343,14 @@ func (m FileModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous 
 	if !prev.Exists.Before {
 		// Original state was absent, so remove whatever is there now
 		common.DebugOutput("Reverting to absent: removing %s", p.Path)
-		if _, _, err := c.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", p.Path)), runAs); err != nil {
+		if _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", p.Path)), runAs); err != nil {
 			return nil, fmt.Errorf("revert failed: could not remove %s: %v", p.Path, err)
 		}
 	} else {
 		// Original state existed, ensure it exists now in the correct state
 		// Remove current path first to handle state changes (e.g., dir -> file)
 		common.DebugOutput("Removing current path %s before reverting to original state %s", p.Path, prev.State.Before)
-		if _, _, err := c.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", p.Path)), runAs); err != nil {
+		if _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", p.Path)), runAs); err != nil {
 			// This might fail if the path was already removed, which could be ok if the original state was absent, but we checked Exists.Before was true.
 			// Log a warning? It might interfere with the next step.
 			common.DebugOutput("Warning during revert: failed to remove existing path %s (might be ok if state didn't change drastically): %v", p.Path, err)
@@ -359,12 +359,12 @@ func (m FileModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous 
 		switch prev.State.Before {
 		case "file":
 			common.DebugOutput("Reverting to file: touching %s", p.Path)
-			if err := c.WriteFile(p.Path, "", runAs); err != nil {
+			if err := closure.HostContext.WriteFile(p.Path, "", runAs); err != nil {
 				return nil, fmt.Errorf("revert failed: could not touch file %s: %v", p.Path, err)
 			}
 		case "directory":
 			common.DebugOutput("Reverting to directory: mkdir -p %s", p.Path)
-			if _, _, err := c.RunCommand(fmt.Sprintf("mkdir -p %s", fmt.Sprintf("%q", p.Path)), runAs); err != nil {
+			if _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("mkdir -p %s", fmt.Sprintf("%q", p.Path)), runAs); err != nil {
 				return nil, fmt.Errorf("revert failed: could not create directory %s: %v", p.Path, err)
 			}
 		case "link":
@@ -373,7 +373,7 @@ func (m FileModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous 
 			}
 			common.DebugOutput("Reverting to link: ln -sf %s %s", prev.LinkTarget.Before, p.Path)
 			linkCmd := fmt.Sprintf("ln -sf %s %s", fmt.Sprintf("%q", prev.LinkTarget.Before), fmt.Sprintf("%q", p.Path)) // Quote paths
-			if _, _, err := c.RunCommand(linkCmd, runAs); err != nil {
+			if _, _, err := closure.HostContext.RunCommand(linkCmd, runAs); err != nil {
 				return nil, fmt.Errorf("revert failed: could not create link %s -> %s: %v", p.Path, prev.LinkTarget.Before, err)
 			}
 		case "absent":
@@ -386,7 +386,7 @@ func (m FileModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous 
 		// Revert mode *after* recreating the correct state, but *only* if the original state was not a link
 		if prev.Mode.Before != "" && !prev.IsLnk.Before {
 			common.DebugOutput("Reverting mode to %s for %s", prev.Mode.Before, p.Path)
-			if err := c.SetFileMode(p.Path, prev.Mode.Before, runAs); err != nil {
+			if err := closure.HostContext.SetFileMode(p.Path, prev.Mode.Before, runAs); err != nil {
 				return nil, fmt.Errorf("revert failed: could not set mode %s on %s: %w", prev.Mode.Before, p.Path, err)
 			}
 		}

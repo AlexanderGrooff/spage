@@ -128,7 +128,7 @@ func (i *SetFactInput) UnmarshalYAML(unmarshal func(interface{}) error) error {
 }
 
 // Execute sets the facts in the host context.
-func (m SetFactModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs string) (pkg.ModuleOutput, error) {
+func (m SetFactModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
 	input, ok := params.(SetFactInput)
 	if !ok {
 		return nil, fmt.Errorf("invalid params type (%T) for set_fact module", params)
@@ -143,10 +143,10 @@ func (m SetFactModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs
 
 		// Attempt to template string values
 		if strValue, ok := value.(string); ok {
-			finalValue, err = pkg.TemplateString(strValue, c.Facts)
+			finalValue, err = pkg.TemplateString(strValue, closure)
 			if err != nil {
 				common.LogWarn("Failed to template value for fact, using raw value", map[string]interface{}{
-					"host":      c.Host.Name,
+					"host":      closure.HostContext.Host.Name,
 					"fact":      key,
 					"raw_value": strValue,
 					"error":     err.Error(),
@@ -166,10 +166,10 @@ func (m SetFactModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs
 		}
 
 		// Check if the fact already exists and if the value has changed using sync.Map methods
-		existingValue, exists := c.Facts.Load(key)
+		existingValue, exists := closure.HostContext.Facts.Load(key)
 		if !exists || !cmp.Equal(existingValue, finalValue) {
 			common.DebugOutput("Setting fact %q = %v (was: %v, exists: %t)", key, finalValue, existingValue, exists)
-			c.Facts.Store(key, finalValue)    // Use Store to set/update the value
+			closure.HostContext.Facts.Store(key, finalValue)    // Use Store to set/update the value
 			output.FactsSet[key] = finalValue // Record the fact that was set/changed
 			changed = true
 		} else {
@@ -189,7 +189,7 @@ func (m SetFactModule) Execute(params pkg.ModuleInput, c *pkg.HostContext, runAs
 // Revert for set_fact is generally a no-op. Facts set are part of the context state.
 // Undoing them would require tracking the previous state, which adds complexity.
 // If a task fails, subsequent tasks won't see the facts set by the failed task anyway.
-func (m SetFactModule) Revert(params pkg.ModuleInput, c *pkg.HostContext, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+func (m SetFactModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
 	common.DebugOutput("Revert called for set_fact module (no-op)")
 	// No state to revert directly.
 	return SetFactOutput{FactsSet: map[string]interface{}{}}, nil
