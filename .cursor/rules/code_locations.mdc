@@ -1,0 +1,12 @@
+---
+description: 
+globs: pkg/**
+alwaysApply: false
+---
+All compile-related code can be found in [graph.go](mdc:pkg/graph.go), [compile.go](mdc:pkg/compile.go) and [preprocess.go](mdc:pkg/compile/preprocess.go). 
+
+All run-time related code can be found in [task.go](mdc:pkg/task.go), [run.go](mdc:pkg/run.go), the `modules` directory such as [shell.go](mdc:pkg/modules/shell.go).
+Run-time code is always split up in local and remote code. The check if it should run locally or remotely is determined in [context.go](mdc:pkg/context.go), and the local/remote code is placed in the `runtime` dir, such as [stat.go](mdc:pkg/runtime/stat.go).
+
+Run configuration logic is found in [config.go](mdc:pkg/config/config.go). The main entrypoint for generating code is found in [main.go](mdc:main.go), and the resulting generated code is found in [generated_tasks.go](mdc:generated_tasks.go).
+Note that the code in [generated_tasks.go](mdc:generated_tasks.go) is *NEVER* edited manually! The code that generates this file can be found in [graph.go](mdc:pkg/graph.go), under `SaveToFile` and `ToCode`.

@@ -1,0 +1,11 @@
+---
+description: 
+globs: test.sh,test_local.sh,test_remote.sh,tests/**
+alwaysApply: false
+---
+Tests are done in a large bash script that runs many kinds of playbooks. All modules should be tested in their own playbook to thoroughly check all kinds of behaviour described in the module.
+
+When writing testcases, think of the following:
+- Does it work on both local and remote hosts?
+- Does reverting work?
+- Are all fields registered correctly?
