@@ -163,12 +163,6 @@ fi
 # Test 6: Revert functionality test
 echo "Running revert functionality test..."
 
-# Create initial state
-echo "initial content" > /tmp/spage/revert_test.txt
-chmod 644 /tmp/spage/revert_test.txt
-mkdir -p /tmp/spage/revert_test_dir
-echo "initial template" > /tmp/spage/revert_test.conf
-
 # Run revert test playbook
 go run main.go generate -p $TESTS_DIR/playbooks/revert_playbook.yaml -o generated_tasks.go
 go build -o generated_tasks generated_tasks.go
