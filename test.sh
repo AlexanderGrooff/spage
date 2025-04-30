@@ -8,6 +8,7 @@ set -e
 set -x
 
 # Function to execute a check command locally or remotely via ssh
+# Diagnostic output goes to stderr (>&2)
 check_target() {
   local cmd_string="$1"
   local exit_code=0
@@ -15,21 +16,23 @@ check_target() {
   if [ -n "$SPAGE_INVENTORY" ]; then
     # Remote execution via ssh theta
     # Ensure ssh keys are set up for passwordless access to 'theta'
-    echo "Running remote check on theta: $cmd_string"
+    echo "Running remote check on theta: $cmd_string" >&2
+    # Run ssh command, its stdout will be captured by the caller if using $()
     if ssh theta -- "$cmd_string"; then
       exit_code=0
     else
       exit_code=$?
-      echo "Remote check failed with exit code $exit_code"
+      echo "Remote check failed with exit code $exit_code" >&2
     fi
   else
     # Local execution
-    echo "Running local check: $cmd_string"
+    echo "Running local check: $cmd_string" >&2
+    # Run bash command, its stdout will be captured by the caller if using $()
     if bash -c "$cmd_string"; then
        exit_code=0
     else
       exit_code=$?
-      echo "Local check failed with exit code $exit_code"
+      echo "Local check failed with exit code $exit_code" >&2
     fi
   fi
   return $exit_code
@@ -221,8 +224,10 @@ fi
 
 # Verify sequential results on the target
 # Check existence, line count, and specific content
-if ! check_target "[ -f /tmp/spage/exec_mode_test.txt ] && [ $(wc -l < /tmp/spage/exec_mode_test.txt) -eq 3 ] && grep -q 'step3' /tmp/spage/exec_mode_test.txt"; then
-    echo "Execution mode test failed: Sequential execution did not produce the expected file content on target."
+# Get remote line count using grep -c, command substitution now captures only grep output
+if ! remote_line_count=$(check_target "grep -c '' /tmp/spage/exec_mode_test.txt") || \
+   ! check_target "[ -f /tmp/spage/exec_mode_test.txt ] && [ \"$remote_line_count\" -eq 3 ] && grep -q 'step3' /tmp/spage/exec_mode_test.txt"; then
+    echo "Execution mode test failed: Sequential execution did not produce the expected file content on target. Line count: '$remote_line_count'"
     check_target "cat /tmp/spage/exec_mode_test.txt || echo 'file not found'" # Print content for debugging
     exit 1
 fi
