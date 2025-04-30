@@ -58,6 +58,10 @@ func LoadInventory(path string) (*Inventory, error) {
 		common.DebugOutput("Adding host %q to inventory", name)
 		host.Prepare()
 		host.Name = name
+
+		if host.Host == "localhost" || host.Host == "" {
+			host.IsLocal = true
+		}
 		inventory.Hosts[name] = host
 	}
 	for groupName, group := range inventory.Groups {
@@ -75,6 +79,10 @@ func LoadInventory(path string) (*Inventory, error) {
 			}
 			if h.Name == "" {
 				h.Name = name
+			}
+
+			if h.Host == "localhost" || h.Host == "" {
+				h.IsLocal = true
 			}
 
 			common.DebugOutput("Adding host %q to inventory from group %q", name, groupName)
@@ -121,10 +129,6 @@ func (i Inventory) GetContextForHost(host *Host) (*HostContext, error) {
 		for k, v := range host.Vars {
 			ctx.Facts.Store(k, v)
 		}
-	}
-
-	if host.Host == "localhost" || host.Host == "" {
-		host.IsLocal = true
 	}
 
 	return ctx, nil
