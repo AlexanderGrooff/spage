@@ -117,7 +117,7 @@ func (t Task) ToCode() string {
 		// Add cases for other expected list types if necessary (e.g., []string)
 	}
 
-	sb.WriteString("},") // Removed the trailing newline here as it's added later if needed
+	sb.WriteString("},\n") // Removed the trailing newline here as it's added later if needed
 	return sb.String()
 }
 

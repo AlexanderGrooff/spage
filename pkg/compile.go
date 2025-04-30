@@ -96,6 +96,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"ignore_errors",
 		"failed_when",
 		"changed_when",
+		"loop",
 	}
 
 	var tasks []GraphNode
@@ -157,24 +158,34 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		var moduleParams interface{}
 		for k, v := range block {
 			if !containsInSlice(arguments, k) {
+				if task.Module != "" {
+					errors = append(errors, fmt.Errorf("multiple module keys found ('%s' and '%s') in task %q", task.Module, k, task.Name))
+					errored = true
+					break
+				}
 				if m, ok := GetModule(k); ok {
 					task.Module = k
 					module = m
 					moduleParams = v
-					break
 				} else {
 					errors = append(errors, fmt.Errorf("unknown module or key %q in task %q", k, task.Name))
 					errored = true
+					break
 				}
 			}
 		}
+
+		if !errored && task.Module == "" {
+			errors = append(errors, fmt.Errorf("no module specified for task %q", task.Name))
+			errored = true
+		}
+
 		if errored {
 			continue
 		}
 
-		// Skip processing module if we already errored on 'when'
-		if errored {
-			continue
+		if loopVal, ok := block["loop"]; ok {
+			task.Loop = loopVal
 		}
 
 		// *** Generic Module Alias Handling Start ***
