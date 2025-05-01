@@ -62,6 +62,7 @@ type FactProvider interface {
 }
 
 type Task struct {
+	Id           int         `yaml:"id"`
 	Name         string      `yaml:"name"`
 	Module       string      `yaml:"module"`
 	Params       ModuleInput `yaml:"params"`
@@ -79,7 +80,8 @@ type Task struct {
 
 func (t Task) ToCode() string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("pkg.Task{Name: %q, Module: %q, Register: %q, Params: %s, RunAs: %q, When: %q",
+	sb.WriteString(fmt.Sprintf("pkg.Task{Id: %d, Name: %q, Module: %q, Register: %q, Params: %s, RunAs: %q, When: %q",
+		t.Id,
 		t.Name,
 		t.Module,
 		t.Register,

@@ -116,6 +116,33 @@ func (g Graph) SaveToFile(path string) error {
 	return nil
 }
 
+// Order tasks by their id
+func (g Graph) SequentialTasks() [][]GraphNode {
+	maxId := -1
+	for _, nodes := range g.Tasks {
+		for _, node := range nodes {
+			if task, ok := node.(Task); ok {
+				if task.Id > maxId {
+					maxId = task.Id
+				}
+			}
+		}
+	}
+
+	var sortedTasks [][]GraphNode = make([][]GraphNode, maxId+1)
+	for _, nodes := range g.Tasks {
+		for _, node := range nodes {
+			sortedTasks[node.(Task).Id] = []GraphNode{node}
+		}
+	}
+	return sortedTasks
+}
+
+// Order tasks based on execution level
+func (g Graph) ParallelTasks() [][]GraphNode {
+	return g.Tasks
+}
+
 func NewGraphFromFile(path string) (Graph, error) {
 	// Read YAML file
 	data, err := os.ReadFile(path)

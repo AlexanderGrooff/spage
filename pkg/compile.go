@@ -102,8 +102,9 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 	var tasks []GraphNode
 	var errors []error
 
-	for _, block := range blocks {
+	for idx, block := range blocks {
 		task := Task{
+			Id:       idx,
 			Name:     getStringFromMap(block, "name"),
 			Validate: getStringFromMap(block, "validate"),
 			Before:   getStringFromMap(block, "before"),

@@ -194,7 +194,13 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 		recapStats[hostname] = map[string]int{"ok": 0, "changed": 0, "failed": 0, "skipped": 0}
 	}
 
-	for executionLevel, nodes := range graph.Tasks {
+	var orderedGraph [][]GraphNode
+	if cfg.ExecutionMode == "parallel" {
+		orderedGraph = graph.ParallelTasks()
+	} else {
+		orderedGraph = graph.SequentialTasks()
+	}
+	for executionLevel, nodes := range orderedGraph {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("execution cancelled: %w", ctx.Err())
