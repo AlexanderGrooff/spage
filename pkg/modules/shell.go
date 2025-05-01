@@ -22,7 +22,6 @@ func (sm ShellModule) OutputType() reflect.Type {
 type ShellInput struct {
 	Execute string `yaml:"execute"`
 	Revert  string `yaml:"revert"`
-	pkg.ModuleInput
 }
 
 type ShellOutput struct {
@@ -166,4 +165,9 @@ func (m ShellModule) ParameterAliases() map[string]string {
 // HasRevert checks if a revert command is defined.
 func (i ShellInput) HasRevert() bool {
 	return i.Revert != ""
+}
+
+// ProvidesVariables returns nil as shell input doesn't inherently define variables.
+func (i ShellInput) ProvidesVariables() []string {
+	return nil
 }

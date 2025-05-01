@@ -363,21 +363,73 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 	return nil
 }
 
+func startTask(task Task, closure *Closure, resultsCh chan TaskResult, wg *sync.WaitGroup) TaskResult {
+	defer wg.Done()
+	result := task.ExecuteModule(closure)
+	resultsCh <- result
+	return result
+}
+
+func getTaskClosures(task Task, c *HostContext) ([]*Closure, error) {
+	if task.Loop == nil {
+		closure := ConstructClosure(c, task)
+		return []*Closure{closure}, nil
+	} else {
+		return getLoopClosures(task, c)
+	}
+}
+
+func getLoopClosures(task Task, c *HostContext) ([]*Closure, error) {
+	loop := []string{}
+	closure := ConstructClosure(c, task)
+	switch v := task.Loop.(type) {
+	case string:
+		evalLoop, err := TemplateString(v, closure)
+		if err != nil {
+			return nil, err
+		}
+		loop = strings.Split(evalLoop, "\n")
+	case []interface{}:
+		for _, item := range v {
+			loop = append(loop, fmt.Sprintf("%v", item))
+		}
+	}
+
+	common.DebugOutput("Found loop items for task %q: %v", task.Name, loop)
+	closures := []*Closure{}
+	for _, item := range loop {
+		tClosure := ConstructClosure(c, task)
+		tClosure.ExtraFacts["item"] = item
+		closures = append(closures, tClosure)
+	}
+	return closures, nil
+}
+
 func loadLevelSequential(ctx context.Context, tasks []Task, contexts map[string]*HostContext, resultsCh chan TaskResult, errCh chan error) {
 	defer close(resultsCh)
+	var wg sync.WaitGroup
 	var ignoredErr *IgnoredTaskError
 	for _, task := range tasks {
 		for _, c := range contexts {
-			select {
-			case <-ctx.Done():
-				errCh <- ctx.Err()
+			closures, err := getTaskClosures(task, c)
+			if err != nil {
+				errCh <- err
 				return
-			default:
-				result := task.ExecuteModule(c)
-				resultsCh <- result
-
-				if result.Error != nil && !errors.As(result.Error, &ignoredErr) {
+			}
+			for _, closure := range closures {
+				wg.Add(1)
+				select {
+				case <-ctx.Done():
+					errCh <- ctx.Err()
 					return
+				default:
+					result := startTask(task, closure, resultsCh, &wg)
+
+					// Stop sequential execution if task failed
+					if result.Error != nil && !errors.As(result.Error, &ignoredErr) {
+						return
+					}
+					wg.Wait() // Wait for task to finish before moving on to next task
 				}
 			}
 		}
@@ -389,18 +441,23 @@ func loadLevelParallel(ctx context.Context, tasks []Task, contexts map[string]*H
 
 	for _, task := range tasks {
 		for _, c := range contexts {
-			wg.Add(1)
-			go func(task Task, c *HostContext) {
-				defer wg.Done()
-				select {
-				case <-ctx.Done():
-					errCh <- ctx.Err()
-					return
-				default:
-					result := task.ExecuteModule(c)
-					resultsCh <- result
-				}
-			}(task, c)
+			closures, err := getTaskClosures(task, c)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			for _, closure := range closures {
+				wg.Add(1)
+				go func() {
+					select {
+					case <-ctx.Done():
+						errCh <- ctx.Err()
+						return
+					default:
+						startTask(task, closure, resultsCh, &wg)
+					}
+				}()
+			}
 		}
 	}
 
@@ -606,7 +663,8 @@ func RevertTasksWithConfig(executedTasks []map[string]chan Task, contexts map[st
 				}
 
 				// Proceed with revert only if HasRevert() is true
-				tOutput := task.RevertModule(c)
+				closure := ConstructClosure(c, task)
+				tOutput := task.RevertModule(closure)
 				if tOutput.Error != nil {
 					logData["status"] = "failed"
 					logData["error"] = tOutput.Error.Error()

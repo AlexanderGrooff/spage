@@ -23,7 +23,6 @@ type TemplateInput struct {
 	Src  string `yaml:"src"`
 	Dst  string `yaml:"dest"`
 	Mode string `yaml:"mode"`
-	pkg.ModuleInput
 }
 
 type TemplateOutput struct {
@@ -63,6 +62,13 @@ func (i TemplateInput) Validate() error {
 	return nil
 }
 
+func (i TemplateInput) HasRevert() bool {
+	return true
+}
+
+func (i TemplateInput) ProvidesVariables() []string {
+	return nil
+}
 func (o TemplateOutput) String() string {
 	// TODO: show diff
 	return fmt.Sprintf("  original: %q\n  new: %q", o.Contents.Before, o.Contents.After)

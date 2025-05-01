@@ -85,6 +85,15 @@ func (i SetFactInput) GetVariableUsage() []string {
 	return result
 }
 
+// ProvidesVariables returns the names of the facts being set.
+func (i SetFactInput) ProvidesVariables() []string {
+	factKeys := make([]string, 0, len(i.Facts))
+	for k := range i.Facts {
+		factKeys = append(factKeys, k)
+	}
+	return factKeys
+}
+
 // Validate ensures that there are facts to set.
 func (i SetFactInput) Validate() error {
 	if len(i.Facts) == 0 {
@@ -169,8 +178,8 @@ func (m SetFactModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, run
 		existingValue, exists := closure.HostContext.Facts.Load(key)
 		if !exists || !cmp.Equal(existingValue, finalValue) {
 			common.DebugOutput("Setting fact %q = %v (was: %v, exists: %t)", key, finalValue, existingValue, exists)
-			closure.HostContext.Facts.Store(key, finalValue)    // Use Store to set/update the value
-			output.FactsSet[key] = finalValue // Record the fact that was set/changed
+			closure.HostContext.Facts.Store(key, finalValue) // Use Store to set/update the value
+			output.FactsSet[key] = finalValue                // Record the fact that was set/changed
 			changed = true
 		} else {
 			common.DebugOutput("Fact %q already set to %v, skipping.", key, finalValue)

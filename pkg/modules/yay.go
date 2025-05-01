@@ -21,7 +21,6 @@ func (sm YayModule) OutputType() reflect.Type {
 type YayInput struct {
 	Name  []string `yaml:"name"`
 	State string   `yaml:"state"`
-	pkg.ModuleInput
 }
 
 type YayOutput struct {
@@ -50,6 +49,14 @@ func (i YayInput) Validate() error {
 	if len(i.Name) == 0 {
 		return fmt.Errorf("missing Name input")
 	}
+	return nil
+}
+
+func (i YayInput) HasRevert() bool {
+	return true
+}
+
+func (i YayInput) ProvidesVariables() []string {
 	return nil
 }
 

@@ -13,6 +13,8 @@ type ModuleInput interface {
 	Validate() error
 	// HasRevert indicates if this input defines a revert action.
 	HasRevert() bool
+	// ProvidesVariables returns a list of variable names this input might define (e.g., keys in set_fact).
+	ProvidesVariables() []string
 }
 
 // ModuleOutput is a marker interface for module output results.

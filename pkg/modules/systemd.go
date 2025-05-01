@@ -36,7 +36,6 @@ type SystemdInput struct {
 	State        string `yaml:"state"`
 	Enabled      bool   `yaml:"enabled"`
 	DaemonReload bool   `yaml:"daemon_reload"`
-	pkg.ModuleInput
 }
 
 type SystemdOutput struct {
@@ -64,6 +63,14 @@ func (i SystemdInput) Validate() error {
 	if i.State == "" {
 		return fmt.Errorf("missing required parameter. State should be given")
 	}
+	return nil
+}
+
+func (i SystemdInput) HasRevert() bool {
+	return true
+}
+
+func (i SystemdInput) ProvidesVariables() []string {
 	return nil
 }
 

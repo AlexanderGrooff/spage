@@ -25,7 +25,6 @@ func (cm CommandModule) OutputType() reflect.Type {
 type CommandInput struct {
 	Execute string `yaml:"execute"` // The command to execute. Aliased as 'cmd'.
 	Revert  string `yaml:"revert"`  // The command to execute for reverting changes.
-	pkg.ModuleInput
 }
 
 // CommandOutput defines the output of the command module.
@@ -42,6 +41,10 @@ func (i CommandInput) ToCode() string {
 		i.Execute,
 		i.Revert,
 	)
+}
+
+func (i CommandInput) ProvidesVariables() []string {
+	return nil
 }
 
 // GetVariableUsage identifies variables used in the execute and revert commands.

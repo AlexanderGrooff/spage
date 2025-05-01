@@ -60,6 +60,10 @@ func (i AssertInput) HasRevert() bool {
 	return false
 }
 
+func (i AssertInput) ProvidesVariables() []string {
+	return nil
+}
+
 func (i AssertInput) Validate() error {
 	if len(i.That) == 0 {
 		return fmt.Errorf("missing 'that' input: at least one assertion is required")

@@ -190,8 +190,7 @@ func flattenNodes(nodes []GraphNode) []TaskNode {
 			// Convert Task to TaskNode before adding
 			flatTasks = append(flatTasks, TaskNode{Task: n})
 		case Graph:
-			// Recursively process nodes within the nested graph
-			// Note: This flattens based on the nested graph's internal structure first.
+			// Recursively process nodes within the nested graph's internal structure first.
 			for _, step := range n.Tasks {
 				for _, subNode := range step {
 					collectTasks(subNode)
@@ -261,6 +260,15 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 		}
 		if n.Register != "" {
 			variableProvidedBy[strings.ToLower(n.Register)] = n.Name
+		}
+
+		// Check if the module's parameters inherently provide variables (like set_fact)
+		if n.Params != nil {
+			providedVars := n.Params.ProvidesVariables()
+			for _, providedVar := range providedVars {
+				// TODO: Consider case sensitivity/normalization if needed (Ansible usually lowercases)
+				variableProvidedBy[providedVar] = n.Name
+			}
 		}
 	}
 

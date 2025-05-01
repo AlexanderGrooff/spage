@@ -123,3 +123,27 @@
     that:
       - dest_link_alias_stat.stat.exists
       - dest_link_alias_stat.stat.islnk 
+
+- name: set templating facts
+  set_fact:
+    fake_path: "testname"
+    fake_src: "testsrc"
+    fake_mode: "0644"
+    fake_state: "touch"
+
+- name: test templating facts
+  file:
+    path: "{{ fake_path }}"
+    src: "{{ fake_src }}"
+    mode: "{{ fake_mode }}"
+    state: "{{ fake_state }}"
+
+- name: stat templated file
+  stat:
+    path: "{{ fake_path }}"
+  register: templated_file_stat
+
+- name: assert templated file exists
+  assert:
+    that:
+      - templated_file_stat.stat.exists

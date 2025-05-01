@@ -25,7 +25,6 @@ func (m SlurpModule) OutputType() reflect.Type {
 // SlurpInput defines the parameters for the slurp module.
 type SlurpInput struct {
 	Source string `yaml:"src"` // Path to the file to fetch from the remote node
-	pkg.ModuleInput
 }
 
 // SlurpOutput holds the result of the slurp operation.
@@ -57,6 +56,10 @@ func (i SlurpInput) Validate() error {
 // HasRevert indicates that slurp does not have a revert action.
 func (i SlurpInput) HasRevert() bool {
 	return false
+}
+
+func (i SlurpInput) ProvidesVariables() []string {
+	return nil
 }
 
 // String provides a human-readable summary of the SlurpOutput.

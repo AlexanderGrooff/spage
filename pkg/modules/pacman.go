@@ -21,7 +21,6 @@ func (sm PacmanModule) OutputType() reflect.Type {
 type PacmanInput struct {
 	Name  []string `yaml:"name"`
 	State string   `yaml:"state"`
-	pkg.ModuleInput
 }
 
 type PacmanOutput struct {
@@ -51,6 +50,14 @@ func (i PacmanInput) Validate() error {
 		return fmt.Errorf("missing Name input")
 	}
 	return nil
+}
+
+func (i PacmanInput) ProvidesVariables() []string {
+	return nil
+}
+
+func (i PacmanInput) HasRevert() bool {
+	return true
 }
 
 func (o PacmanOutput) String() string {

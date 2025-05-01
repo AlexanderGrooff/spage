@@ -49,6 +49,10 @@ func (i CopyInput) GetVariableUsage() []string {
 	return vars
 }
 
+func (i CopyInput) ProvidesVariables() []string {
+	return nil
+}
+
 // HasRevert indicates that the copy module can be reverted.
 func (i CopyInput) HasRevert() bool {
 	return true

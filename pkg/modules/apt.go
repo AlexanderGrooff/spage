@@ -28,7 +28,6 @@ type AptInput struct {
 	UpdateCache bool        `yaml:"update_cache"` // Run apt-get update before action
 	// Internal storage for parsed package list
 	PkgNames []string
-	pkg.ModuleInput
 }
 
 // AptOutput defines the output of the apt module.
@@ -108,6 +107,10 @@ func (i *AptInput) GetVariableUsage() []string {
 	// Also consider State potentially templated?
 	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.State)...)
 	return vars
+}
+
+func (i *AptInput) ProvidesVariables() []string {
+	return nil
 }
 
 // parseAndValidatePackages extracts package names from Name field and validates them.

@@ -22,7 +22,6 @@ type GitInput struct {
 	Repo    string `yaml:"repo"`
 	Dest    string `yaml:"dest"`
 	Version string `yaml:"version"`
-	pkg.ModuleInput
 }
 
 type GitOutput struct {
@@ -53,6 +52,14 @@ func (i GitInput) Validate() error {
 		return fmt.Errorf("missing required parameters. Repo and Dst should be given")
 	}
 	return nil
+}
+
+func (i GitInput) ProvidesVariables() []string {
+	return nil
+}
+
+func (i GitInput) HasRevert() bool {
+	return true
 }
 
 func (o GitOutput) String() string {

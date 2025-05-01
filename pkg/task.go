@@ -154,15 +154,14 @@ func (t Task) ShouldExecute(closure *Closure) bool {
 	return true
 }
 
-func (t Task) ExecuteModule(c *HostContext) TaskResult {
+func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	startTime := time.Now()
-	closure := ConstructClosure(c, t)
 	r := TaskResult{Task: t, Closure: closure, Status: TaskStatusSkipped}
 
 	if !t.ShouldExecute(closure) {
 		common.LogDebug("Skipping execution of task", map[string]interface{}{
 			"task": t.Name,
-			"host": c.Host.Name,
+			"host": closure.HostContext.Host.Name,
 		})
 		return r
 	}
@@ -173,7 +172,7 @@ func (t Task) ExecuteModule(c *HostContext) TaskResult {
 		return r
 	}
 
-	common.DebugOutput("Executing module %s with params %v and context %v", t.Module, t.Params, c)
+	common.DebugOutput("Executing module %s with params %v and context %v", t.Module, t.Params, closure)
 	r.Output, r.Error = module.Execute(t.Params, closure, t.RunAs)
 	duration := time.Since(startTime)
 	r.Duration = duration
@@ -181,15 +180,14 @@ func (t Task) ExecuteModule(c *HostContext) TaskResult {
 	return handleResult(&r, t, closure)
 }
 
-func (t Task) RevertModule(c *HostContext) TaskResult {
+func (t Task) RevertModule(closure *Closure) TaskResult {
 	startTime := time.Now()
-	closure := ConstructClosure(c, t)
 	r := TaskResult{Task: t, Closure: closure, Status: TaskStatusSkipped}
 
 	if !t.ShouldExecute(closure) {
 		common.LogDebug("Skipping revert of task", map[string]interface{}{
 			"task": t.Name,
-			"host": c.Host.Name,
+			"host": closure.HostContext.Host.Name,
 		})
 		return r
 	}
@@ -200,11 +198,11 @@ func (t Task) RevertModule(c *HostContext) TaskResult {
 	}
 
 	// Load previous output from history using sync.Map.Load
-	previousOutputRaw, found := c.History.Load(t.Name) // Changed from index access
+	previousOutputRaw, found := closure.HostContext.History.Load(t.Name) // Changed from index access
 	if !found {
 		common.LogWarn("No previous history found for task during revert", map[string]interface{}{
 			"task": t.Name,
-			"host": c.Host.Name,
+			"host": closure.HostContext.Host.Name,
 		})
 		previousOutputRaw = nil
 	}

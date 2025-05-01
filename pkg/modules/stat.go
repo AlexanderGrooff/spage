@@ -105,6 +105,10 @@ func (i StatInput) HasRevert() bool {
 	return false
 }
 
+func (i StatInput) ProvidesVariables() []string {
+	return nil
+}
+
 func (o StatOutput) String() string {
 	if !o.Stat.Exists {
 		return fmt.Sprintf("path %s does not exist", o.Stat.Path)
