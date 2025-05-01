@@ -206,18 +206,26 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 			tasks = append(tasks, getTasks(node)...)
 		}
 
-		numExpectedResults := len(tasks) * len(contexts)
+		// Initialize history for this level
+		hostTaskLevelHistory = append(hostTaskLevelHistory, make(map[string](chan Task)))
+		numExpectedResults := 0
+		for hostname := range contexts {
+			numTasks := 0
+			for _, task := range tasks {
+				closures, err := getTaskClosures(task, contexts[hostname])
+				if err != nil {
+					return fmt.Errorf("failed to get task closures: %w", err)
+				}
+				numTasks += len(closures)
+			}
+			numExpectedResults += numTasks
+			hostTaskLevelHistory[executionLevel][hostname] = make(chan Task, numTasks)
+			common.DebugOutput("Expecting %d results for %s on level %d", numTasks, hostname, executionLevel)
+		}
 		resultsCh := make(chan TaskResult, numExpectedResults)
 		errCh := make(chan error, 1)
 
-		// Initialize history for this level
-		hostTaskLevelHistory = append(hostTaskLevelHistory, make(map[string](chan Task)))
-		for hostname := range contexts {
-			hostTaskLevelHistory[executionLevel][hostname] = make(chan Task, len(tasks))
-			common.DebugOutput("Expecting %d results for %s on level %d", len(tasks), hostname, executionLevel)
-		}
-
-		common.DebugOutput("Scheduling %d tasks on level %d", len(tasks), executionLevel)
+		common.DebugOutput("Scheduling %d tasks on level %d", numExpectedResults, executionLevel)
 		if cfg.ExecutionMode == "parallel" {
 			go loadLevelParallel(ctx, tasks, contexts, resultsCh, errCh)
 		} else {
@@ -237,9 +245,9 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 			c := result.Closure
 			duration := result.Duration
 
-			fmt.Printf("\nTASK [%s] ****************************************************\n", task.Name)
 			c.HostContext.History.Store(task.Name, result.Output)
 
+			// TODO: how to handle this when there's a loop of tasks?
 			hostTaskLevelHistory[executionLevel][hostname] <- task
 
 			// Prepare structured log data
@@ -367,6 +375,7 @@ func startTask(task Task, closure *Closure, resultsCh chan TaskResult, wg *sync.
 	if wg != nil {
 		defer wg.Done()
 	}
+	fmt.Printf("\nTASK [%s] ****************************************************\n", task.Name)
 	result := task.ExecuteModule(closure)
 	resultsCh <- result
 	return result

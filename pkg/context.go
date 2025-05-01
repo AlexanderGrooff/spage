@@ -256,7 +256,7 @@ func TemplateString(s string, closure *Closure) (string, error) {
 	return res, nil
 }
 
-var jinjaKeywords = []string{"if", "for", "while", "with", "else", "elif", "endfor", "endwhile", "endwith", "endif", "not"}
+var jinjaKeywords = []string{"if", "for", "while", "with", "else", "elif", "endfor", "endwhile", "endwith", "endif", "not", "in", "is"}
 
 func GetVariablesFromExpression(jinjaString string) []string {
 	// TODO: this parses the string within jinja brackets. Add the rest of the Jinja grammar
