@@ -49,7 +49,7 @@ func (i AssertInput) ToCode() string {
 func (i AssertInput) GetVariableUsage() []string {
 	var vars []string
 	for _, assertion := range i.That {
-		vars = append(vars, pkg.GetVariableUsageFromTemplate(assertion)...)
+		vars = append(vars, pkg.GetVariablesFromExpression(assertion)...)
 	}
 	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.Msg)...)
 	return vars

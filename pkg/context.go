@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/user"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -255,23 +256,34 @@ func TemplateString(s string, closure *Closure) (string, error) {
 	return res, nil
 }
 
-func getVariablesFromJinjaString(jinjaString string) []string {
+var jinjaKeywords = []string{"if", "for", "while", "with", "else", "elif", "endfor", "endwhile", "endwith", "endif", "not"}
+
+func GetVariablesFromExpression(jinjaString string) []string {
 	// TODO: this parses the string within jinja brackets. Add the rest of the Jinja grammar
-	filterApplication := regexp.MustCompile(`(.+) | (.+)`)
-	attributeVariable := regexp.MustCompile(`(.+)\.(.+)`)
+	// This really is not sufficient, but it's a start. It doesn't cover things like:
+	// - "string" in var
+	// - 'string' in var
+	filterApplication := regexp.MustCompile(`([\w_]+) \| (.+)`)
+	attributeVariable := regexp.MustCompile(`([\w_]+)\.(.+)`)
 
 	var vars []string
 	if filterApplication.MatchString(jinjaString) {
 		common.DebugOutput("Found Jinja filter %v", jinjaString)
 		for _, match := range filterApplication.FindAllStringSubmatch(jinjaString, -1) {
-			vars = append(vars, getVariablesFromJinjaString(match[1])...)
+			jinjaVar := strings.TrimSpace(match[1])
+			if jinjaVar != "" && !slices.Contains(jinjaKeywords, jinjaVar) {
+				vars = append(vars, GetVariablesFromExpression(jinjaVar)...)
+			}
 		}
 		return vars
 	}
 	if attributeVariable.MatchString(jinjaString) {
 		common.DebugOutput("Found Jinja subattribute %v", jinjaString)
 		for _, match := range attributeVariable.FindAllStringSubmatch(jinjaString, -1) {
-			vars = append(vars, getVariablesFromJinjaString(match[1])...)
+			jinjaVar := strings.TrimSpace(match[1])
+			if jinjaVar != "" && !slices.Contains(jinjaKeywords, jinjaVar) {
+				vars = append(vars, GetVariablesFromExpression(jinjaVar)...)
+			}
 		}
 		return vars
 	}
@@ -284,7 +296,7 @@ func GetVariableUsageFromTemplate(s string) []string {
 
 	var vars []string
 	for _, match := range matches {
-		jinjaVariables := getVariablesFromJinjaString(match[1])
+		jinjaVariables := GetVariablesFromExpression(match[1])
 		vars = append(vars, jinjaVariables...)
 	}
 	if len(vars) > 0 {
