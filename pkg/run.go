@@ -364,7 +364,9 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 }
 
 func startTask(task Task, closure *Closure, resultsCh chan TaskResult, wg *sync.WaitGroup) TaskResult {
-	defer wg.Done()
+	if wg != nil {
+		defer wg.Done()
+	}
 	result := task.ExecuteModule(closure)
 	resultsCh <- result
 	return result
@@ -380,25 +382,95 @@ func getTaskClosures(task Task, c *HostContext) ([]*Closure, error) {
 }
 
 func getLoopClosures(task Task, c *HostContext) ([]*Closure, error) {
-	loop := []string{}
-	closure := ConstructClosure(c, task)
-	switch v := task.Loop.(type) {
+	var loopItems []interface{}          // Use interface{} to hold actual items (string, map, etc.)
+	closure := ConstructClosure(c, task) // Base closure for potential lookups
+
+	switch loopValue := task.Loop.(type) {
 	case string:
-		evalLoop, err := TemplateString(v, closure)
-		if err != nil {
-			return nil, err
+		trimmedLoopStr := strings.TrimSpace(loopValue)
+		// Check if it looks like a simple variable template {{ var }}
+		if strings.HasPrefix(trimmedLoopStr, "{{") && strings.HasSuffix(trimmedLoopStr, "}}") {
+			varName := strings.TrimSpace(trimmedLoopStr[2 : len(trimmedLoopStr)-2])
+			// Attempt to directly look up the variable in the facts
+			factValue, found := c.Facts.Load(varName) // Use Facts.Load instead of GetFact
+			if found {
+				// Check if the retrieved fact is a slice
+				val := reflect.ValueOf(factValue)
+				if val.Kind() == reflect.Slice {
+					// Convert slice to []interface{}
+					loopItems = make([]interface{}, val.Len())
+					for i := 0; i < val.Len(); i++ {
+						loopItems[i] = val.Index(i).Interface()
+					}
+					common.LogDebug("Resolved loop template via direct fact lookup", map[string]interface{}{
+						"task":     task.Name,
+						"template": loopValue,
+						"variable": varName,
+						"type":     fmt.Sprintf("%T", factValue),
+						"count":    len(loopItems),
+					})
+				} else {
+					// The fact exists but is not a slice. Fall back to templating the string.
+					common.LogDebug("Loop template variable found but is not a slice, falling back to string templating", map[string]interface{}{
+						"task":     task.Name,
+						"template": loopValue,
+						"variable": varName,
+						"type":     fmt.Sprintf("%T", factValue),
+					})
+					// Fall through to string templating logic below
+				}
+			} else {
+				// Variable not found in facts, fall back to templating the string.
+				common.LogDebug("Loop template variable not found in facts, falling back to string templating", map[string]interface{}{
+					"task":     task.Name,
+					"template": loopValue,
+					"variable": varName,
+				})
+				// Fall through to string templating logic below
+			}
 		}
-		loop = strings.Split(evalLoop, "\n")
+
+		// If loopItems is still nil, it means direct lookup didn't work or wasn't applicable.
+		// Proceed with templating the string as originally intended, potentially for complex templates or literal strings.
+		if loopItems == nil {
+			evalLoopStr, err := TemplateString(loopValue, closure)
+			if err != nil {
+				// If templating fails here, it's an error
+				return nil, fmt.Errorf("failed to template loop string '%s': %w", loopValue, err)
+			}
+			// Assume the result is a newline-separated list of strings
+			loopItems = []interface{}{}
+			if evalLoopStr != "" { // Avoid creating [""] for empty strings
+				for _, itemStr := range strings.Split(evalLoopStr, "\n") {
+					loopItems = append(loopItems, itemStr)
+				}
+			}
+			common.LogDebug("Resolved loop via string templating and splitting", map[string]interface{}{
+				"task":         task.Name,
+				"template":     loopValue,
+				"resultString": evalLoopStr,
+				"count":        len(loopItems),
+			})
+		}
+
 	case []interface{}:
-		for _, item := range v {
-			loop = append(loop, fmt.Sprintf("%v", item))
-		}
+		// Handles literal lists: [item1, item2] or [{k:v1}, {k:v2}] etc.
+		loopItems = loopValue
+		common.LogDebug("Resolved loop via direct list", map[string]interface{}{
+			"task":  task.Name,
+			"type":  fmt.Sprintf("%T", loopValue),
+			"count": len(loopItems),
+		})
+
+	default:
+		return nil, fmt.Errorf("unsupported loop type: %T", task.Loop)
 	}
 
-	common.DebugOutput("Found loop items for task %q: %v", task.Name, loop)
+	common.DebugOutput("Final loop items for task %q: %v", task.Name, loopItems)
 	closures := []*Closure{}
-	for _, item := range loop {
+	for _, item := range loopItems { // Iterate over the actual items
 		tClosure := ConstructClosure(c, task)
+		// Store the *actual* item (string, map[string]interface{}, etc.) in ExtraFacts
 		tClosure.ExtraFacts["item"] = item
 		closures = append(closures, tClosure)
 	}
@@ -407,7 +479,6 @@ func getLoopClosures(task Task, c *HostContext) ([]*Closure, error) {
 
 func loadLevelSequential(ctx context.Context, tasks []Task, contexts map[string]*HostContext, resultsCh chan TaskResult, errCh chan error) {
 	defer close(resultsCh)
-	var wg sync.WaitGroup
 	var ignoredErr *IgnoredTaskError
 	for _, task := range tasks {
 		for _, c := range contexts {
@@ -417,19 +488,17 @@ func loadLevelSequential(ctx context.Context, tasks []Task, contexts map[string]
 				return
 			}
 			for _, closure := range closures {
-				wg.Add(1)
 				select {
 				case <-ctx.Done():
 					errCh <- ctx.Err()
 					return
 				default:
-					result := startTask(task, closure, resultsCh, &wg)
+					result := startTask(task, closure, resultsCh, nil)
 
 					// Stop sequential execution if task failed
 					if result.Error != nil && !errors.As(result.Error, &ignoredErr) {
 						return
 					}
-					wg.Wait() // Wait for task to finish before moving on to next task
 				}
 			}
 		}
