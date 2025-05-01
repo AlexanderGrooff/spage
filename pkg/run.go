@@ -216,7 +216,9 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 				if err != nil {
 					return fmt.Errorf("failed to get task closures: %w", err)
 				}
-				numTasks += len(closures)
+				nrClosures := len(closures)
+				numTasks += nrClosures
+				common.DebugOutput("Expecting %d results for task %s on level %d", nrClosures, task.Name, executionLevel)
 			}
 			numExpectedResults += numTasks
 			hostTaskLevelHistory[executionLevel][hostname] = make(chan Task, numTasks)
@@ -390,7 +392,7 @@ func getTaskClosures(task Task, c *HostContext) ([]*Closure, error) {
 	}
 }
 
-func getLoopClosures(task Task, c *HostContext) ([]*Closure, error) {
+func ParseLoop(task Task, c *HostContext) ([]interface{}, error) {
 	var loopItems []interface{}          // Use interface{} to hold actual items (string, map, etc.)
 	closure := ConstructClosure(c, task) // Base closure for potential lookups
 
@@ -474,8 +476,14 @@ func getLoopClosures(task Task, c *HostContext) ([]*Closure, error) {
 	default:
 		return nil, fmt.Errorf("unsupported loop type: %T", task.Loop)
 	}
+	return loopItems, nil
+}
 
-	common.DebugOutput("Final loop items for task %q: %v", task.Name, loopItems)
+func getLoopClosures(task Task, c *HostContext) ([]*Closure, error) {
+	loopItems, err := ParseLoop(task, c)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse loop: %w", err)
+	}
 	closures := []*Closure{}
 	for _, item := range loopItems { // Iterate over the actual items
 		tClosure := ConstructClosure(c, task)

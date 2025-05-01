@@ -211,6 +211,9 @@ func GetVariableUsage(task TaskNode) []string {
 	if task.Loop != nil {
 		// TODO: change name of the variable if loopcontrol is used
 		varsUsage = common.RemoveFromSlice(varsUsage, "item")
+		if loop, ok := task.Loop.(string); ok {
+			varsUsage = append(varsUsage, GetVariableUsageFromTemplate(loop)...)
+		}
 	}
 	return varsUsage
 }
