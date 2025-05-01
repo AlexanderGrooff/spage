@@ -30,37 +30,41 @@ type StatInput struct {
 	GetMime           bool   `yaml:"get_mime,omitempty"`
 }
 
+// StatDetails holds the detailed stat information for a file.
+// This struct is used within StatOutput.
+type StatDetails struct {
+	Exists     bool    `json:"exists"`
+	Path       string  `json:"path"`
+	Mode       string  `json:"mode,omitempty"`
+	UID        int     `json:"uid,omitempty"`
+	GID        int     `json:"gid,omitempty"`
+	Size       int64   `json:"size,omitempty"`
+	IsLnk      bool    `json:"islnk,omitempty"`
+	IsReg      bool    `json:"isreg,omitempty"`
+	IsDir      bool    `json:"isdir,omitempty"`
+	IsFifo     bool    `json:"isfifo,omitempty"`
+	IsBlk      bool    `json:"isblk,omitempty"`
+	IsChr      bool    `json:"ischr,omitempty"`
+	IsSock     bool    `json:"issock,omitempty"`
+	Atime      float64 `json:"atime,omitempty"`
+	Mtime      float64 `json:"mtime,omitempty"`
+	Ctime      float64 `json:"ctime,omitempty"`
+	Checksum   string  `json:"checksum,omitempty"`
+	Mime       string  `json:"mime,omitempty"`
+	Attributes string  `json:"attributes,omitempty"`
+	Device     uint64  `json:"dev,omitempty"`        // Device number
+	Inode      uint64  `json:"inode,omitempty"`      // Inode number
+	NLink      uint64  `json:"nlink,omitempty"`      // Number of hard links
+	Rdev       uint64  `json:"rdev,omitempty"`       // Device number (if special file)
+	Blocks     int64   `json:"blocks,omitempty"`     // Number of blocks allocated
+	BlockSize  int64   `json:"block_size,omitempty"` // Block size
+	Owner      string  `json:"owner,omitempty"`
+	Group      string  `json:"group,omitempty"`
+	// TODO: selinux context fields if possible/needed
+}
+
 type StatOutput struct {
-	Stat struct {
-		Exists     bool    `json:"exists"`
-		Path       string  `json:"path"`
-		Mode       string  `json:"mode,omitempty"`
-		UID        int     `json:"uid,omitempty"`
-		GID        int     `json:"gid,omitempty"`
-		Size       int64   `json:"size,omitempty"`
-		IsLnk      bool    `json:"islnk,omitempty"`
-		IsReg      bool    `json:"isreg,omitempty"`
-		IsDir      bool    `json:"isdir,omitempty"`
-		IsFifo     bool    `json:"isfifo,omitempty"`
-		IsBlk      bool    `json:"isblk,omitempty"`
-		IsChr      bool    `json:"ischr,omitempty"`
-		IsSock     bool    `json:"issock,omitempty"`
-		Atime      float64 `json:"atime,omitempty"`
-		Mtime      float64 `json:"mtime,omitempty"`
-		Ctime      float64 `json:"ctime,omitempty"`
-		Checksum   string  `json:"checksum,omitempty"`
-		Mime       string  `json:"mime,omitempty"`
-		Attributes string  `json:"attributes,omitempty"`
-		Device     uint64  `json:"dev,omitempty"`        // Device number
-		Inode      uint64  `json:"inode,omitempty"`      // Inode number
-		NLink      uint64  `json:"nlink,omitempty"`      // Number of hard links
-		Rdev       uint64  `json:"rdev,omitempty"`       // Device number (if special file)
-		Blocks     int64   `json:"blocks,omitempty"`     // Number of blocks allocated
-		BlockSize  int64   `json:"block_size,omitempty"` // Block size
-		Owner      string  `json:"owner,omitempty"`
-		Group      string  `json:"group,omitempty"`
-		// TODO: selinux context fields if possible/needed
-	} `json:"stat"`
+	Stat StatDetails `json:"stat"`
 	pkg.ModuleOutput
 }
 
@@ -202,14 +206,10 @@ func (m StatModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs 
 		out.Stat.NLink = uint64(sysStat.Nlink)
 		out.Stat.Rdev = uint64(sysStat.Rdev)
 		out.Stat.Blocks = sysStat.Blocks
-		out.Stat.BlockSize = sysStat.Blksize
+		out.Stat.BlockSize = int64(sysStat.Blksize)
 
-		// Timestamps
-		out.Stat.Atime = timespecToFloat(sysStat.Atim)
-		out.Stat.Mtime = timespecToFloat(sysStat.Mtim)
-		out.Stat.Ctime = timespecToFloat(sysStat.Ctim)
-		// Note: Go's os.FileInfo ModTime() is generally preferred over accessing syscall directly for Mtime
-		// out.Stat.Mtime = float64(fileInfo.ModTime().UnixNano()) / 1e9
+		// Assign timestamps using OS-specific implementation
+		assignTimestampsOSSpecific(&out.Stat, sysStat)
 
 		// TODO: Lookup Owner and Group names from UID/GID if needed
 		// This would likely require c.RunCommand("id -un <uid>") etc. or OS-specific libraries
@@ -295,40 +295,16 @@ func (m StatModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previou
 	common.DebugOutput("Stat module does not support revert.")
 	// Return an empty output, indicating no change was reverted.
 	return StatOutput{
-		Stat: struct {
-			Exists     bool    `json:"exists"`
-			Path       string  `json:"path"`
-			Mode       string  `json:"mode,omitempty"`
-			UID        int     `json:"uid,omitempty"`
-			GID        int     `json:"gid,omitempty"`
-			Size       int64   `json:"size,omitempty"`
-			IsLnk      bool    `json:"islnk,omitempty"`
-			IsReg      bool    `json:"isreg,omitempty"`
-			IsDir      bool    `json:"isdir,omitempty"`
-			IsFifo     bool    `json:"isfifo,omitempty"`
-			IsBlk      bool    `json:"isblk,omitempty"`
-			IsChr      bool    `json:"ischr,omitempty"`
-			IsSock     bool    `json:"issock,omitempty"`
-			Atime      float64 `json:"atime,omitempty"`
-			Mtime      float64 `json:"mtime,omitempty"`
-			Ctime      float64 `json:"ctime,omitempty"`
-			Checksum   string  `json:"checksum,omitempty"`
-			Mime       string  `json:"mime,omitempty"`
-			Attributes string  `json:"attributes,omitempty"`
-			Device     uint64  `json:"dev,omitempty"`
-			Inode      uint64  `json:"inode,omitempty"`
-			NLink      uint64  `json:"nlink,omitempty"`
-			Rdev       uint64  `json:"rdev,omitempty"`
-			Blocks     int64   `json:"blocks,omitempty"`
-			BlockSize  int64   `json:"block_size,omitempty"`
-			Owner      string  `json:"owner,omitempty"`
-			Group      string  `json:"group,omitempty"`
-		}{
+		Stat: StatDetails{ // Use the named struct here
 			Path:   params.(StatInput).Path, // Include path for context
 			Exists: false,                   // Indicate nothing exists post-revert (conceptually)
 		},
 	}, nil
 }
+
+// assignTimestampsOSSpecific assigns Atime, Mtime, and Ctime to the StatDetails
+// based on the OS-specific fields in syscall.Stat_t.
+// Implementations are provided in stat_linux.go and stat_darwin.go.
 
 func init() {
 	// Ensure syscall package usage is minimal or abstract if targeting non-linux compiles for spage itself.
