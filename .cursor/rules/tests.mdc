@@ -9,3 +9,4 @@ When writing testcases, think of the following:
 - Does it work on both local and remote hosts?
 - Does reverting work?
 - Are all fields registered correctly?
+- *EVERY* field should be able to be templated! Strings like "{{ somevariable }}" should always work, and should correctly determine the order of execution.
