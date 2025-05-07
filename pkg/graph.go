@@ -504,7 +504,13 @@ func main() {
 	// Define flags with environment variable fallbacks
 	configFile := flag.String("config", getEnv("SPAGE_CONFIG_FILE", ""), "Spage configuration file path. If empty, 'spage.yaml' is tried, then defaults.")
 	inventoryFile := flag.String("inventory", getEnv("SPAGE_INVENTORY_FILE", ""), "Spage inventory file path. If empty, a default localhost inventory is used.")
-	
+	// The following flags are still useful if viper is configured to bind them, allowing overrides.
+	// However, their direct parsing into local variables for the options struct is removed
+	// as these settings are now sourced from LoadedConfig.Temporal within RunSpageTemporalWorkerAndWorkflow.
+	_ = flag.String("task-queue", getEnv("TEMPORAL_TASK_QUEUE", "SPAGE_DEFAULT_TASK_QUEUE"), "Temporal task queue name (primarily configured via spage.yaml or SPAGE_TEMPORAL_TASK_QUEUE).")
+	_ = flag.String("temporal-address", getEnv("TEMPORAL_ADDRESS", ""), "Temporal frontend address (primarily configured via spage.yaml or SPAGE_TEMPORAL_ADDRESS).")
+	_ = flag.String("workflow-id-prefix", getEnv("WORKFLOW_ID_PREFIX", "spage-workflow"), "Prefix for generated Temporal workflow IDs (primarily configured via spage.yaml or SPAGE_WORKFLOW_ID_PREFIX).")
+
 	flag.Parse()
 
 	// Load Spage config
@@ -524,13 +530,13 @@ func main() {
 	}
 	spageAppConfig := cmd.GetConfig() // GetConfig() provides defaults if loading failed or no file specified
 
-	log.Printf("Preparing to run Temporal worker.")
+	log.Printf("Preparing to run Temporal worker. Workflow trigger from config: %t", spageAppConfig.Temporal.Trigger)
 
 	// Prepare options for the Temporal worker runner
 	options := pkg.RunSpageTemporalWorkerAndWorkflowOptions{
 		Graph:            GeneratedGraph, // This is the graph code injected above
 		InventoryPath:    *inventoryFile,
-		LoadedConfig:     spageAppConfig, // spageAppConfig now contains Temporal settings from config file, env, or defaults (potentially overridden by flags if cmd.LoadConfig supports it)
+		LoadedConfig:     spageAppConfig, // spageAppConfig now contains Temporal settings from config file, env, or defaults
 	}
 
 	// Run the worker and potentially the workflow

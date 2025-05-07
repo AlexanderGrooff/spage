@@ -334,10 +334,9 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput Graph, inventoryInpu
 
 // RunSpageTemporalWorkerAndWorkflowOptions defines options for RunSpageTemporalWorkerAndWorkflow.
 type RunSpageTemporalWorkerAndWorkflowOptions struct {
-	Graph           Graph
-	InventoryPath   string
-	LoadedConfig    *config.Config // Changed from ConfigPath to break import cycle with cmd
-	TriggerWorkflow bool
+	Graph         Graph
+	InventoryPath string
+	LoadedConfig  *config.Config // Changed from ConfigPath to break import cycle with cmd
 }
 
 // RunSpageTemporalWorkerAndWorkflow sets up and runs a Temporal worker for Spage tasks,
@@ -420,8 +419,8 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 	}
 	log.Println("Worker started successfully.")
 
-	if opts.TriggerWorkflow {
-		log.Println("Attempting to start the SpageTemporalWorkflow...")
+	if spageAppConfig.Temporal.Trigger { // Use the Trigger field from the loaded configuration
+		log.Println("Attempting to start the SpageTemporalWorkflow based on configuration...")
 		workflowIDPrefix := spageAppConfig.Temporal.WorkflowIDPrefix
 		if workflowIDPrefix == "" { // Should ideally not happen
 			workflowIDPrefix = "spage-workflow" // Fallback
