@@ -119,26 +119,6 @@ func setTaskStatus(result TaskResult, task Task, c *Closure) {
 	c.HostContext.Facts.Store(task.Register, facts)
 }
 
-// getTasks returns all tasks from a GraphNode, handling both TaskList and Graph types
-func getTasks(node GraphNode) []Task {
-	switch n := node.(type) {
-	case TaskNode:
-		return []Task{n.Task}
-	case Graph:
-		var tasks []Task
-		for _, level := range n.Tasks {
-			for _, node := range level {
-				tasks = append(tasks, getTasks(node)...)
-			}
-		}
-		return tasks
-	case Task:
-		return []Task{n}
-	default:
-		return nil
-	}
-}
-
 // ExecuteWithTimeout wraps Execute with a timeout
 func ExecuteWithTimeout(cfg *config.Config, graph Graph, inventoryFile string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -194,22 +174,17 @@ func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph Graph, in
 		recapStats[hostname] = map[string]int{"ok": 0, "changed": 0, "failed": 0, "skipped": 0}
 	}
 
-	var orderedGraph [][]GraphNode
+	var orderedGraph [][]Task
 	if cfg.ExecutionMode == "parallel" {
 		orderedGraph = graph.ParallelTasks()
 	} else {
 		orderedGraph = graph.SequentialTasks()
 	}
-	for executionLevel, nodes := range orderedGraph {
+	for executionLevel, tasks := range orderedGraph {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("execution cancelled: %w", ctx.Err())
 		default:
-		}
-
-		var tasks []Task
-		for _, node := range nodes {
-			tasks = append(tasks, getTasks(node)...)
 		}
 
 		// Initialize history for this level

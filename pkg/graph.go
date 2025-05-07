@@ -24,7 +24,7 @@ type GraphNode interface {
 
 type Graph struct {
 	RequiredInputs []string
-	Tasks          [][]GraphNode
+	Tasks          [][]Task
 }
 
 func (g Graph) String() string {
@@ -50,10 +50,10 @@ func (g Graph) ToCode() string {
 		fmt.Fprintf(&f, "%s  %q,\n", Indent(2), input)
 	}
 	fmt.Fprintf(&f, "%s},\n", Indent(1))
-	fmt.Fprintf(&f, "%sTasks: [][]pkg.GraphNode{\n", Indent(1))
+	fmt.Fprintf(&f, "%sTasks: [][]pkg.Task{\n", Indent(1))
 
 	for _, node := range g.Tasks {
-		fmt.Fprintf(&f, "%s  []pkg.GraphNode{\n", Indent(2))
+		fmt.Fprintf(&f, "%s  []pkg.Task{\n", Indent(2))
 		for _, task := range node {
 			fmt.Fprintf(&f, "%s    %s", Indent(3), task.ToCode())
 		}
@@ -117,29 +117,27 @@ func (g Graph) SaveToFile(path string) error {
 }
 
 // Order tasks by their id
-func (g Graph) SequentialTasks() [][]GraphNode {
+func (g Graph) SequentialTasks() [][]Task {
 	maxId := -1
 	for _, nodes := range g.Tasks {
 		for _, node := range nodes {
-			if task, ok := node.(Task); ok {
-				if task.Id > maxId {
-					maxId = task.Id
-				}
+			if node.Id > maxId {
+				maxId = node.Id
 			}
 		}
 	}
 
-	var sortedTasks [][]GraphNode = make([][]GraphNode, maxId+1)
+	var sortedTasks [][]Task = make([][]Task, maxId+1)
 	for _, nodes := range g.Tasks {
 		for _, node := range nodes {
-			sortedTasks[node.(Task).Id] = []GraphNode{node}
+			sortedTasks[node.Id] = []Task{node}
 		}
 	}
 	return sortedTasks
 }
 
 // Order tasks based on execution level
-func (g Graph) ParallelTasks() [][]GraphNode {
+func (g Graph) ParallelTasks() [][]Task {
 	return g.Tasks
 }
 
@@ -191,31 +189,15 @@ func NewGraphFromPlaybook(data []byte) (Graph, error) {
 	return graph, nil
 }
 
-// TaskNode represents a single task in the graph
-type TaskNode struct {
-	Task
-}
-
-func (t TaskNode) String() string {
-	return t.Task.String()
-}
-
-func (t TaskNode) ToCode() string {
-	return t.Task.ToCode()
-}
-
 // Helper function to flatten GraphNodes into a list of TaskNodes
 // while preserving a semblance of original order.
-func flattenNodes(nodes []GraphNode) []TaskNode {
-	var flatTasks []TaskNode
+func flattenNodes(nodes []GraphNode) []Task {
+	var flatTasks []Task
 	var collectTasks func(node GraphNode)
 	collectTasks = func(node GraphNode) {
 		switch n := node.(type) {
-		case TaskNode:
-			flatTasks = append(flatTasks, n)
 		case Task:
-			// Convert Task to TaskNode before adding
-			flatTasks = append(flatTasks, TaskNode{Task: n})
+			flatTasks = append(flatTasks, n)
 		case Graph:
 			// Recursively process nodes within the nested graph's internal structure first.
 			for _, step := range n.Tasks {
@@ -233,7 +215,7 @@ func flattenNodes(nodes []GraphNode) []TaskNode {
 	return flatTasks
 }
 
-func GetVariableUsage(task TaskNode) []string {
+func GetVariableUsage(task Task) []string {
 	varsUsage := task.Params.GetVariableUsage()
 	if task.Loop != nil {
 		// TODO: change name of the variable if loopcontrol is used
@@ -249,7 +231,7 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 	common.LogDebug("NewGraph received nodes.", map[string]interface{}{"count": len(nodes)}) // Log input count
 	g := Graph{RequiredInputs: []string{}}
 	dependsOn := map[string][]string{}
-	taskNameMapping := map[string]TaskNode{}
+	taskNameMapping := map[string]Task{}
 	originalIndexMap := map[string]int{} // Map task name to its original flattened index
 	dependsOnVariables := map[string][]string{}
 	variableProvidedBy := map[string]string{}
@@ -258,14 +240,14 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 
 	// 1. Flatten nodes and record original order index
 	flattenedTasks := flattenNodes(nodes)
-	for i, taskNode := range flattenedTasks {
-		if _, exists := taskNameMapping[taskNode.Name]; exists {
+	for i, task := range flattenedTasks {
+		if _, exists := taskNameMapping[task.Name]; exists {
 			// Handle potential duplicate task names if necessary, though Ansible usually requires unique names within a play
-			common.LogWarn("Duplicate task name found during flattening", map[string]interface{}{"name": taskNode.Name})
+			common.LogWarn("Duplicate task name found during flattening", map[string]interface{}{"name": task.Name})
 			// For now, we'll overwrite, assuming later tasks with the same name take precedence or are errors
 		}
-		taskNameMapping[taskNode.Name] = taskNode
-		originalIndexMap[taskNode.Name] = i
+		taskNameMapping[task.Name] = task
+		originalIndexMap[task.Name] = i
 	}
 
 	// 2. Build dependencies based on flattened tasks
@@ -379,9 +361,9 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 		maxExecutionLevel = max(maxExecutionLevel, executionLevel)
 	}
 
-	g.Tasks = make([][]GraphNode, maxExecutionLevel+1)
+	g.Tasks = make([][]Task, maxExecutionLevel+1)
 	for i := range g.Tasks {
-		g.Tasks[i] = []GraphNode{}
+		g.Tasks[i] = []Task{}
 	}
 
 	// 7. Populate tasks into levels
@@ -393,13 +375,8 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 	// 8. Sort tasks within each level based on original index
 	for i := range g.Tasks {
 		sort.SliceStable(g.Tasks[i], func(a, b int) bool {
-			taskA, okA := g.Tasks[i][a].(TaskNode)
-			taskB, okB := g.Tasks[i][b].(TaskNode)
-			if !okA || !okB {
-				// Should not happen if only TaskNodes are added
-				// If other types could be added, handle comparison logic here
-				return false // Or some default order
-			}
+			taskA := g.Tasks[i][a]
+			taskB := g.Tasks[i][b]
 			// Compare based on the original flattened index
 			return originalIndexMap[taskA.Name] < originalIndexMap[taskB.Name]
 		})
@@ -534,7 +511,7 @@ func main() {
 
 	// Prepare options for the Temporal worker runner
 	options := pkg.RunSpageTemporalWorkerAndWorkflowOptions{
-		Graph:            GeneratedGraph, // This is the graph code injected above
+		Graph:            &GeneratedGraph, // This is the graph code injected above
 		InventoryPath:    *inventoryFile,
 		LoadedConfig:     spageAppConfig, // spageAppConfig now contains Temporal settings from config file, env, or defaults
 	}

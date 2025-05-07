@@ -177,7 +177,7 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 }
 
 // SpageTemporalWorkflow defines the main workflow logic.
-func SpageTemporalWorkflow(ctx workflow.Context, graphInput Graph, inventoryInput *Inventory, spageConfigInput config.Config) error {
+func SpageTemporalWorkflow(ctx workflow.Context, graphInput *Graph, inventoryInput *Inventory, spageConfigInput *config.Config) error {
 	logger := workflow.GetLogger(ctx)
 	logger.Info("SpageTemporalWorkflow started", "workflowId", workflow.GetInfo(ctx).WorkflowExecution.ID)
 
@@ -211,16 +211,7 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput Graph, inventoryInpu
 		}
 		var futureContexts []activityContextInfo
 
-		for _, graphNode := range taskNodesInLevel {
-			task, ok := graphNode.(Task)
-			if !ok {
-				if tn, okTn := graphNode.(TaskNode); okTn {
-					task = tn.Task
-				} else {
-					logger.Error("Unexpected node type in graph tasks", "type", fmt.Sprintf("%T", graphNode))
-					return fmt.Errorf("unexpected node type %T at level %d", graphNode, levelIdx)
-				}
-			}
+		for _, task := range taskNodesInLevel {
 
 			var targetHosts map[string]*Host
 			if inventoryInput != nil {
@@ -235,7 +226,7 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput Graph, inventoryInpu
 				isLoopTask := false
 
 				if task.Loop != nil {
-					tempHostCtx, err := InitializeHostContext(host) // Still needed for ParseLoop if it relies on HostContext methods directly
+					tempHostCtx, err := InitializeHostContext(host)
 					if err != nil {
 						logger.Error("Failed to initialize temporary host context for loop", "task", task.Name, "host", hostName, "error", err)
 						return fmt.Errorf("failed to initialize host context for loop processing for task %s on host %s: %w", task.Name, hostName, err)
@@ -249,7 +240,7 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput Graph, inventoryInpu
 					}
 					// Note: host.Vars are already part of currentInitialFactsForHost due to GetInitialFactsForHost logic
 
-					parsedLoopItems, err := ParseLoop(task, tempHostCtx) // Assumes ParseLoop is in package pkg
+					parsedLoopItems, err := ParseLoop(task, tempHostCtx) // Use currentTaskDefinition
 					tempHostCtx.Close()
 
 					if err != nil {
@@ -275,7 +266,7 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput Graph, inventoryInpu
 						TargetHost:       *host,
 						LoopItem:         loopItem,
 						CurrentHostFacts: currentFactsForActivity, // Pass the rich initial facts
-						SpageCoreConfig:  &spageConfigInput,
+						SpageCoreConfig:  spageConfigInput,
 					}
 					future := workflow.ExecuteActivity(ctx, ExecuteSpageTaskActivity, activityInput)
 					activityFutures = append(activityFutures, future)
@@ -334,7 +325,7 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput Graph, inventoryInpu
 
 // RunSpageTemporalWorkerAndWorkflowOptions defines options for RunSpageTemporalWorkerAndWorkflow.
 type RunSpageTemporalWorkerAndWorkflowOptions struct {
-	Graph         Graph
+	Graph         *Graph
 	InventoryPath string
 	LoadedConfig  *config.Config // Changed from ConfigPath to break import cycle with cmd
 }
@@ -439,7 +430,7 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 			"config_mode":           spageAppConfig.ExecutionMode,
 		})
 
-		we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, SpageTemporalWorkflow, opts.Graph, spageAppInventory, *spageAppConfig)
+		we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, SpageTemporalWorkflow, opts.Graph, spageAppInventory, spageAppConfig)
 		if err != nil {
 			log.Fatalf("Unable to execute SpageTemporalWorkflow: %v", err)
 		}

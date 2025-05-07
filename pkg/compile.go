@@ -287,12 +287,12 @@ func CompileGraphForHost(graph Graph, host Host) (Graph, error) {
 	// Create a copy of the graph to avoid modifying the original
 	compiledGraph := Graph{
 		RequiredInputs: graph.RequiredInputs,
-		Tasks:          make([][]GraphNode, len(graph.Tasks)),
+		Tasks:          make([][]Task, len(graph.Tasks)),
 	}
 
 	// Replace variables in each task with host-specific values
 	for i, taskLayer := range graph.Tasks {
-		compiledGraph.Tasks[i] = make([]GraphNode, len(taskLayer))
+		compiledGraph.Tasks[i] = make([]Task, len(taskLayer))
 		for j, node := range taskLayer {
 			compiledNode, err := compileNode(node, host)
 			if err != nil {
@@ -315,7 +315,7 @@ func MapToSyncMap(m map[string]interface{}) *sync.Map {
 }
 
 // compileNode handles compilation of a single graph node, replacing variables with host values
-func compileNode(node GraphNode, host Host) (GraphNode, error) {
+func compileNode(node GraphNode, host Host) (Task, error) {
 	switch n := node.(type) {
 	case Task:
 		task := n
@@ -349,26 +349,6 @@ func compileNode(node GraphNode, host Host) (GraphNode, error) {
 		}
 		// TODO: Template the params from inventory into the tasks if they exist
 		return task, nil
-
-	case Graph:
-		compiledNestedGraph, err := CompileGraphForHost(n, host)
-		if err != nil {
-			return nil, fmt.Errorf("failed to compile nested graph: %w", err)
-		}
-		return compiledNestedGraph, nil
-	case TaskNode:
-		// Assuming TaskNode just wraps a Task, compile the inner Task
-		compiledInnerTask, err := compileNode(n.Task, host)
-		if err != nil {
-			return nil, fmt.Errorf("failed to compile task within TaskNode: %w", err)
-		}
-		// Need to ensure the returned type is TaskNode wrapping the compiled task
-		if compiledTask, ok := compiledInnerTask.(Task); ok {
-			return TaskNode{Task: compiledTask}, nil
-		}
-		return nil, fmt.Errorf("compiling TaskNode did not return a Task")
-
-	default:
-		return nil, fmt.Errorf("unknown node type: %T", node)
 	}
+	return Task{}, fmt.Errorf("unknown node type: %T", node)
 }

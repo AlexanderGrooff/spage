@@ -80,7 +80,7 @@ type Task struct {
 
 func (t Task) ToCode() string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("pkg.Task{Id: %d, Name: %q, Module: %q, Register: %q, Params: %s, RunAs: %q, When: %q",
+	sb.WriteString(fmt.Sprintf("pkg.Task{Id: %d, Name: %q, Module: %q, Register: %q, Params: &%s, RunAs: %q, When: %q",
 		t.Id,
 		t.Name,
 		t.Module,
