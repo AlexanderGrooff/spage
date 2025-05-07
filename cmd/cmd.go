@@ -2,8 +2,9 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/AlexanderGrooff/spage/pkg/common"
 	"os"
+
+	"github.com/AlexanderGrooff/spage/pkg/common"
 
 	"github.com/spf13/cobra"
 
@@ -82,7 +83,7 @@ var generateCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		graph.SaveToFile(outputFile)
+		graph.SaveToTemporalWorkflowFile(outputFile)
 		common.LogInfo("Compiled binary", map[string]interface{}{
 			"output_file": outputFile,
 		})

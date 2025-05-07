@@ -70,7 +70,7 @@ func registerVariableIfNeeded(result TaskResult, task Task, c *Closure) {
 		valueToStore = failureMap
 	} else if result.Output != nil {
 		// If successful and output exists, register the output facts
-		valueToStore = convertOutputToFactsMap(result.Output)
+		valueToStore = ConvertOutputToFactsMap(result.Output)
 	} else {
 		// If successful but no output (e.g., skipped task), register a minimal success map
 		valueToStore = map[string]interface{}{ // Ensure something is registered for skipped/ok tasks
@@ -563,12 +563,12 @@ func loadLevelParallel(ctx context.Context, tasks []Task, contexts map[string]*H
 // Get the reflect.Type of the ModuleOutput interface once.
 var moduleOutputType = reflect.TypeOf((*ModuleOutput)(nil)).Elem()
 
-// convertOutputToFactsMap attempts to convert a ModuleOutput struct
+// ConvertOutputToFactsMap attempts to convert a ModuleOutput struct
 // into a map[string]interface{} using reflection, creating lowercase keys
 // for exported fields to mimic Ansible fact registration.
 // It also adds a 'changed' key based on the output's Changed() method.
 // If the input is not a struct or is nil, it returns the original value.
-func convertOutputToFactsMap(output ModuleOutput) interface{} {
+func ConvertOutputToFactsMap(output ModuleOutput) interface{} {
 	if output == nil {
 		return nil
 	}
@@ -685,7 +685,7 @@ func convertInterfaceToMapRecursive(data interface{}) interface{} {
 		typeField := typeInfo.Field(i)
 
 		if typeField.IsExported() {
-			// Use lowercase field name as key (consistent with convertOutputToFactsMap)
+			// Use lowercase field name as key (consistent with ConvertOutputToFactsMap)
 			key := strings.ToLower(typeField.Name)
 			// Recursively convert the field's value
 			mapResult[key] = convertInterfaceToMapRecursive(fieldValue.Interface())

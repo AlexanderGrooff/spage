@@ -146,3 +146,60 @@ func (i Inventory) GetContextForRun() (map[string]*HostContext, error) {
 	}
 	return contexts, nil
 }
+
+// GetInitialFactsForHost gathers and layers facts for a specific host from the inventory.
+// It applies global inventory vars, then group vars, then host-specific vars.
+func (i Inventory) GetInitialFactsForHost(host *Host) map[string]interface{} {
+	facts := make(map[string]interface{})
+
+	// 1. Apply global inventory vars
+	for k, v := range i.Vars {
+		facts[k] = v
+	}
+
+	// 2. Apply group vars
+	// Need to consider group hierarchy if that's a feature, but for now, iterate all groups.
+	// If a host is in multiple groups, the behavior for conflicting vars might depend on group order or a defined precedence.
+	// For simplicity here, we assume simple group membership. Last group var applied for a host wins for group vars.
+	// Ansible has more complex group var precedence (e.g., parent groups, child groups).
+	// This implementation will iterate groups as found in i.Groups map (order not guaranteed).
+	// A more robust solution might sort group names or use the host.Groups field to determine relevant groups.
+
+	// Iterate over the host's declared groups first, if available and defined with precedence
+	// This part is a bit tricky without knowing exact group precedence rules Spage aims for.
+	// For now, we'll stick to iterating all defined groups and checking membership.
+	for groupName, group := range i.Groups { // groupName is from inventory.Groups map key
+		// Check if the current host is part of this group definition
+		// The inventory loading logic already flattens hosts, so direct check here is sufficient for vars.
+		// A host `h` from `i.Hosts` might have `h.Groups` map indicating its memberships.
+		if _, isMember := group.Hosts[host.Name]; isMember { // Check if host is explicitly listed in group's hosts
+			// Alternative: check if host.Groups map contains groupName
+			for k, v := range group.Vars {
+				facts[k] = v // Group vars override global vars
+			}
+		} else {
+			// Check if the host is associated with this group via its own host.Groups field
+			// This handles cases where groups are assigned to hosts, rather than hosts listed under groups.
+			if host.Groups != nil {
+				if _, assignedToGroup := host.Groups[groupName]; assignedToGroup {
+					for k, v := range group.Vars {
+						facts[k] = v
+					}
+				}
+			}
+		}
+	}
+
+	// 3. Apply host-specific vars (these have the highest precedence)
+	if host.Vars != nil {
+		for k, v := range host.Vars {
+			facts[k] = v // Host vars override group and global vars
+		}
+	}
+
+	common.LogDebug("Compiled initial facts for host", map[string]interface{}{
+		"host":        host.Name,
+		"facts_count": len(facts),
+	})
+	return facts
+}

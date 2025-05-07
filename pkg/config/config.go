@@ -10,8 +10,9 @@ import (
 
 // Config holds all configuration settings
 type Config struct {
-	Logging       LoggingConfig `mapstructure:"logging"`
-	ExecutionMode string        `mapstructure:"execution_mode"`
+	Logging       LoggingConfig  `mapstructure:"logging"`
+	ExecutionMode string         `mapstructure:"execution_mode"`
+	Temporal      TemporalConfig `mapstructure:"temporal"`
 }
 
 // LoggingConfig holds logging-related configuration
@@ -20,6 +21,14 @@ type LoggingConfig struct {
 	File       string `mapstructure:"file"`
 	Format     string `mapstructure:"format"`
 	Timestamps bool   `mapstructure:"timestamps"`
+}
+
+// TemporalConfig holds Temporal-specific configuration
+type TemporalConfig struct {
+	Address          string `mapstructure:"address"`
+	TaskQueue        string `mapstructure:"task_queue"`
+	WorkflowIDPrefix string `mapstructure:"workflow_id_prefix"`
+	Trigger          bool   `mapstructure:"trigger"`
 }
 
 // ValidOutputFormats contains the list of supported output formats
@@ -75,6 +84,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("logging.format", "plain")
 	v.SetDefault("execution_mode", "parallel")
 	v.SetDefault("logging.timestamps", true)
+
+	// Temporal defaults
+	v.SetDefault("temporal.address", "") // Default to empty, SDK will use localhost:7233 or TEMPORAL_GRPC_ENDPOINT
+	v.SetDefault("temporal.task_queue", "SPAGE_DEFAULT_TASK_QUEUE")
+	v.SetDefault("temporal.workflow_id_prefix", "spage-workflow")
+	v.SetDefault("temporal.trigger", false) // Default to false
 }
 
 // isValidOutputFormat checks if the given format is supported
