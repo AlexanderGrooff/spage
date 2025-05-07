@@ -115,8 +115,19 @@ func (m SystemdModule) DaemonReload(c *pkg.HostContext, runAs string) error {
 	return err
 }
 
-func (m SystemdModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
-	systemdParams := params.(SystemdInput)
+func (m SystemdModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
+	systemdParams, ok := params.(SystemdInput)
+	if !ok {
+		if params == nil {
+			return nil, fmt.Errorf("Execute: params is nil, expected SystemdInput but got nil")
+		}
+		return nil, fmt.Errorf("Execute: incorrect parameter type: expected SystemdInput, got %T", params)
+	}
+
+	if err := systemdParams.Validate(); err != nil {
+		return nil, err
+	}
+
 	stateBeforeExecute, err := m.getCurrentState(systemdParams.Name, closure.HostContext, runAs)
 	if err != nil {
 		return SystemdOutput{}, err
@@ -154,8 +165,15 @@ func (m SystemdModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, run
 	}, nil
 }
 
-func (m SystemdModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
-	systemdParams := params.(SystemdInput)
+func (m SystemdModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+	systemdParams, ok := params.(SystemdInput)
+	if !ok {
+		if params == nil {
+			return nil, fmt.Errorf("Revert: params is nil, expected SystemdInput but got nil")
+		}
+		return nil, fmt.Errorf("Revert: incorrect parameter type: expected SystemdInput, got %T", params)
+	}
+
 	originalState := previous.(SystemdOutput).State.Before
 	stateBeforeRevert, err := m.getCurrentState(systemdParams.Name, closure.HostContext, runAs)
 	if err != nil {

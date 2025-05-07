@@ -97,18 +97,29 @@ func (m TemplateModule) templateContentsToFile(src, dest string, closure *pkg.Cl
 	return originalContents, templatedContents, nil
 }
 
-func (m TemplateModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
-	p := params.(TemplateInput)
-	original, new, err := m.templateContentsToFile(p.Src, p.Dst, closure, runAs)
+func (m TemplateModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
+	templateParams, ok := params.(TemplateInput)
+	if !ok {
+		if params == nil {
+			return nil, fmt.Errorf("Execute: params is nil, expected TemplateInput but got nil")
+		}
+		return nil, fmt.Errorf("Execute: incorrect parameter type: expected TemplateInput, got %T", params)
+	}
+
+	if err := templateParams.Validate(); err != nil {
+		return nil, err
+	}
+
+	original, new, err := m.templateContentsToFile(templateParams.Src, templateParams.Dst, closure, runAs)
 	if err != nil {
 		return nil, err
 	}
 
-	if p.Mode != "" {
-		if err := closure.HostContext.SetFileMode(p.Dst, p.Mode, runAs); err != nil {
+	if templateParams.Mode != "" {
+		if err := closure.HostContext.SetFileMode(templateParams.Dst, templateParams.Mode, runAs); err != nil {
 			// Attempt to revert the content change if setting mode fails
-			_ = closure.HostContext.WriteFile(p.Dst, original, runAs) // Best effort revert
-			return nil, fmt.Errorf("failed to set mode %s for file %s: %w", p.Mode, p.Dst, err)
+			_ = closure.HostContext.WriteFile(templateParams.Dst, original, runAs) // Best effort revert
+			return nil, fmt.Errorf("failed to set mode %s for file %s: %w", templateParams.Mode, templateParams.Dst, err)
 		}
 	}
 
@@ -120,14 +131,21 @@ func (m TemplateModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, ru
 	}, nil
 }
 
-func (m TemplateModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+func (m TemplateModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+	templateParams, ok := params.(TemplateInput)
+	if !ok {
+		if params == nil {
+			return nil, fmt.Errorf("Revert: params is nil, expected TemplateInput but got nil")
+		}
+		return nil, fmt.Errorf("Revert: incorrect parameter type: expected TemplateInput, got %T", params)
+	}
+
 	// TODO: delete if previously created?
-	p := params.(TemplateInput)
 	if previous != nil {
 		prev := previous.(TemplateOutput)
 		if prev.Changed() {
-			if err := closure.HostContext.WriteFile(p.Dst, prev.Contents.Before, runAs); err != nil {
-				return TemplateOutput{}, fmt.Errorf("failed to place back original contents in %s", p.Dst)
+			if err := closure.HostContext.WriteFile(templateParams.Dst, prev.Contents.Before, runAs); err != nil {
+				return TemplateOutput{}, fmt.Errorf("failed to place back original contents in %s", templateParams.Dst)
 			}
 		}
 		return TemplateOutput{

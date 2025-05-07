@@ -137,16 +137,19 @@ func (i *SetFactInput) UnmarshalYAML(unmarshal func(interface{}) error) error {
 }
 
 // Execute sets the facts in the host context.
-func (m SetFactModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
-	input, ok := params.(SetFactInput)
+func (m SetFactModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
+	setFactParams, ok := params.(SetFactInput)
 	if !ok {
-		return nil, fmt.Errorf("invalid params type (%T) for set_fact module", params)
+		if params == nil {
+			return nil, fmt.Errorf("Execute: params is nil, expected SetFactInput but got nil")
+		}
+		return nil, fmt.Errorf("Execute: incorrect parameter type: expected SetFactInput, got %T", params)
 	}
 
 	output := SetFactOutput{FactsSet: make(map[string]interface{})}
 	changed := false
 
-	for key, value := range input.Facts {
+	for key, value := range setFactParams.Facts {
 		var finalValue interface{}
 		var err error
 
@@ -198,10 +201,18 @@ func (m SetFactModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, run
 // Revert for set_fact is generally a no-op. Facts set are part of the context state.
 // Undoing them would require tracking the previous state, which adds complexity.
 // If a task fails, subsequent tasks won't see the facts set by the failed task anyway.
-func (m SetFactModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
-	common.DebugOutput("Revert called for set_fact module (no-op)")
-	// No state to revert directly.
-	return SetFactOutput{FactsSet: map[string]interface{}{}}, nil
+func (m SetFactModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+	// set_fact is generally not reverted as it implies setting state.
+	// For now, it's a no-op that indicates no change.
+	common.LogDebug("Revert called for set_fact module (no-op)", map[string]interface{}{})
+	if previous != nil {
+		// If previous output exists, return it to signify no change from that state.
+		// This assumes previous is already the correct SetFactOutput type.
+		return previous, nil
+	}
+	// If no previous output, return a new SetFactOutput indicating no facts were set/changed by this revert.
+	// The Changed() method on this output will return false.
+	return SetFactOutput{FactsSet: make(map[string]interface{})}, nil
 }
 
 func init() {

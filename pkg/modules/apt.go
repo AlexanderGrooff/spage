@@ -281,17 +281,20 @@ func isPackageInstalled(c *pkg.HostContext, pkgName string) (bool, error) {
 }
 
 // Execute runs the apt module logic.
-func (m AptModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
-	i := params.(*AptInput)
-	// Ensure PkgNames is populated (Validate should have been called by framework)
-	if i.PkgNames == nil {
-		if err := i.parseAndValidatePackages(); err != nil {
-			// This path indicates Validate wasn't called or failed silently before Execute
-			return nil, fmt.Errorf("internal state error: packages not parsed before Execute: %w", err)
+func (m AptModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
+	aptParams, ok := params.(*AptInput)
+	if !ok {
+		if params == nil {
+			return nil, fmt.Errorf("Execute: params is nil, expected *AptInput but got nil")
 		}
+		return nil, fmt.Errorf("Execute: incorrect parameter type: expected *AptInput, got %T", params)
 	}
 
-	output := AptOutput{Packages: i.PkgNames, UpdateCache: i.UpdateCache}
+	if err := aptParams.Validate(); err != nil {
+		return nil, err
+	}
+
+	output := AptOutput{Packages: aptParams.PkgNames, UpdateCache: aptParams.UpdateCache}
 	var overallChanged bool
 
 	// --- Templating package names (already done in parseAndValidatePackages if needed) ---
@@ -299,7 +302,7 @@ func (m AptModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs s
 	// For now, assume Validate is called *after* potential templating by the core engine.
 	// Let's re-template here just in case, though it's inefficient.
 	templatedPkgNames := []string{}
-	for _, name := range i.PkgNames {
+	for _, name := range aptParams.PkgNames {
 		templatedName, err := pkg.TemplateString(name, closure)
 		if err != nil {
 			return nil, fmt.Errorf("failed to template package name '%s': %w", name, err)
@@ -309,7 +312,7 @@ func (m AptModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs s
 	output.Packages = templatedPkgNames // Use templated names in output
 	// --- End Templating ---
 
-	if i.UpdateCache {
+	if aptParams.UpdateCache {
 		common.LogDebug("Updating apt cache", map[string]interface{}{"host": closure.HostContext.Host.Name})
 		_, _, cacheChanged, err := runAptCommand(closure.HostContext, runAs, "update")
 		if err != nil {
@@ -328,7 +331,7 @@ func (m AptModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs s
 	// --- Package State Logic (Handle List) ---
 	pkgsToInstall := []string{}
 	pkgsToRemove := []string{}
-	finalState := i.State // Assume this unless something specific happens
+	finalState := aptParams.State // Assume this unless something specific happens
 
 	for _, pkgName := range templatedPkgNames {
 		installed, err := isPackageInstalled(closure.HostContext, pkgName)
@@ -336,9 +339,9 @@ func (m AptModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs s
 			return nil, fmt.Errorf("failed to check package status for %s: %w", pkgName, err)
 		}
 
-		switch i.State {
+		switch aptParams.State {
 		case "present", "latest":
-			if !installed || i.State == "latest" {
+			if !installed || aptParams.State == "latest" {
 				pkgsToInstall = append(pkgsToInstall, pkgName)
 				// If any package needs install/upgrade, the overall state is likely 'installed' or 'upgraded'
 				// We'll refine state after the command runs
@@ -356,7 +359,7 @@ func (m AptModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs s
 
 	// --- Execute apt commands if needed ---
 	if len(pkgsToInstall) > 0 {
-		common.LogDebug("Ensuring packages are present/latest", map[string]interface{}{"host": closure.HostContext.Host.Name, "packages": pkgsToInstall, "state": i.State})
+		common.LogDebug("Ensuring packages are present/latest", map[string]interface{}{"host": closure.HostContext.Host.Name, "packages": pkgsToInstall, "state": aptParams.State})
 		args := append([]string{"install"}, pkgsToInstall...)
 		_, _, changed, err := runAptCommand(closure.HostContext, runAs, args...)
 		if err != nil {
@@ -384,58 +387,70 @@ func (m AptModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs s
 }
 
 // Revert attempts to undo the action performed by Execute.
-func (m AptModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
-	i := params.(*AptInput)
-	// Ensure PkgNames is populated
-	if i.PkgNames == nil {
-		if err := i.parseAndValidatePackages(); err != nil {
-			// This path indicates Validate wasn't called or failed silently before Revert
-			return nil, fmt.Errorf("internal state error: packages not parsed before Revert: %w", err)
+func (m AptModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+	aptParams, ok := params.(*AptInput)
+	if !ok {
+		if params == nil {
+			return nil, fmt.Errorf("Revert: params is nil, expected *AptInput but got nil")
+		}
+		return nil, fmt.Errorf("Revert: incorrect parameter type: expected *AptInput, got %T", params)
+	}
+
+	// Ensure PkgNames is populated (Validate should have been called already)
+	// Call parseAndValidatePackages if PkgNames is nil, which can happen if direct struct init didn't call it.
+	if aptParams.PkgNames == nil {
+		if err := aptParams.parseAndValidatePackages(); err != nil {
+			return nil, fmt.Errorf("internal state error: packages not parsed/validated before Revert: %w", err)
 		}
 	}
 
-	// --- Re-template package names ---
+	// --- Re-template package names for revert context ---
 	templatedPkgNames := []string{}
-	for _, name := range i.PkgNames {
-		templatedName, err := pkg.TemplateString(name, closure)
-		if err != nil {
-			return nil, fmt.Errorf("failed to template package name '%s' for revert: %w", name, err)
+	// Ensure PkgNames is not nil after potential parseAndValidatePackages call
+	if aptParams.PkgNames != nil {
+		for _, name := range aptParams.PkgNames {
+			templatedName, err := pkg.TemplateString(name, closure)
+			if err != nil {
+				return nil, fmt.Errorf("failed to template package name '%s' for revert: %w", name, err)
+			}
+			templatedPkgNames = append(templatedPkgNames, templatedName)
 		}
-		templatedPkgNames = append(templatedPkgNames, templatedName)
 	}
 	// --- End Templating ---
 
-	if len(templatedPkgNames) == 0 || !i.HasRevert() {
-		return AptOutput{State: "norevert"}, nil // Cannot revert only cache update or latest state
+	if len(templatedPkgNames) == 0 || !aptParams.HasRevert() {
+		// If no packages to process or revert is not defined for the input, return norevert.
+		// This also handles the case where PkgNames was initially nil and remained nil.
+		return AptOutput{State: "norevert"}, nil
 	}
+
+	common.LogInfo("Reverting apt task", map[string]interface{}{
+		"host":     closure.HostContext.Host.Name,
+		"packages": templatedPkgNames,
+		"state":    aptParams.State,
+	})
 
 	var revertAction string
 	var pkgsForRevertAction []string
-	// Determine revert action based on the *original* intended state
-	switch i.State {
+
+	switch aptParams.State {
 	case "present":
-		// If we intended present, revert is to remove
 		revertAction = "remove"
 		pkgsForRevertAction = templatedPkgNames
 	case "absent":
-		// If we intended absent, revert is to install
 		revertAction = "install"
 		pkgsForRevertAction = templatedPkgNames
 	default:
-		return AptOutput{State: "norevert", Packages: templatedPkgNames}, fmt.Errorf("cannot revert state %q for packages %v", i.State, templatedPkgNames)
+		return AptOutput{State: "norevert", Packages: templatedPkgNames}, fmt.Errorf("cannot revert state %q for packages %v", aptParams.State, templatedPkgNames)
 	}
 
-	if len(pkgsForRevertAction) > 0 {
-		common.LogDebug("Reverting apt action", map[string]interface{}{"host": closure.HostContext.Host.Name, "packages": pkgsForRevertAction, "revert_action": revertAction})
-		args := append([]string{revertAction}, pkgsForRevertAction...)
-		_, _, _, err := runAptCommand(closure.HostContext, runAs, args...)
-		if err != nil {
-			return nil, fmt.Errorf("failed to revert apt action (%s) for packages %v: %w", revertAction, pkgsForRevertAction, err)
-		}
+	args := append([]string{revertAction}, pkgsForRevertAction...)
+	_, _, changed, err := runAptCommand(closure.HostContext, runAs, args...)
+	if err != nil {
+		return AptOutput{Packages: pkgsForRevertAction, State: fmt.Sprintf("revert_failed_%s", revertAction), WasChanged: false}, fmt.Errorf("revert command '%s' failed for packages %v: %w", revertAction, pkgsForRevertAction, err)
 	}
 
-	// Output state reflects the revert action attempt
-	return AptOutput{Packages: templatedPkgNames, State: fmt.Sprintf("reverted_%s", revertAction), WasChanged: true}, nil
+	return AptOutput{Packages: pkgsForRevertAction, State: fmt.Sprintf("reverted_%s", revertAction), WasChanged: changed}, nil
 }
 
 // UnmarshalYAML handles shorthand and list formats for the apt module 'name'.

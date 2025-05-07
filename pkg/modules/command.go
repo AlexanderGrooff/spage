@@ -126,14 +126,27 @@ func (m CommandModule) templateAndExecute(command string, closure *pkg.Closure, 
 }
 
 // Execute runs the main command.
-func (m CommandModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
-	cmdParams := params.(CommandInput)
-	return m.templateAndExecute(cmdParams.Execute, closure, CommandOutput{}, runAs)
+func (cm CommandModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
+	commandParams, ok := params.(CommandInput)
+	if !ok {
+		if params == nil {
+			return nil, fmt.Errorf("Execute: params is nil, expected CommandInput but got nil")
+		}
+		return nil, fmt.Errorf("Execute: incorrect parameter type: expected CommandInput, got %T", params)
+	}
+	return cm.templateAndExecute(commandParams.Execute, closure, CommandOutput{}, runAs)
 }
 
 // Revert runs the revert command.
-func (m CommandModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
-	cmdParams := params.(CommandInput)
+func (cm CommandModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+	commandParams, ok := params.(CommandInput)
+	if !ok {
+		if params == nil {
+			return nil, fmt.Errorf("Revert: params is nil, expected CommandInput but got nil")
+		}
+		return nil, fmt.Errorf("Revert: incorrect parameter type: expected CommandInput, got %T", params)
+	}
+
 	var prev CommandOutput
 	if previous != nil {
 		// Ensure type assertion is safe
@@ -145,7 +158,7 @@ func (m CommandModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, prev
 	} else {
 		prev = CommandOutput{}
 	}
-	return m.templateAndExecute(cmdParams.Revert, closure, prev, runAs)
+	return cm.templateAndExecute(commandParams.Revert, closure, prev, runAs)
 }
 
 // UnmarshalYAML allows the command module value to be either a string (shorthand)

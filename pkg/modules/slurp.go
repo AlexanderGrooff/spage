@@ -29,9 +29,10 @@ type SlurpInput struct {
 
 // SlurpOutput holds the result of the slurp operation.
 type SlurpOutput struct {
-	Content  string `json:"content"`  // Base64 encoded content of the file
-	Source   string `json:"source"`   // The source path provided
-	Encoding string `json:"encoding"` // The encoding of the content (always base64)
+	Content      string `json:"content"`  // Base64 encoded content of the file
+	Source       string `json:"source"`   // The source path provided
+	Encoding     string `json:"encoding"` // The encoding of the content (always base64)
+	ChangedState bool   `json:"changed"`  // Indicates whether the module changed the system state
 	pkg.ModuleOutput
 }
 
@@ -74,7 +75,7 @@ func (o SlurpOutput) String() string {
 
 // Changed indicates whether the module changed the system state. Slurp is read-only.
 func (o SlurpOutput) Changed() bool {
-	return false
+	return o.ChangedState // This field will be false for slurp
 }
 
 // AsFacts provides the output data in a map suitable for registration.
@@ -113,19 +114,22 @@ func (i *SlurpInput) UnmarshalYAML(node *yaml.Node) error {
 }
 
 // Execute runs the slurp operation on the remote host.
-func (m SlurpModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
-	input, ok := params.(SlurpInput)
+func (m SlurpModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
+	slurpParams, ok := params.(SlurpInput)
 	if !ok {
-		return nil, fmt.Errorf("invalid params type (%T) for slurp module", params)
+		if params == nil {
+			return nil, fmt.Errorf("Execute: params is nil, expected SlurpInput but got nil")
+		}
+		return nil, fmt.Errorf("Execute: incorrect parameter type: expected SlurpInput, got %T", params)
 	}
 
-	if err := input.Validate(); err != nil {
+	if err := slurpParams.Validate(); err != nil {
 		return nil, err
 	}
 
-	templatedSrc, err := pkg.TemplateString(input.Source, closure)
+	templatedSrc, err := pkg.TemplateString(slurpParams.Source, closure)
 	if err != nil {
-		return nil, fmt.Errorf("failed to template source path %q: %w", input.Source, err)
+		return nil, fmt.Errorf("failed to template source path %q: %w", slurpParams.Source, err)
 	}
 
 	common.LogDebug("Attempting to slurp file", map[string]interface{}{"host": closure.HostContext.Host.Name, "source": templatedSrc})
@@ -151,9 +155,10 @@ func (m SlurpModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs
 	encodedContent := base64.StdEncoding.EncodeToString(fileBytes)
 
 	output := SlurpOutput{
-		Content:  encodedContent,
-		Source:   templatedSrc, // Use templated path in output
-		Encoding: "base64",
+		Content:      encodedContent,
+		Source:       templatedSrc,
+		Encoding:     "base64",
+		ChangedState: false, // Slurp itself doesn't change state
 	}
 
 	common.LogInfo("Slurp successful", map[string]interface{}{ // Log success
@@ -165,10 +170,14 @@ func (m SlurpModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs
 	return output, nil
 }
 
-// Revert is a no-op for the read-only slurp module.
-func (m SlurpModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
-	common.LogDebug("Revert called for slurp module (no-op)")
-	return SlurpOutput{}, nil // Return empty output, no state change
+// Revert for slurp is a no-op as it only reads information.
+func (m SlurpModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+	common.LogDebug("Revert called for slurp module (no-op)", map[string]interface{}{})
+	if previous != nil {
+		return previous, nil
+	}
+	// If no previous output, return a new SlurpOutput indicating no change.
+	return SlurpOutput{Content: "", Encoding: "base64", Source: "", ChangedState: false}, nil
 }
 
 // ParameterAliases defines aliases if needed.

@@ -153,7 +153,7 @@ func getOriginalState(path string, c *pkg.HostContext) (exists bool, state, mode
 		// Get link target using readlink command (os.Readlink or sftp ReadLink might be alternatives)
 		// Need to run this command potentially as a different user.
 		// Find the intended runAs user from the task parameters if available (TODO: Requires plumbing runAs to getOriginalState somehow or handling it in Execute)
-		tempRunAs := ""                                                      // Placeholder - How to get the correct runAs for the readlink command?
+		tempRunAs := ""                                                    // Placeholder - How to get the correct runAs for the readlink command?
 		readlinkCmd := fmt.Sprintf("readlink %s", fmt.Sprintf("%q", path)) // Quote path
 		targetStdout, targetStderr, targetErr := c.RunCommand(readlinkCmd, tempRunAs)
 		if targetErr != nil {
@@ -176,23 +176,34 @@ func getOriginalState(path string, c *pkg.HostContext) (exists bool, state, mode
 	return exists, state, mode, linkTarget, isLink, nil
 }
 
-func (m FileModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
-	p := params.(FileInput)
-	templatedPath, err := pkg.TemplateString(p.Path, closure)
-	if err != nil {
-		return nil, fmt.Errorf("failed to template path %s: %w", p.Path, err)
+func (m FileModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
+	fileParams, ok := params.(FileInput)
+	if !ok {
+		if params == nil {
+			return nil, fmt.Errorf("Execute: params is nil, expected FileInput but got nil")
+		}
+		return nil, fmt.Errorf("Execute: incorrect parameter type: expected FileInput, got %T", params)
 	}
-	templatedSrc, err := pkg.TemplateString(p.Src, closure)
-	if err != nil {
-		return nil, fmt.Errorf("failed to template src %s: %w", p.Src, err)
+
+	if err := fileParams.Validate(); err != nil {
+		return nil, err
 	}
-	templatedMode, err := pkg.TemplateString(p.Mode, closure)
+
+	templatedPath, err := pkg.TemplateString(fileParams.Path, closure)
 	if err != nil {
-		return nil, fmt.Errorf("failed to template mode %s: %w", p.Mode, err)
+		return nil, fmt.Errorf("failed to template path %s: %w", fileParams.Path, err)
 	}
-	templatedState, err := pkg.TemplateString(p.State, closure)
+	templatedSrc, err := pkg.TemplateString(fileParams.Src, closure)
 	if err != nil {
-		return nil, fmt.Errorf("failed to template state %s: %w", p.State, err)
+		return nil, fmt.Errorf("failed to template src %s: %w", fileParams.Src, err)
+	}
+	templatedMode, err := pkg.TemplateString(fileParams.Mode, closure)
+	if err != nil {
+		return nil, fmt.Errorf("failed to template mode %s: %w", fileParams.Mode, err)
+	}
+	templatedState, err := pkg.TemplateString(fileParams.State, closure)
+	if err != nil {
+		return nil, fmt.Errorf("failed to template state %s: %w", fileParams.State, err)
 	}
 
 	// 1. Get original state - runAs is needed later for commands like rm, readlink
@@ -297,7 +308,7 @@ func (m FileModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs 
 		// Convert symbolic mode (e.g., u+x, g-w) or octal string to final mode
 		// For now, we only handle simple 3-digit octal modes like Ansible's basic usage
 		// TODO: Implement more complex mode handling if needed (like Ansible does)
-		finalMode := templatedMode                           // Assume templatedMode is octal for now
+		finalMode := templatedMode                    // Assume templatedMode is octal for now
 		if finalMode != originalMode || actionTaken { // Apply if mode differs or if file was just created/state changed
 			common.DebugOutput("Applying mode %s to %s", finalMode, templatedPath)
 			if err := closure.HostContext.SetFileMode(templatedPath, finalMode, runAs); err != nil {
@@ -342,12 +353,20 @@ func (m FileModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs 
 	return out, nil
 }
 
-func (m FileModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
-	p := params.(FileInput)
-	templatedPath, err := pkg.TemplateString(p.Path, closure)
-	if err != nil {
-		return nil, fmt.Errorf("failed to template path %s: %w", p.Path, err)
+func (m FileModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+	fileParams, ok := params.(FileInput)
+	if !ok {
+		if params == nil {
+			return nil, fmt.Errorf("Revert: params is nil, expected FileInput but got nil")
+		}
+		return nil, fmt.Errorf("Revert: incorrect parameter type: expected FileInput, got %T", params)
 	}
+
+	templatedPath, err := pkg.TemplateString(fileParams.Path, closure)
+	if err != nil {
+		return nil, fmt.Errorf("failed to template path %s for revert: %w", fileParams.Path, err)
+	}
+
 	if previous == nil {
 		common.DebugOutput("Not reverting file module because previous result was nil")
 		return FileOutput{}, nil
@@ -375,8 +394,6 @@ func (m FileModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previou
 		// Remove current path first to handle state changes (e.g., dir -> file)
 		common.DebugOutput("Removing current path %s before reverting to original state %s", templatedPath, prev.State.Before)
 		if _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
-			// This might fail if the path was already removed, which could be ok if the original state was absent, but we checked Exists.Before was true.
-			// Log a warning? It might interfere with the next step.
 			common.DebugOutput("Warning during revert: failed to remove existing path %s (might be ok if state didn't change drastically): %v", templatedPath, err)
 		}
 
@@ -401,7 +418,6 @@ func (m FileModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previou
 				return nil, fmt.Errorf("revert failed: could not create link %s -> %s: %v", templatedPath, prev.LinkTarget.Before, err)
 			}
 		case "absent":
-			// Should have been handled by the !prev.Exists.Before check
 			common.DebugOutput("Revert: Original state was absent, already handled.")
 		default:
 			return nil, fmt.Errorf("revert failed: unknown original state %q for %s", prev.State.Before, templatedPath)

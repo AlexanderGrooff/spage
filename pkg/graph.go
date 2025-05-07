@@ -253,11 +253,12 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 	// 2. Build dependencies based on flattened tasks
 	for _, n := range taskNameMapping {
 		common.DebugOutput("Processing node TaskNode %q %q: %+v", n.Name, n.Module, n.Params)
-		if n.Params == nil {
-			common.DebugOutput("Task %q has no params, skipping dependency analysis for params", n.Name)
+		// Check if n.Params.Actual is nil, as n.Params is a struct and cannot be nil itself.
+		if n.Params.Actual == nil {
+			common.DebugOutput("Task %q has no actual params, skipping dependency analysis for params", n.Name)
 			// Continue processing other dependencies like before/after
 		} else {
-			dependsOnVariables[n.Name] = GetVariableUsage(n)
+			dependsOnVariables[n.Name] = GetVariableUsage(n) // GetVariableUsage itself uses n.Params.Actual
 		}
 
 		if n.Before != "" {
@@ -275,8 +276,9 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 		}
 
 		// Check if the module's parameters inherently provide variables (like set_fact)
-		if n.Params != nil {
-			providedVars := n.Params.ProvidesVariables()
+		// Ensure n.Params.Actual is not nil before accessing its methods.
+		if n.Params.Actual != nil {
+			providedVars := n.Params.Actual.ProvidesVariables()
 			for _, providedVar := range providedVars {
 				// TODO: Consider case sensitivity/normalization if needed (Ansible usually lowercases)
 				variableProvidedBy[providedVar] = n.Name

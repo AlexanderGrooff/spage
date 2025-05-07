@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/AlexanderGrooff/spage/pkg"
+	"github.com/AlexanderGrooff/spage/pkg/common"
 )
 
 type GitModule struct{}
@@ -94,8 +95,19 @@ func (m GitModule) CheckoutVersion(dest, version string, c *pkg.HostContext, run
 	return "", nil
 }
 
-func (m GitModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
-	gitParams := params.(GitInput)
+func (m GitModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
+	gitParams, ok := params.(GitInput)
+	if !ok {
+		if params == nil {
+			return nil, fmt.Errorf("Execute: params is nil, expected GitInput but got nil")
+		}
+		return nil, fmt.Errorf("Execute: incorrect parameter type: expected GitInput, got %T", params)
+	}
+
+	if err := gitParams.Validate(); err != nil {
+		return nil, err
+	}
+
 	revBefore, err := m.GetCurrentRev(gitParams.Dest, closure.HostContext, runAs)
 	if err != nil {
 		m.CloneRepo(gitParams.Repo, gitParams.Dest, closure.HostContext, runAs)
@@ -116,22 +128,48 @@ func (m GitModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs s
 	}, nil
 }
 
-func (m GitModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
-	gitParams := params.(GitInput)
-	if previous != nil {
-		prev := previous.(GitOutput)
-		if prev.Changed() {
-			m.CheckoutVersion(gitParams.Dest, prev.Rev.Before, closure.HostContext, runAs)
+func (m GitModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+	gitParams, ok := params.(GitInput)
+	if !ok {
+		if params == nil {
+			return nil, fmt.Errorf("Revert: params is nil, expected GitInput but got nil")
 		}
-		return GitOutput{
-			Rev: pkg.RevertableChange[string]{
-				Before: prev.Rev.After,
-				After:  prev.Rev.Before,
-			},
-			Dest: gitParams.Dest,
-		}, nil
+		return nil, fmt.Errorf("Revert: incorrect parameter type: expected GitInput, got %T", params)
 	}
-	return GitOutput{Dest: gitParams.Dest}, nil
+
+	// Revert for git module: if the repo was updated, try to revert to the 'previous' state.
+	// A more robust revert (e.g., removing a cloned repo if original state was absent) is not fully implemented.
+	if previous != nil {
+		prevOutput, ok := previous.(GitOutput)
+		if !ok {
+			return nil, fmt.Errorf("Revert: previous output was not of type GitOutput, got %T", previous)
+		}
+		if prevOutput.Changed() && prevOutput.Rev.Before != "" {
+			common.LogInfo("Reverting git repo", map[string]interface{}{"dest": gitParams.Dest, "reverting_to_rev": prevOutput.Rev.Before})
+			_, err := m.CheckoutVersion(gitParams.Dest, prevOutput.Rev.Before, closure.HostContext, runAs)
+			if err != nil {
+				return nil, fmt.Errorf("Revert: failed to checkout previous version %s for %s: %w", prevOutput.Rev.Before, gitParams.Dest, err)
+			}
+			// After successful revert, the new state's "Before" is the one we just reverted to.
+			// And the new state's "After" is what it was before this revert (prevOutput.Rev.After).
+			// This might be confusing. For now, let's represent the reverted state.
+			currentRevAfterRevert, _ := m.GetCurrentRev(gitParams.Dest, closure.HostContext, runAs)
+			return GitOutput{
+				Rev: pkg.RevertableChange[string]{
+					Before: prevOutput.Rev.After,  // State before this revert operation
+					After:  currentRevAfterRevert, // State after this revert operation (should be prevOutput.Rev.Before)
+				},
+				Dest: gitParams.Dest,
+			}, nil
+		} else {
+			// Previous output existed but didn't change, or no before revision to revert to.
+			common.LogInfo("Revert: No change detected in previous GitOutput or no before revision, no revert action taken.", map[string]interface{}{"dest": gitParams.Dest})
+			return GitOutput{Dest: gitParams.Dest, Rev: prevOutput.Rev}, nil // Return current state as unchanged
+		}
+	}
+	// No previous output, cannot determine how to revert.
+	common.LogWarn("Revert: No previous GitOutput, cannot perform revert.", map[string]interface{}{"dest": gitParams.Dest})
+	return GitOutput{Dest: gitParams.Dest}, nil // Indicate no change as we couldn't revert.
 }
 
 func init() {

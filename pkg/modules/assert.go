@@ -83,11 +83,18 @@ func (o AssertOutput) Changed() bool {
 	return false
 }
 
-func (m AssertModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
-	p := params.(AssertInput)
+func (m AssertModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
+	assertParams, ok := params.(AssertInput)
+	if !ok {
+		if params == nil {
+			return nil, fmt.Errorf("Execute: params is nil, expected AssertInput but got nil")
+		}
+		return nil, fmt.Errorf("Execute: incorrect parameter type: expected AssertInput, got %T", params)
+	}
+
 	output := AssertOutput{}
 
-	for _, assertion := range p.That {
+	for _, assertion := range assertParams.That {
 		// TODO: Implement a more robust expression evaluation engine like CEL or leverage existing 'when' logic.
 		// For now, we'll do a simple check: treat the string as a boolean.
 		// Render any variables first
@@ -95,8 +102,8 @@ func (m AssertModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runA
 		if err != nil {
 			output.FailedAssertion = assertion // Use original assertion on render error
 			errMsg := fmt.Sprintf("failed to render assertion template %q: %v", assertion, err)
-			if p.Msg != "" {
-				renderedMsg, renderErr := pkg.TemplateString(p.Msg, closure)
+			if assertParams.Msg != "" {
+				renderedMsg, renderErr := pkg.TemplateString(assertParams.Msg, closure)
 				if renderErr != nil {
 					errMsg = fmt.Sprintf("%s (also failed to render custom message: %v)", errMsg, renderErr)
 				} else {
@@ -117,8 +124,8 @@ func (m AssertModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runA
 		if !assertionPassed { // Use the evaluated truthiness
 			output.FailedAssertion = assertion // Use original assertion string
 			errMsg := fmt.Sprintf("assertion failed: %q (evaluated to %q)", assertion, renderedAssertion)
-			if p.Msg != "" {
-				renderedMsg, renderErr := pkg.TemplateString(p.Msg, closure)
+			if assertParams.Msg != "" {
+				renderedMsg, renderErr := pkg.TemplateString(assertParams.Msg, closure)
 				if renderErr != nil {
 					errMsg = fmt.Sprintf("%s (also failed to render custom message: %v)", errMsg, renderErr)
 				} else {
@@ -133,9 +140,9 @@ func (m AssertModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runA
 }
 
 // Revert for Assert is a no-op as it doesn't change state
-func (m AssertModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
-	common.DebugOutput("Revert called for assert module (no-op)")
-	return AssertOutput{}, nil
+func (m AssertModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+	common.LogDebug("Revert called for assert module (no-op)", map[string]interface{}{})
+	return AssertOutput{}, nil // Return zero value of AssertOutput
 }
 
 func init() {

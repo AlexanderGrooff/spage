@@ -1,13 +1,16 @@
 package pkg
 
 import (
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	// Remove pongo2 import if no longer needed directly here
 	// "github.com/flosch/pongo2"
+	"gopkg.in/yaml.v3"
 )
 
 type TaskStatus string
@@ -62,30 +65,177 @@ type FactProvider interface {
 }
 
 type Task struct {
-	Id           int         `yaml:"id"`
-	Name         string      `yaml:"name"`
-	Module       string      `yaml:"module"`
-	Params       ModuleInput `yaml:"params"`
-	Validate     string      `yaml:"validate"`
-	Before       string      `yaml:"before"`
-	After        string      `yaml:"after"`
-	When         string      `yaml:"when"`
-	Register     string      `yaml:"register"`
-	RunAs        string      `yaml:"run_as"`
-	IgnoreErrors bool        `yaml:"ignore_errors,omitempty"`
-	FailedWhen   string      `yaml:"failed_when,omitempty"`
-	ChangedWhen  string      `yaml:"changed_when,omitempty"`
-	Loop         interface{} `yaml:"loop,omitempty"`
+	Id           int         `yaml:"id" json:"id"`
+	Name         string      `yaml:"name" json:"name"`
+	Module       string      `yaml:"module" json:"module"`
+	Params       ModuleInput `yaml:"params" json:"params"`
+	Validate     string      `yaml:"validate" json:"validate,omitempty"`
+	Before       string      `yaml:"before" json:"before,omitempty"`
+	After        string      `yaml:"after" json:"after,omitempty"`
+	When         string      `yaml:"when" json:"when,omitempty"`
+	Register     string      `yaml:"register" json:"register,omitempty"`
+	RunAs        string      `yaml:"run_as" json:"run_as,omitempty"`
+	IgnoreErrors bool        `yaml:"ignore_errors,omitempty" json:"ignore_errors,omitempty"`
+	FailedWhen   string      `yaml:"failed_when,omitempty" json:"failed_when,omitempty"`
+	ChangedWhen  string      `yaml:"changed_when,omitempty" json:"changed_when,omitempty"`
+	Loop         interface{} `yaml:"loop,omitempty" json:"loop,omitempty"`
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface for Task.
+func (t *Task) UnmarshalJSON(data []byte) error {
+	type Alias Task // Use type alias to avoid recursion during unmarshaling
+	aux := &struct {
+		Params json.RawMessage `json:"params"`
+		*Alias
+	}{
+		Alias: (*Alias)(t),
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return fmt.Errorf("failed to unmarshal task aux struct: %w", err)
+	}
+
+	// If Module or Params are not present, or params is null, no further processing for Params.Actual
+	if t.Module == "" || len(aux.Params) == 0 || string(aux.Params) == "null" {
+		t.Params.Actual = nil // Ensure Actual is nil if no params or module
+		return nil
+	}
+
+	mod, ok := GetModule(t.Module)
+	if !ok {
+		return fmt.Errorf("module %s not found during task JSON unmarshaling", t.Module)
+	}
+
+	inputType := mod.InputType()
+	// Create a new instance of the specific module input type (e.g., *ShellInput)
+	// inputVal will be a pointer to the zero value of the input type.
+	inputValPtr := reflect.New(inputType)
+
+	// Unmarshal the raw JSON params into this specific input type instance
+	if err := json.Unmarshal(aux.Params, inputValPtr.Interface()); err != nil {
+		return fmt.Errorf("failed to unmarshal params for module %s: %w", t.Module, err)
+	}
+
+	// Assign the dereferenced pointer (the actual struct value) to ActualInput
+	// Assuming ConcreteModuleInputProvider is implemented by value types (e.g. ShellInput, not *ShellInput)
+	// If it's implemented by pointers, then inputValPtr.Interface().(ConcreteModuleInputProvider) is correct.
+	// Let's check ShellInput definition - it doesn't embed, methods are on ShellInput value.
+	// So, InputType() is reflect.TypeOf(ShellInput{}), reflect.New gives *ShellInput.
+	// ConcreteModuleInputProvider might be implemented by *ShellInput.
+	// For now, let's assume InputType returns the non-pointer type, and methods are on non-pointer.
+
+	actualParamProvider, ok := inputValPtr.Interface().(ConcreteModuleInputProvider)
+	if !ok {
+		// This case happens if the type returned by reflect.New(inputType).Interface() (e.g. *ShellInput)
+		// does not implement ConcreteModuleInputProvider, but inputType (e.g. ShellInput) does.
+		// We need to check if the element itself implements it.
+		if inputValPtr.Elem().CanAddr() {
+			actualParamProvider, ok = inputValPtr.Elem().Addr().Interface().(ConcreteModuleInputProvider)
+		}
+		if !ok {
+			actualParamProvider, ok = inputValPtr.Elem().Interface().(ConcreteModuleInputProvider)
+		}
+		if !ok {
+			return fmt.Errorf("failed to assert module %s params type %T to ConcreteModuleInputProvider", t.Module, inputValPtr.Interface())
+		}
+	}
+	t.Params.Actual = actualParamProvider
+	return nil
+}
+
+// UnmarshalYAML implements the yaml.Unmarshaler interface for Task.
+func (t *Task) UnmarshalYAML(node *yaml.Node) error {
+	type Alias Task // Use type alias to avoid recursion
+	// Create an auxiliary struct to capture all fields except Params initially,
+	// and capture Params as a raw yaml.Node.
+	auxTask := &struct {
+		*Alias
+		ParamsNode yaml.Node `yaml:"params"` // Capture 'params' field as a yaml.Node
+	}{
+		Alias: (*Alias)(t),
+	}
+
+	if err := node.Decode(&auxTask); err != nil {
+		// This might be a partial decode if 'params' is complex and not decoded into auxTask.ParamsNode correctly by default.
+		// Let's try decoding into Alias first, then extract params node if that fails or params is empty.
+	}
+
+	// Attempt to unmarshal everything into the Alias first
+	if err := node.Decode((*Alias)(t)); err != nil {
+		return fmt.Errorf("failed to unmarshal task alias: %w", err)
+	}
+
+	// Now, specifically extract the params node for custom processing.
+	// We need to find the 'params' key in the YAML mapping node.
+	var paramsSubNode *yaml.Node
+	if node.Kind == yaml.MappingNode {
+		for i := 0; i < len(node.Content); i += 2 {
+			if node.Content[i].Value == "params" {
+				paramsSubNode = node.Content[i+1]
+				break
+			}
+		}
+	}
+
+	if t.Module == "" || paramsSubNode == nil || paramsSubNode.Tag == "!!null" {
+		t.Params.Actual = nil // No module or no params, so Actual is nil
+		return nil
+	}
+
+	mod, ok := GetModule(t.Module)
+	if !ok {
+		return fmt.Errorf("module %s not found during task YAML unmarshaling", t.Module)
+	}
+
+	inputType := mod.InputType() // e.g., reflect.TypeOf(ShellInput{})
+	// Create a new instance of the specific module input type (e.g., a pointer to ShellInput)
+	inputVal := reflect.New(inputType).Interface() // This is *ShellInput
+
+	// Decode the paramsSubNode into the specific input type instance.
+	// This allows types like ShellInput to use their own UnmarshalYAML if they have one.
+	if err := paramsSubNode.Decode(inputVal); err != nil {
+		return fmt.Errorf("failed to decode params for module %s from YAML node: %w", t.Module, err)
+	}
+
+	// inputVal is now a pointer to the populated struct (e.g., *ShellInput).
+	// We need to ensure it implements ConcreteModuleInputProvider.
+	actualParamProvider, ok := inputVal.(ConcreteModuleInputProvider)
+	if !ok {
+		// If the pointer type doesn't implement, check if the value type does.
+		// This can happen if methods are defined on T, not *T.
+		// However, for unmarshaling into, we usually pass a pointer.
+		// And methods like ToCode might be on the value type for ShellInput.
+		// Let's assume methods are on value type as per ShellInput.ToCode() etc.
+		// reflect.New(inputType) gives *Type. Interface() is *Type.
+		// If ConcreteModuleInputProvider is implemented by Type, then actualParamProvider is reflect.ValueOf(inputVal).Elem().Interface().(ConcreteModuleInputProvider)
+
+		val := reflect.ValueOf(inputVal)
+		if val.Kind() == reflect.Ptr {
+			actualParamProvider, ok = val.Elem().Interface().(ConcreteModuleInputProvider)
+		}
+		if !ok {
+			return fmt.Errorf("failed to assert module %s params type %T to ConcreteModuleInputProvider after YAML decode", t.Module, inputVal)
+		}
+	}
+	t.Params.Actual = actualParamProvider
+	return nil
 }
 
 func (t Task) ToCode() string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("pkg.Task{Id: %d, Name: %q, Module: %q, Register: %q, Params: &%s, RunAs: %q, When: %q",
+	// Get the code representation of the actual parameters
+	actualParamsCode := "nil" // Default to nil if Actual is not populated
+	if t.Params.Actual != nil {
+		actualParamsCode = t.Params.Actual.ToCode()
+	}
+
+	// Construct the Task literal, wrapping the actual params code in pkg.ModuleInput
+	sb.WriteString(fmt.Sprintf("pkg.Task{Id: %d, Name: %q, Module: %q, Register: %q, Params: pkg.ModuleInput{Actual: %s}, RunAs: %q, When: %q",
 		t.Id,
 		t.Name,
 		t.Module,
 		t.Register,
-		t.Params.ToCode(),
+		actualParamsCode, // Use the generated code for the Actual field
 		t.RunAs,
 		t.When,
 	))
@@ -174,8 +324,23 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 		return r
 	}
 
-	common.DebugOutput("Executing module %s with params %v and context %v", t.Module, t.Params, closure)
-	r.Output, r.Error = module.Execute(t.Params, closure, t.RunAs)
+	// Pass t.Params.Actual to module.Execute
+	if t.Params.Actual == nil {
+		// This can happen if YAML/JSON params were empty or module not found during unmarshal
+		// Or if the module genuinely takes no parameters.
+		// We need a way for modules to declare if they accept nil params.
+		// For now, if Actual is nil, we might need to create a zero value of InputType if possible,
+		// or the module must handle nil params.
+		// Let's assume modules that require params will have Actual populated.
+		// If a module *can* take no params, its InputType might be an empty struct or similar.
+		// And its Validate() should reflect that.
+		// We should ensure `Actual` is a valid (even if zero) instance of ConcreteModuleInputProvider.
+		// The unmarshalers should ensure Actual is populated with a zero value if params are empty but module exists.
+		// For now, let's proceed, modules should validate their params. This might panic if module expects non-nil.
+	}
+
+	common.DebugOutput("Executing module %s with params %v and context %v", t.Module, t.Params.Actual, closure)
+	r.Output, r.Error = module.Execute(t.Params.Actual, closure, t.RunAs)
 	duration := time.Since(startTime)
 	r.Duration = duration
 
@@ -221,8 +386,9 @@ func (t Task) RevertModule(closure *Closure) TaskResult {
 		}
 	}
 
-	// Execute the revert logic of the module
-	r.Output, r.Error = module.Revert(t.Params, closure, previousOutput, t.RunAs) // Pass potentially nil previousOutput
+	// Pass t.Params.Actual to module.Revert
+	// Similar nil check considerations as in ExecuteModule for t.Params.Actual
+	r.Output, r.Error = module.Revert(t.Params.Actual, closure, previousOutput, t.RunAs) // Pass potentially nil previousOutput
 	duration := time.Since(startTime)
 	r.Duration = duration
 

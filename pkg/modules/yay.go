@@ -124,9 +124,21 @@ func (m YayModule) RemovePackages(packages []string, c *pkg.HostContext, runAs s
 	return YayOutput{}, nil
 }
 
-func (m YayModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
-	packages := params.(YayInput).Name
-	state := params.(YayInput).State
+func (m YayModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
+	yayParams, ok := params.(YayInput)
+	if !ok {
+		if params == nil {
+			return nil, fmt.Errorf("Execute: params is nil, expected YayInput but got nil")
+		}
+		return nil, fmt.Errorf("Execute: incorrect parameter type: expected YayInput, got %T", params)
+	}
+
+	if err := yayParams.Validate(); err != nil {
+		return nil, err
+	}
+
+	packages := yayParams.Name
+	state := yayParams.State
 	if state == "absent" {
 		return m.RemovePackages(packages, closure.HostContext, runAs)
 	} else {
@@ -134,9 +146,17 @@ func (m YayModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs s
 	}
 }
 
-func (m YayModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+func (m YayModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+	yayParams, ok := params.(YayInput)
+	if !ok {
+		if params == nil {
+			return nil, fmt.Errorf("Revert: params is nil, expected YayInput but got nil")
+		}
+		return nil, fmt.Errorf("Revert: incorrect parameter type: expected YayInput, got %T", params)
+	}
+
 	previousPackages := previous.(YayOutput).Installed
-	state := params.(YayInput).State
+	state := yayParams.State
 	if state == "absent" {
 		return m.InstallPackages(previousPackages, closure.HostContext, runAs)
 	} else {

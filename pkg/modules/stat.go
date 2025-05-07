@@ -147,30 +147,41 @@ func timespecToFloat(ts syscall.Timespec) float64 {
 	return float64(ts.Sec) + float64(ts.Nsec)/1e9
 }
 
-func (m StatModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
-	p := params.(StatInput)
+func (m StatModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
+	statParams, ok := params.(StatInput)
+	if !ok {
+		if params == nil {
+			return nil, fmt.Errorf("Execute: params is nil, expected StatInput but got nil")
+		}
+		return nil, fmt.Errorf("Execute: incorrect parameter type: expected StatInput, got %T", params)
+	}
+
+	if err := statParams.Validate(); err != nil {
+		return nil, err
+	}
+
 	out := StatOutput{}
-	out.Stat.Path = p.Path // Set path initially
+	out.Stat.Path = statParams.Path // Set path initially
 
 	// Set default checksum algorithm if it's empty
-	checksumAlgo := p.ChecksumAlgorithm
+	checksumAlgo := statParams.ChecksumAlgorithm
 	if checksumAlgo == "" {
 		checksumAlgo = "sha1"
 	}
 
 	// Pass the follow parameter from the input to c.Stat
 	// Note: runAs is currently ignored by c.Stat
-	fileInfo, err := closure.HostContext.Stat(p.Path, p.Follow)
+	fileInfo, err := closure.HostContext.Stat(statParams.Path, statParams.Follow)
 
 	// Handle errors from c.Stat
 	if err != nil {
 		if os.IsNotExist(err) {
-			common.DebugOutput("Stat: Path %s not found: %v", p.Path, err)
+			common.DebugOutput("Stat: Path %s not found: %v", statParams.Path, err)
 			out.Stat.Exists = false
 			return out, nil // File not existing is not a module execution error
 		} else {
 			// Other error during stat (permissions, etc.)
-			return nil, fmt.Errorf("failed to stat path %s: %w", p.Path, err)
+			return nil, fmt.Errorf("failed to stat path %s: %w", statParams.Path, err)
 		}
 	}
 
@@ -197,7 +208,7 @@ func (m StatModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs 
 	sysStat, ok := fileInfo.Sys().(*syscall.Stat_t)
 	if !ok {
 		// Could log a warning that detailed info isn't available
-		common.LogWarn("Could not get detailed syscall.Stat_t for path", map[string]interface{}{"path": p.Path})
+		common.LogWarn("Could not get detailed syscall.Stat_t for path", map[string]interface{}{"path": statParams.Path})
 	} else {
 		out.Stat.UID = int(sysStat.Uid)
 		out.Stat.GID = int(sysStat.Gid)
@@ -221,12 +232,12 @@ func (m StatModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs 
 	// These still require running commands as os.FileInfo doesn't provide them.
 
 	// Get Checksum
-	if p.GetChecksum && out.Stat.IsReg { // Only checksum regular files
+	if statParams.GetChecksum && out.Stat.IsReg { // Only checksum regular files
 		checksumCmd := ""
 		switch checksumAlgo {
 		case "sha1", "md5", "sha224", "sha256", "sha384", "sha512":
 			// Quote path using Sprintf %q for basic shell safety
-			checksumCmd = fmt.Sprintf("%ssum %s", checksumAlgo, fmt.Sprintf("%q", p.Path))
+			checksumCmd = fmt.Sprintf("%ssum %s", checksumAlgo, fmt.Sprintf("%q", statParams.Path))
 		default:
 			return nil, fmt.Errorf("internal error: unsupported checksum algorithm: %s", checksumAlgo)
 		}
@@ -234,55 +245,55 @@ func (m StatModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs 
 		common.DebugOutput("Running checksum: %s", checksumCmd)
 		chkStdout, chkStderr, chkErr := closure.HostContext.RunCommand(checksumCmd, runAs)
 		if chkErr != nil {
-			common.DebugOutput("WARNING: Failed to calculate checksum for %s: %v, stderr: %s", p.Path, chkErr, chkStderr)
+			common.DebugOutput("WARNING: Failed to calculate checksum for %s: %v, stderr: %s", statParams.Path, chkErr, chkStderr)
 		} else {
 			parts := strings.Fields(chkStdout)
 			if len(parts) > 0 {
 				out.Stat.Checksum = parts[0]
 			} else {
-				common.DebugOutput("WARNING: Could not parse checksum output for %s: %q", p.Path, chkStdout)
+				common.DebugOutput("WARNING: Could not parse checksum output for %s: %q", statParams.Path, chkStdout)
 			}
 		}
-	} else if p.GetChecksum {
-		common.DebugOutput("Skipping checksum calculation for non-regular file: %s", p.Path)
+	} else if statParams.GetChecksum {
+		common.DebugOutput("Skipping checksum calculation for non-regular file: %s", statParams.Path)
 	}
 
 	// Get Mime Type
-	if p.GetMime {
+	if statParams.GetMime {
 		mimeCmd := "file --brief"
-		if p.Follow {
+		if statParams.Follow {
 			mimeCmd += " -L" // Follow symlinks
 		}
 		// Quote path using Sprintf %q
-		mimeCmd += fmt.Sprintf(" --mime-type %s", fmt.Sprintf("%q", p.Path))
+		mimeCmd += fmt.Sprintf(" --mime-type %s", fmt.Sprintf("%q", statParams.Path))
 
 		common.DebugOutput("Running mime-type: %s", mimeCmd)
 		mimeStdout, mimeStderr, mimeErr := closure.HostContext.RunCommand(mimeCmd, runAs)
 		if mimeErr != nil {
-			common.DebugOutput("WARNING: Failed to get mime type for %s: %v, stderr: %s", p.Path, mimeErr, mimeStderr)
+			common.DebugOutput("WARNING: Failed to get mime type for %s: %v, stderr: %s", statParams.Path, mimeErr, mimeStderr)
 		} else {
 			out.Stat.Mime = strings.TrimSpace(mimeStdout)
 		}
 	}
 
 	// Get Attributes (Linux specific using lsattr)
-	if p.GetAttributes {
+	if statParams.GetAttributes {
 		// Quote path using Sprintf %q
-		attrCmd := fmt.Sprintf("lsattr -d %s", fmt.Sprintf("%q", p.Path))
+		attrCmd := fmt.Sprintf("lsattr -d %s", fmt.Sprintf("%q", statParams.Path))
 		common.DebugOutput("Running lsattr: %s", attrCmd)
 		attrStdout, attrStderr, attrErr := closure.HostContext.RunCommand(attrCmd, runAs)
 		if attrErr != nil {
 			if strings.Contains(attrStderr, "command not found") || strings.Contains(attrStderr, "not found") {
-				common.DebugOutput("lsattr command not found on host, cannot get attributes for %s", p.Path)
+				common.DebugOutput("lsattr command not found on host, cannot get attributes for %s", statParams.Path)
 			} else {
-				common.DebugOutput("WARNING: Failed to get attributes for %s: %v, stderr: %s", p.Path, attrErr, attrStderr)
+				common.DebugOutput("WARNING: Failed to get attributes for %s: %v, stderr: %s", statParams.Path, attrErr, attrStderr)
 			}
 		} else {
 			parts := strings.Fields(attrStdout)
 			if len(parts) > 0 {
 				out.Stat.Attributes = parts[0]
 			} else {
-				common.DebugOutput("WARNING: Could not parse lsattr output for %s: %q", p.Path, attrStdout)
+				common.DebugOutput("WARNING: Could not parse lsattr output for %s: %q", statParams.Path, attrStdout)
 			}
 		}
 	}
@@ -291,15 +302,15 @@ func (m StatModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs 
 }
 
 // Stat module is read-only, so Revert does nothing.
-func (m StatModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
-	common.DebugOutput("Stat module does not support revert.")
-	// Return an empty output, indicating no change was reverted.
-	return StatOutput{
-		Stat: StatDetails{ // Use the named struct here
-			Path:   params.(StatInput).Path, // Include path for context
-			Exists: false,                   // Indicate nothing exists post-revert (conceptually)
-		},
-	}, nil
+func (m StatModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+	// Stat module is read-only, so revert is a no-op.
+	common.LogDebug("Revert called for stat module (no-op)", map[string]interface{}{})
+	// Return the previous output if available, otherwise a new non-changed output.
+	if previous != nil {
+		return previous, nil
+	}
+	// Construct a default StatOutput. Its Changed() method will return false.
+	return StatOutput{Stat: StatDetails{}}, nil
 }
 
 // assignTimestampsOSSpecific assigns Atime, Mtime, and Ctime to the StatDetails

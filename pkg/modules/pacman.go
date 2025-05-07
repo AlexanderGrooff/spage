@@ -124,9 +124,21 @@ func (m PacmanModule) RemovePackages(packages []string, c *pkg.HostContext, runA
 	return PacmanOutput{}, nil
 }
 
-func (m PacmanModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
-	packages := params.(PacmanInput).Name
-	state := params.(PacmanInput).State
+func (m PacmanModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
+	pacmanParams, ok := params.(PacmanInput)
+	if !ok {
+		if params == nil {
+			return nil, fmt.Errorf("Execute: params is nil, expected PacmanInput but got nil")
+		}
+		return nil, fmt.Errorf("Execute: incorrect parameter type: expected PacmanInput, got %T", params)
+	}
+
+	if err := pacmanParams.Validate(); err != nil {
+		return nil, err
+	}
+
+	packages := pacmanParams.Name
+	state := pacmanParams.State
 	if state == "absent" {
 		return m.RemovePackages(packages, closure.HostContext, runAs)
 	} else {
@@ -134,9 +146,17 @@ func (m PacmanModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runA
 	}
 }
 
-func (m PacmanModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+func (m PacmanModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+	pacmanParams, ok := params.(PacmanInput)
+	if !ok {
+		if params == nil {
+			return nil, fmt.Errorf("Revert: params is nil, expected PacmanInput but got nil")
+		}
+		return nil, fmt.Errorf("Revert: incorrect parameter type: expected PacmanInput, got %T", params)
+	}
+
 	previousPackages := previous.(PacmanOutput).Installed
-	state := params.(PacmanInput).State
+	state := pacmanParams.State
 	if state == "absent" {
 		return m.InstallPackages(previousPackages, closure.HostContext, runAs)
 	} else {

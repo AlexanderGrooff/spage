@@ -243,13 +243,13 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		// Get the interface{} representation of the pointed-to value (e.g., *AptInput)
 		paramsInterface := paramsPtrValue.Interface()
 
-		// Assert the pointed-to value against the ModuleInput interface
-		if typedParams, ok := paramsInterface.(ModuleInput); ok {
-			task.Params = typedParams // Store the pointer (e.g., *AptInput) that implements the interface
+		// Assert the pointed-to value against the ConcreteModuleInputProvider interface
+		if typedParams, ok := paramsInterface.(ConcreteModuleInputProvider); ok {
+			task.Params.Actual = typedParams // Store the provider in task.Params.Actual
 		} else {
 			// This error case might indicate a fundamental issue with the module's InputType registration
 			// or the interface implementation itself.
-			errors = append(errors, fmt.Errorf("params value (%T) does not implement ModuleInput for module %s", paramsInterface, task.Module))
+			errors = append(errors, fmt.Errorf("params value (%T) does not implement ConcreteModuleInputProvider for module %s", paramsInterface, task.Module))
 			continue
 		}
 

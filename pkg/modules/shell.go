@@ -105,13 +105,38 @@ func (m ShellModule) templateAndExecute(command string, closure *pkg.Closure, pr
 	return output, nil
 }
 
-func (m ShellModule) Execute(params pkg.ModuleInput, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
-	shellParams := params.(ShellInput)
+func (m ShellModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
+	// Type assert params to ShellInput
+	shellParams, ok := params.(ShellInput)
+	if !ok {
+		// This could also happen if params is *ShellInput and ConcreteModuleInputProvider is implemented by *ShellInput
+		// However, given InputType returns ShellInput{}, the actual type should be ShellInput.
+		// If params is nil (e.g. no params provided in playbook), this assertion will fail.
+		// Modules should validate if they can accept nil/empty params.
+		// For ShellInput, Validate() checks for empty Execute and Revert.
+		if params == nil {
+			// If params is nil, and shell module requires params (which it does via Validate)
+			// we should probably use a zero value ShellInput to let its Validate() handle it.
+			// Or, the Validate() method should have been called by the task execution logic before Execute.
+			// For now, assume if params is nil, it implies empty params, so create a zero ShellInput.
+			// Task.ExecuteModule should ideally ensure params is a valid, non-nil ConcreteModuleInputProvider if required by module.
+			// The current Task unmarshal logic attempts to always create an instance.
+			return nil, fmt.Errorf("Execute: params is nil, expected ShellInput but got nil")
+		}
+		return nil, fmt.Errorf("Execute: incorrect parameter type: expected ShellInput, got %T", params)
+	}
 	return m.templateAndExecute(shellParams.Execute, closure, ShellOutput{}, runAs)
 }
 
-func (m ShellModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
-	shellParams := params.(ShellInput)
+func (m ShellModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+	// Type assert params to ShellInput
+	shellParams, ok := params.(ShellInput)
+	if !ok {
+		if params == nil {
+			return nil, fmt.Errorf("Revert: params is nil, expected ShellInput but got nil")
+		}
+		return nil, fmt.Errorf("Revert: incorrect parameter type: expected ShellInput, got %T", params)
+	}
 	var prev ShellOutput
 	if previous != nil {
 		prev = previous.(ShellOutput)
@@ -122,6 +147,8 @@ func (m ShellModule) Revert(params pkg.ModuleInput, closure *pkg.Closure, previo
 }
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface for ShellInput.
+// This remains important as Task.UnmarshalYAML will delegate decoding of the params node
+// to this method if the input type is ShellInput.
 // It allows the shell module value to be either a string (shorthand for execute)
 // or a map with 'execute' and optionally 'revert' keys.
 func (i *ShellInput) UnmarshalYAML(node *yaml.Node) error {
