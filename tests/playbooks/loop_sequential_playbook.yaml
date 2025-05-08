@@ -14,17 +14,19 @@
       loop:
         - item1
         - item2
+      after: create temp dir
 
     - name: verify item 1
       stat:
         path: /tmp/spage/item1.txt
       register: item1_stat
+      after: loop over list
 
     - name: verify item 2
       stat:
         path: /tmp/spage/item2.txt
       register: item2_stat
-
+      after: loop over list
     - name: assert list items
       assert:
         that:
@@ -44,17 +46,18 @@
         path: /tmp/spage/{{ item }}.txt
         state: touch
       loop: "{{ loop_list }}"
-
+      after: define list
     - name: verify item 3
       stat:
         path: /tmp/spage/item3.txt
       register: item3_stat
+      after: loop over string expression
 
     - name: verify item 4
       stat:
         path: /tmp/spage/item4.txt
       register: item4_stat
-
+      after: loop over string expression
     - name: assert string items
       assert:
         that:
@@ -72,16 +75,18 @@
           value: item5_value
         - key: item6
           value: item6_value
+      after: create temp dir
 
     - name: verify item 5
       stat:
         path: /tmp/spage/item5.txt
       register: item5_stat
-
+      after: loop over list of dicts
     - name: verify item 6
       stat:
         path: /tmp/spage/item6.txt
       register: item6_stat
+      after: loop over list of dicts
 
     - name: assert dict items
       assert:
