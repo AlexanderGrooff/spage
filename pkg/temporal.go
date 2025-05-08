@@ -670,11 +670,25 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 			log.Fatalf("Unable to execute SpageTemporalWorkflow: %v", err)
 		}
 		log.Println("Successfully started SpageTemporalWorkflow", "WorkflowID", we.GetID(), "RunID", we.GetRunID())
-	}
 
-	log.Println("Application setup complete. Worker is running. Press Ctrl+C to exit.")
-	<-worker.InterruptCh()
-	log.Println("Shutting down worker...")
-	myWorker.Stop()
-	log.Println("Worker stopped.")
+		// Wait for the workflow to complete
+		log.Println("Waiting for workflow to complete...", "WorkflowID", we.GetID())
+		err = we.Get(context.Background(), nil) // Wait for the workflow to complete.
+		if err != nil {
+			log.Printf("Workflow %s completed with error: %v", we.GetID(), err)
+		} else {
+			log.Println("Workflow completed successfully.", "WorkflowID", we.GetID())
+		}
+
+		log.Println("Shutting down worker after triggered workflow completion...")
+		myWorker.Stop()
+		log.Println("Worker stopped.")
+	} else {
+		// If not triggering a workflow, keep the worker running until interrupted
+		log.Println("Application setup complete. Worker is running. Press Ctrl+C to exit.")
+		<-worker.InterruptCh()
+		log.Println("Shutting down worker...")
+		myWorker.Stop()
+		log.Println("Worker stopped.")
+	}
 }
