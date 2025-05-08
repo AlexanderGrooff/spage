@@ -111,36 +111,64 @@ func (t *Task) UnmarshalJSON(data []byte) error {
 	// inputVal will be a pointer to the zero value of the input type.
 	inputValPtr := reflect.New(inputType)
 
-	// Unmarshal the raw JSON params into this specific input type instance
+	// Unmarshal the raw JSON params into this specific input type instance (pointer)
 	if err := json.Unmarshal(aux.Params, inputValPtr.Interface()); err != nil {
 		return fmt.Errorf("failed to unmarshal params for module %s: %w", t.Module, err)
 	}
 
-	// Assign the dereferenced pointer (the actual struct value) to ActualInput
-	// Assuming ConcreteModuleInputProvider is implemented by value types (e.g. ShellInput, not *ShellInput)
-	// If it's implemented by pointers, then inputValPtr.Interface().(ConcreteModuleInputProvider) is correct.
-	// Let's check ShellInput definition - it doesn't embed, methods are on ShellInput value.
-	// So, InputType() is reflect.TypeOf(ShellInput{}), reflect.New gives *ShellInput.
-	// ConcreteModuleInputProvider might be implemented by *ShellInput.
-	// For now, let's assume InputType returns the non-pointer type, and methods are on non-pointer.
+	// inputValPtr is the pointer (e.g., *ShellInput). Get the value it points to.
+	elemValue := inputValPtr.Elem()
 
-	actualParamProvider, ok := inputValPtr.Interface().(ConcreteModuleInputProvider)
-	if !ok {
-		// This case happens if the type returned by reflect.New(inputType).Interface() (e.g. *ShellInput)
-		// does not implement ConcreteModuleInputProvider, but inputType (e.g. ShellInput) does.
-		// We need to check if the element itself implements it.
-		if inputValPtr.Elem().CanAddr() {
-			actualParamProvider, ok = inputValPtr.Elem().Addr().Interface().(ConcreteModuleInputProvider)
-		}
-		if !ok {
-			actualParamProvider, ok = inputValPtr.Elem().Interface().(ConcreteModuleInputProvider)
-		}
-		if !ok {
-			return fmt.Errorf("failed to assert module %s params type %T to ConcreteModuleInputProvider", t.Module, inputValPtr.Interface())
+	// Check if the VALUE type implements the interface.
+	actualParamProvider, ok := elemValue.Interface().(ConcreteModuleInputProvider)
+	if ok {
+		// If the value type implements it, store the value.
+		t.Params.Actual = actualParamProvider
+	} else {
+		// Check if the POINTER type implements the interface (less common case for modules).
+		actualParamProvider, ok = inputValPtr.Interface().(ConcreteModuleInputProvider)
+		if ok {
+			// If the pointer type implements it, store the pointer.
+			t.Params.Actual = actualParamProvider
+		} else {
+			// Neither value nor pointer implements the interface - should not happen for registered modules.
+			return fmt.Errorf("module %s params type %T (or its pointer) does not implement ConcreteModuleInputProvider", t.Module, elemValue.Interface())
 		}
 	}
-	t.Params.Actual = actualParamProvider
+
 	return nil
+}
+
+// MarshalJSON implements the json.Marshaler interface for Task.
+// This ensures that the Params field is marshaled correctly by handling the Actual field.
+func (t Task) MarshalJSON() ([]byte, error) {
+	// Use a type alias to avoid recursion when marshaling other fields.
+	type Alias Task
+	// Create an auxiliary struct to handle standard fields and the special Params field.
+	aux := &struct {
+		*Alias
+		Params json.RawMessage `json:"params,omitempty"` // Use RawMessage to hold pre-marshaled params
+	}{
+		Alias: (*Alias)(&t),
+	}
+
+	// Marshal the actual parameters stored in t.Params.Actual.
+	var paramsBytes []byte
+	var err error
+	if t.Params.Actual != nil {
+		paramsBytes, err = json.Marshal(t.Params.Actual)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal Task.Params.Actual for module %s: %w", t.Module, err)
+		}
+	} else {
+		// If Actual is nil, represent params as JSON null or an empty object.
+		// An empty object {} might be safer for downstream compatibility.
+		paramsBytes = []byte("{}")
+	}
+	aux.Params = paramsBytes // Assign the marshaled bytes
+
+	// Marshal the auxiliary struct which now has correctly marshaled params.
+	return json.Marshal(aux)
 }
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface for Task.

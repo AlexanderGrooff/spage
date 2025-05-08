@@ -1,7 +1,6 @@
 package pkg
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 )
@@ -23,26 +22,9 @@ type ConcreteModuleInputProvider interface {
 // when it's a field within another struct (like Task).
 type ModuleInput struct {
 	// Actual holds the concrete *ShellInput, *CopyInput, etc.
-	// This field is populated by custom UnmarshalJSON/YAML methods on the Task struct.
-	Actual ConcreteModuleInputProvider `json:"-" yaml:"-"`
-}
-
-// MarshalJSON implements the json.Marshaler interface for ModuleInput.
-// It ensures that the Actual ConcreteModuleInputProvider is serialized.
-func (mi *ModuleInput) MarshalJSON() ([]byte, error) {
-	if mi.Actual != nil {
-		return json.Marshal(mi.Actual)
-	}
-	return json.Marshal(nil) // Or use []byte("{}") for an empty JSON object
-}
-
-// MarshalYAML implements the yaml.Marshaler interface for ModuleInput.
-// It ensures that the Actual ConcreteModuleInputProvider is serialized.
-func (mi *ModuleInput) MarshalYAML() (interface{}, error) {
-	if mi.Actual != nil {
-		return mi.Actual, nil
-	}
-	return nil, nil
+	// Let the standard marshalers handle this field when marshaling the parent Task struct,
+	// using the custom Task MarshalJSON.
+	Actual ConcreteModuleInputProvider `json:"actual,omitempty" yaml:"actual,omitempty"`
 }
 
 // ToCode delegates to the Actual ConcreteModuleInputProvider.
