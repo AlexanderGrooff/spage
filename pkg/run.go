@@ -13,9 +13,9 @@ import (
 	"github.com/AlexanderGrooff/spage/pkg/config"
 )
 
-// registerVariableIfNeeded checks if a task result should be registered as a variable
+// RegisterVariableIfNeeded checks if a task result should be registered as a variable
 // and stores it in the HostContext's Facts if necessary.
-func registerVariableIfNeeded(result TaskResult, task Task, c *Closure) {
+func RegisterVariableIfNeeded(result TaskResult, task Task, c *Closure) {
 	// Only register if the task has a name assigned to the 'register' key
 	if task.Register == "" {
 		return

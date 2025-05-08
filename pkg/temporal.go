@@ -31,14 +31,15 @@ type SpageActivityInput struct {
 
 // SpageActivityResult defines the output from our generic Spage task activity.
 type SpageActivityResult struct {
-	HostName       string
-	TaskName       string
-	Output         string
-	Changed        bool
-	Error          string // Store error message if any
-	Skipped        bool
-	Ignored        bool
-	RegisteredVars map[string]interface{}
+	HostName          string
+	TaskName          string
+	Output            string
+	Changed           bool
+	Error             string // Store error message if any
+	Skipped           bool
+	Ignored           bool
+	RegisteredVars    map[string]interface{}
+	HostFactsSnapshot map[string]interface{}
 }
 
 // ExecuteSpageTaskActivity is the generic activity that runs a Spage task.
@@ -151,6 +152,19 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 			}
 		}
 	}
+
+	// After module execution and handling 'register', capture all facts from the activity's HostContext.
+	result.HostFactsSnapshot = make(map[string]interface{})
+	hostCtx.Facts.Range(func(key, value interface{}) bool {
+		if kStr, ok := key.(string); ok {
+			result.HostFactsSnapshot[kStr] = value
+		} else {
+			// Log or handle non-string keys if necessary, though sync.Map keys are typically strings here.
+			logger.Warn("Non-string key found in HostContext facts during snapshot", "key_type", fmt.Sprintf("%T", key), "key_value", key)
+		}
+		return true
+	})
+
 	return result, nil
 }
 
@@ -183,15 +197,27 @@ func processActivityResultAndRegisterFacts(
 		logger.Info("Task completed", "task", taskName, "host", hostName, "status", status)
 	}
 
-	// Merge registered variables from activityResult back into the workflow's hostFacts for this host
-	if len(activityResult.RegisteredVars) > 0 {
-		if _, ok := hostFacts[activityResult.HostName]; !ok {
-			logger.Warn("Host facts map not found for host when registering variables, creating new one.", "host", activityResult.HostName)
-			hostFacts[activityResult.HostName] = make(map[string]interface{})
+	// Ensure host entry exists in the workflow's main hostFacts map
+	if _, ok := hostFacts[activityResult.HostName]; !ok {
+		logger.Warn("Host facts map not found for host, creating new one.", "host", activityResult.HostName)
+		hostFacts[activityResult.HostName] = make(map[string]interface{})
+	}
+
+	// 1. Merge the full fact snapshot from the activity first.
+	// This applies changes made directly by modules like set_fact.
+	if activityResult.HostFactsSnapshot != nil {
+		for key, value := range activityResult.HostFactsSnapshot {
+			hostFacts[activityResult.HostName][key] = value
+			logger.Debug("Fact updated/set from activity snapshot", "host", activityResult.HostName, "variable", key)
 		}
+	}
+
+	// 2. Merge registered variables from activityResult.RegisteredVars.
+	// This handles the 'register:' keyword and will overwrite snapshot values for the registered key.
+	if len(activityResult.RegisteredVars) > 0 {
 		for key, value := range activityResult.RegisteredVars {
 			hostFacts[activityResult.HostName][key] = value
-			logger.Info("Fact registered by workflow from activity result", "host", activityResult.HostName, "variable", key)
+			logger.Info("Fact registered by workflow from activity result (register keyword)", "host", activityResult.HostName, "variable", key)
 		}
 	}
 	return nil

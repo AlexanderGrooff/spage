@@ -374,7 +374,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	duration := time.Since(startTime)
 	r.Duration = duration
 
-	return handleResult(&r, t, closure)
+	return HandleResult(&r, t, closure)
 }
 
 func (t Task) RevertModule(closure *Closure) TaskResult {
@@ -422,10 +422,10 @@ func (t Task) RevertModule(closure *Closure) TaskResult {
 	duration := time.Since(startTime)
 	r.Duration = duration
 
-	return handleResult(&r, t, closure)
+	return HandleResult(&r, t, closure)
 }
 
-func handleResult(r *TaskResult, t Task, c *Closure) TaskResult {
+func HandleResult(r *TaskResult, t Task, c *Closure) TaskResult {
 	if r.Error != nil {
 		r.Status = TaskStatusFailed
 		r.Failed = true
@@ -435,7 +435,7 @@ func handleResult(r *TaskResult, t Task, c *Closure) TaskResult {
 	} else {
 		r.Status = TaskStatusOk
 	}
-	registerVariableIfNeeded(*r, t, c)
+	RegisterVariableIfNeeded(*r, t, c)
 
 	// Evaluate failed_when only if the module execution itself succeeded
 	if r.Error == nil && t.FailedWhen != "" {
