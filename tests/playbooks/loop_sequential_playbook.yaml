@@ -2,7 +2,11 @@
 - name: loop_sequential_playbook
   hosts: localhost
   tasks:
-    # Test loop list
+    - name: create temp dir
+      file:
+        path: /tmp/spage
+        state: directory
+
     - name: loop over list
       file:
         path: /tmp/spage/{{ item }}.txt
