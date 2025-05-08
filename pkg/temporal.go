@@ -185,7 +185,7 @@ func processActivityResultAndRegisterFacts(
 
 	// Merge registered variables from activityResult back into the workflow's hostFacts for this host
 	if len(activityResult.RegisteredVars) > 0 {
-		if _, ok := hostFacts[activityResult.HostName]; !ok { // activityResult.HostName should be same as hostName arg
+		if _, ok := hostFacts[activityResult.HostName]; !ok {
 			logger.Warn("Host facts map not found for host when registering variables, creating new one.", "host", activityResult.HostName)
 			hostFacts[activityResult.HostName] = make(map[string]interface{})
 		}
@@ -197,10 +197,40 @@ func processActivityResultAndRegisterFacts(
 	return nil
 }
 
-// SpageTemporalWorkflow defines the main workflow logic.
-func SpageTemporalWorkflow(ctx workflow.Context, graphInput *Graph, inventoryInput *Inventory, spageConfigInput *config.Config) error {
-	logger := workflow.GetLogger(ctx)
-	logger.Info("SpageTemporalWorkflow started", "workflowId", workflow.GetInfo(ctx).WorkflowExecution.ID)
+// TemporalTaskRunner implements the TaskRunner interface for Temporal activity execution.
+// It requires access to the workflow.Context to execute activities.
+// Note: This runner is conceptual for showing how Temporal fits the TaskRunner pattern.
+// The SpageTemporalWorkflow will still manage its own execution loop due to
+// differences in fact/state management compared to BaseExecutor's assumptions.
+type TemporalTaskRunner struct {
+	WorkflowCtx workflow.Context // The Temporal workflow context
+}
+
+// NewTemporalTaskRunner creates a new TemporalTaskRunner.
+func NewTemporalTaskRunner(workflowCtx workflow.Context) *TemporalTaskRunner {
+	return &TemporalTaskRunner{WorkflowCtx: workflowCtx}
+}
+
+// RunTask for Temporal dispatches the task as a Temporal activity.
+// It converts the SpageActivityResult from the activity into a TaskResult.
+// The original SpageActivityResult is stored in TaskResult.ExecutionSpecificOutput.
+func (r *TemporalTaskRunner) RunTask(ctx context.Context, task Task, closure *Closure, cfg *config.Config) TaskResult {
+	// ctx is the parent context from the caller of RunTask (e.g., workflow.Background(r.WorkflowCtx)).
+	// r.WorkflowCtx is the actual workflow context for Temporal operations.
+	logger := workflow.GetLogger(r.WorkflowCtx)
+
+	currentHostFacts := closure.GetFacts() // Facts from the closure, prepared by SpageTemporalWorkflow
+	loopItem, _ := closure.ExtraFacts["item"]
+
+	activityInput := SpageActivityInput{
+		TaskDefinition:   task,
+		TargetHost:       *closure.HostContext.Host,
+		LoopItem:         loopItem,
+		CurrentHostFacts: currentHostFacts,
+		SpageCoreConfig:  cfg,
+	}
+
+	var activityOutput SpageActivityResult // Use a distinct name from the input
 
 	ao := workflow.ActivityOptions{
 		StartToCloseTimeout: 30 * time.Minute,
@@ -212,186 +242,294 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *Graph, inventoryInp
 			MaximumAttempts:    3,
 		},
 	}
-	ctx = workflow.WithActivityOptions(ctx, ao)
+	// Use r.WorkflowCtx for Temporal API calls like WithActivityOptions and ExecuteActivity
+	temporalAwareCtx := workflow.WithActivityOptions(r.WorkflowCtx, ao)
+
+	startTime := time.Now() // Record start time before executing activity
+	future := workflow.ExecuteActivity(temporalAwareCtx, ExecuteSpageTaskActivity, activityInput)
+	errOnGet := future.Get(r.WorkflowCtx, &activityOutput)
+	duration := time.Since(startTime) // Calculate duration after activity completion or error
+
+	if errOnGet != nil {
+		logger.Error("Temporal activity future.Get() failed", "task", task.Name, "host", closure.HostContext.Host.Name, "error", errOnGet)
+		return TaskResult{
+			Task:                    task,
+			Closure:                 closure,
+			Error:                   fmt.Errorf("activity %s on host %s failed to complete: %w", task.Name, closure.HostContext.Host.Name, errOnGet),
+			Status:                  TaskStatusFailed,
+			Failed:                  true,
+			Duration:                duration,
+			ExecutionSpecificOutput: nil, // No successful activityOutput to store
+		}
+	}
+
+	var finalError error
+	if activityOutput.Error != "" {
+		if activityOutput.Ignored {
+			finalError = &IgnoredTaskError{OriginalErr: errors.New(activityOutput.Error)}
+		} else {
+			finalError = errors.New(activityOutput.Error)
+		}
+	}
+
+	finalStatus := TaskStatusOk
+	if activityOutput.Skipped {
+		finalStatus = TaskStatusSkipped
+	} else if finalError != nil {
+		if !activityOutput.Ignored { // Only set to Failed if not ignored
+			finalStatus = TaskStatusFailed
+		}
+		// If ignored, status remains Ok or Changed (if applicable) unless explicitly set otherwise
+	} else if activityOutput.Changed {
+		finalStatus = TaskStatusChanged
+	}
+
+	// Note: TaskResult.Output (ModuleOutput) is not directly populated from SpageActivityResult.Output (string).
+	// This would require parsing the string or changing SpageActivityResult.
+	// For now, TaskResult.Output will be nil when using TemporalTaskRunner if ExecuteSpageTaskActivity doesn't provide it.
+
+	return TaskResult{
+		Task:                    task,
+		Closure:                 closure,
+		Error:                   finalError,
+		Status:                  finalStatus,
+		Failed:                  (finalError != nil && !activityOutput.Ignored), // True if a non-ignored error occurred
+		Changed:                 activityOutput.Changed,
+		Duration:                duration,
+		ExecutionSpecificOutput: activityOutput, // Store the full SpageActivityResult
+		// Output: nil, // ModuleOutput remains nil for now
+	}
+}
+
+// SpageTemporalWorkflow defines the main workflow logic.
+func SpageTemporalWorkflow(ctx workflow.Context, graphInput *Graph, inventoryInput *Inventory, spageConfigInput *config.Config) error {
+	logger := workflow.GetLogger(ctx)
+	logger.Info("SpageTemporalWorkflow started", "workflowId", workflow.GetInfo(ctx).WorkflowExecution.ID)
+
+	// Activity options are now set within TemporalTaskRunner.RunTask or globally if preferred.
+	// If set globally for the workflow context:
+	// ao := workflow.ActivityOptions{...}
+	// ctx = workflow.WithActivityOptions(ctx, ao)
+	// However, TemporalTaskRunner will apply its own for now.
 
 	hostFacts := make(map[string]map[string]interface{})
-	if inventoryInput != nil { // Ensure inventoryInput is not nil before ranging
+	if inventoryInput != nil {
 		for hostName, host := range inventoryInput.Hosts {
-			// Use the new method from inventory.go to get a rich set of initial facts
-			hostFacts[hostName] = inventoryInput.GetInitialFactsForHost(host) // GetInitialFactsForHost is on Inventory type
+			hostFacts[hostName] = inventoryInput.GetInitialFactsForHost(host)
 			logger.Debug("Initialized facts for host in workflow", "host", hostName, "facts_count", len(hostFacts[hostName]))
 		}
 	}
 
-	// Determine the overall task ordering for levels based on ExecutionMode
 	var orderedLevelsOfTasks [][]Task
-	if spageConfigInput.ExecutionMode == "sequential" { // Match run.go: if mode is sequential, use SequentialTasks for level structuring
+	if spageConfigInput.ExecutionMode == "sequential" {
 		orderedLevelsOfTasks = graphInput.SequentialTasks()
-		logger.Info("Graph task structure will be based on SequentialTasks() output due to sequential ExecutionMode.")
-	} else { // Default to parallel, or if explicitly parallel
+	} else {
 		orderedLevelsOfTasks = graphInput.ParallelTasks()
-		logger.Info("Graph task structure will be based on ParallelTasks() output.")
 	}
 
-	for levelIdx, tasksInThisLevel := range orderedLevelsOfTasks { // tasksInThisLevel is now []Task
+	// Instantiate the runner once for the workflow context
+	temporalRunner := NewTemporalTaskRunner(ctx)
+
+	for levelIdx, tasksInThisLevel := range orderedLevelsOfTasks {
 		logger.Info("Processing graph level", "level", levelIdx, "mode", spageConfigInput.ExecutionMode, "task_count_in_level", len(tasksInThisLevel))
 
-		var targetHosts map[string]*Host
-		if inventoryInput != nil {
-			targetHosts = inventoryInput.Hosts
-		} else {
-			targetHosts = make(map[string]*Host) // Avoid nil panic if inventory is nil
-			logger.Warn("Workflow received a nil inventoryInput, no hosts to target for level.", "level", levelIdx)
-		}
-
-		if len(targetHosts) == 0 && len(tasksInThisLevel) > 0 {
-			logger.Warn("No target hosts for tasks in this level, tasks will be skipped.", "level", levelIdx, "task_count", len(tasksInThisLevel))
-		}
+		targetHosts := inventoryInput.Hosts // Assuming inventoryInput is not nil after initial checks/defaults
+		if targetHosts == nil {
+			targetHosts = make(map[string]*Host)
+		} // Safety for nil inventory
 
 		if spageConfigInput.ExecutionMode == "sequential" {
 			logger.Info("Executing level sequentially", "level", levelIdx)
-			for _, currentTaskDefinition := range tasksInThisLevel { // currentTaskDefinition is Task
+			for _, currentTaskDefinition := range tasksInThisLevel {
 				for hostName, host := range targetHosts {
-					loopItems := []interface{}{nil}
-					isLoopTask := false
+					loopItems, err := getLoopItemsForTask(ctx, currentTaskDefinition, host, hostFacts[hostName])
+					if err != nil {
+						return err
+					} // Propagate error from loop parsing
 
-					if currentTaskDefinition.Loop != nil {
-						tempHostCtx, err := InitializeHostContext(host)
+					for _, loopItem := range loopItems {
+						// Construct Closure for this specific task run
+						tempHostCtx, err := InitializeHostContext(host) // Fresh HostContext for closure
 						if err != nil {
-							logger.Error("Failed to initialize temporary host context for loop (sequential)", "task", currentTaskDefinition.Name, "host", hostName, "error", err)
-							return fmt.Errorf("failed to initialize host context for loop processing for task %s on host %s: %w", currentTaskDefinition.Name, hostName, err)
+							return fmt.Errorf("failed to init temp HostContext for closure: %w", err)
 						}
-						currentInitialFactsForHost, factsExist := hostFacts[hostName]
-						if factsExist {
-							for k, v := range currentInitialFactsForHost {
+						currentFactsForClosure := hostFacts[hostName]
+						if currentFactsForClosure != nil {
+							for k, v := range currentFactsForClosure {
 								tempHostCtx.Facts.Store(k, v)
 							}
 						}
-						parsedLoopItems, err := ParseLoop(currentTaskDefinition, tempHostCtx)
-						tempHostCtx.Close()
-						if err != nil {
-							logger.Error("Failed to parse loop for task (sequential)", "task", currentTaskDefinition.Name, "host", hostName, "error", err)
-							return fmt.Errorf("failed to parse loop for task %s on host %s: %w", currentTaskDefinition.Name, hostName, err)
+						extraFactsForClosure := make(map[string]interface{})
+						if loopItem != nil {
+							extraFactsForClosure["item"] = loopItem
 						}
-						if len(parsedLoopItems) > 0 {
-							loopItems = parsedLoopItems
-							isLoopTask = true
-						}
-					}
-					logger.Debug("Task loop processing (sequential)", "task", currentTaskDefinition.Name, "host", hostName, "isLoop", isLoopTask, "itemCount", len(loopItems))
 
-					for _, loopItem := range loopItems {
-						currentFactsForActivity, factsOk := hostFacts[hostName]
-						if !factsOk {
-							logger.Warn("Host facts not found for host during activity scheduling (sequential), using empty map.", "host", hostName)
-							currentFactsForActivity = make(map[string]interface{})
+						closureForRunner := &Closure{
+							HostContext: tempHostCtx,
+							ExtraFacts:  extraFactsForClosure,
 						}
-						activityInput := SpageActivityInput{
-							TaskDefinition:   currentTaskDefinition,
-							TargetHost:       *host,
-							LoopItem:         loopItem,
-							CurrentHostFacts: currentFactsForActivity,
-							SpageCoreConfig:  spageConfigInput,
-						}
+
+						// Pass context.Background() for the first ctx argument of RunTask, as
+						// TemporalTaskRunner.RunTask uses its internally stored r.WorkflowCtx for actual Temporal operations,
+						// and the first context.Context param is currently not utilized by it for activity logic.
+						taskRunResult := temporalRunner.RunTask(context.Background(), currentTaskDefinition, closureForRunner, spageConfigInput)
+						tempHostCtx.Close() // Close the temporary host context
 
 						var activityResult SpageActivityResult
-						future := workflow.ExecuteActivity(ctx, ExecuteSpageTaskActivity, activityInput)
-						errOnGet := future.Get(ctx, &activityResult)
-
-						if errOnGet != nil {
-							logger.Error("Activity future.Get() failed (sequential mode)", "task", currentTaskDefinition.Name, "host", hostName, "error", errOnGet)
-							return fmt.Errorf("activity %s on host %s failed to complete: %w", currentTaskDefinition.Name, hostName, errOnGet)
+						if taskRunResult.ExecutionSpecificOutput != nil {
+							var castOk bool
+							activityResult, castOk = taskRunResult.ExecutionSpecificOutput.(SpageActivityResult)
+							if !castOk {
+								errMsg := fmt.Sprintf("failed to cast ExecutionSpecificOutput to SpageActivityResult for task %s on host %s", currentTaskDefinition.Name, hostName)
+								logger.Error(errMsg)
+								return errors.New(errMsg)
+							}
+						} else if taskRunResult.Error != nil { // If ExecutionSpecificOutput is nil but there was an error (e.g. future.Get() failed)
+							// Populate a minimal SpageActivityResult for processActivityResultAndRegisterFacts
+							activityResult = SpageActivityResult{
+								HostName: hostName,
+								TaskName: currentTaskDefinition.Name,
+								Error:    taskRunResult.Error.Error(), // Use the error from TaskResult
+								// Ignored needs to be derived if possible. Assuming not ignored if we are in this path from direct error.
+							}
+							var ignoredErr *IgnoredTaskError
+							if errors.As(taskRunResult.Error, &ignoredErr) {
+								activityResult.Ignored = true
+							}
 						}
 
 						errProcess := processActivityResultAndRegisterFacts(ctx, activityResult, currentTaskDefinition.Name, hostName, hostFacts)
 						if errProcess != nil {
-							return errProcess
+							return errProcess // This is a hard failure reported by the activity processing logic
 						}
 					}
 				}
 			}
-		} else { // "parallel" or default
+		} else { // Parallel execution for the level
 			logger.Info("Executing level in parallel", "level", levelIdx)
 			var activityFutures []workflow.Future
-			type activityContextInfo struct {
-				HostName string
+			type futureInfo struct {
 				TaskName string
+				HostName string
 			}
-			var futureContexts []activityContextInfo
+			var futureInfos []futureInfo
 
-			for _, currentTaskDefinition := range tasksInThisLevel { // currentTaskDefinition is Task
-				// targetHosts already determined above the if/else block
+			numDispatched := 0
+
+			for _, currentTaskDefinition := range tasksInThisLevel {
 				for hostName, host := range targetHosts {
-					loopItems := []interface{}{nil}
-					isLoopTask := false
+					loopItems, err := getLoopItemsForTask(ctx, currentTaskDefinition, host, hostFacts[hostName])
+					if err != nil {
+						return err
+					}
 
-					if currentTaskDefinition.Loop != nil {
+					for _, loopItem := range loopItems {
+						numDispatched++
+						// Constructing SpageActivityInput directly for ExecuteActivity in parallel loop.
+						// tempHostCtx and extraFactsForClosure are used to build activityInput below.
 						tempHostCtx, err := InitializeHostContext(host)
 						if err != nil {
-							logger.Error("Failed to initialize temporary host context for loop (parallel)", "task", currentTaskDefinition.Name, "host", hostName, "error", err)
-							return fmt.Errorf("failed to initialize host context for loop processing for task %s on host %s: %w", currentTaskDefinition.Name, hostName, err)
+							return fmt.Errorf("failed to init temp HostContext for closure (parallel): %w", err)
 						}
-						currentInitialFactsForHost, factsExist := hostFacts[hostName]
-						if factsExist {
-							for k, v := range currentInitialFactsForHost {
+						currentFactsForClosure := hostFacts[hostName]
+						if currentFactsForClosure != nil {
+							for k, v := range currentFactsForClosure {
 								tempHostCtx.Facts.Store(k, v)
 							}
 						}
-						parsedLoopItems, err := ParseLoop(currentTaskDefinition, tempHostCtx)
-						tempHostCtx.Close()
-						if err != nil {
-							logger.Error("Failed to parse loop for task (parallel)", "task", currentTaskDefinition.Name, "host", hostName, "error", err)
-							return fmt.Errorf("failed to parse loop for task %s on host %s: %w", currentTaskDefinition.Name, hostName, err)
-						}
-						if len(parsedLoopItems) > 0 {
-							loopItems = parsedLoopItems
-							isLoopTask = true
-						}
-					}
-					logger.Debug("Task loop processing (parallel)", "task", currentTaskDefinition.Name, "host", hostName, "isLoop", isLoopTask, "itemCount", len(loopItems))
+						// extraFactsForClosure := make(map[string]interface{}) // Not needed as loopItem used directly
+						// if loopItem != nil { extraFactsForClosure["item"] = loopItem }
 
-					for _, loopItem := range loopItems {
-						currentFactsForActivity, factsOk := hostFacts[hostName]
-						if !factsOk {
-							logger.Warn("Host facts not found for host during activity scheduling (parallel), using empty map.", "host", hostName)
-							currentFactsForActivity = make(map[string]interface{})
-						}
+						// closureForRunner is not created here as it's not passed to ExecuteActivity directly.
+						// The SpageActivityInput is built manually.
+
 						activityInput := SpageActivityInput{
 							TaskDefinition:   currentTaskDefinition,
 							TargetHost:       *host,
-							LoopItem:         loopItem,
-							CurrentHostFacts: currentFactsForActivity,
+							LoopItem:         loopItem, // loopItem used directly
+							CurrentHostFacts: currentFactsForClosure,
 							SpageCoreConfig:  spageConfigInput,
 						}
-						future := workflow.ExecuteActivity(ctx, ExecuteSpageTaskActivity, activityInput)
+						ao := workflow.ActivityOptions{
+							StartToCloseTimeout: 30 * time.Minute,
+							HeartbeatTimeout:    2 * time.Minute,
+							RetryPolicy: &temporal.RetryPolicy{
+								InitialInterval:    time.Second,
+								BackoffCoefficient: 2.0,
+								MaximumInterval:    time.Minute,
+								MaximumAttempts:    3,
+							},
+						}
+						temporalAwareCtx := workflow.WithActivityOptions(ctx, ao)
+						future := workflow.ExecuteActivity(temporalAwareCtx, ExecuteSpageTaskActivity, activityInput)
 						activityFutures = append(activityFutures, future)
-						futureContexts = append(futureContexts, activityContextInfo{HostName: hostName, TaskName: currentTaskDefinition.Name})
+						futureInfos = append(futureInfos, futureInfo{TaskName: currentTaskDefinition.Name, HostName: hostName})
+
+						tempHostCtx.Close() // Close after facts have been potentially copied/used by activityInput logic (or if activity is truly fire and forget about hostCtx itself)
 					}
 				}
 			}
 
-			for i, future := range activityFutures {
+			for i := 0; i < numDispatched; i++ {
 				var activityResult SpageActivityResult
-				errOnGet := future.Get(ctx, &activityResult)
-				futCtx := futureContexts[i]
+				// Wait for any of the futures to complete
+				// This is a simplified model; for true parallelism, futures would be collected without blocking sequentially on Get.
+				// The original code collected all futures then iterated .Get() - that's better.
+				f := activityFutures[i] // This sequential get is not truly parallel waiting
+				info := futureInfos[i]
+				errOnGet := f.Get(ctx, &activityResult)
 
 				if errOnGet != nil {
-					logger.Error("Activity future.Get() failed (parallel mode)", "task", futCtx.TaskName, "host", futCtx.HostName, "error", errOnGet)
-					return fmt.Errorf("activity %s on host %s failed to complete: %w", futCtx.TaskName, futCtx.HostName, errOnGet)
+					logger.Error("Activity future.Get() failed (parallel mode)", "task", info.TaskName, "host", info.HostName, "error", errOnGet)
+					return fmt.Errorf("activity %s on host %s failed to complete: %w", info.TaskName, info.HostName, errOnGet)
 				}
 
-				errProcess := processActivityResultAndRegisterFacts(ctx, activityResult, futCtx.TaskName, futCtx.HostName, hostFacts)
+				errProcess := processActivityResultAndRegisterFacts(ctx, activityResult, info.TaskName, info.HostName, hostFacts)
 				if errProcess != nil {
 					return errProcess
 				}
 			}
-		} // End of sequential/parallel execution block
-
+		}
 		logger.Info("Completed processing graph level", "level", levelIdx)
 	}
 
 	logger.Info("SpageTemporalWorkflow completed successfully.")
 	return nil
+}
+
+// Helper to encapsulate loop parsing logic for workflow
+func getLoopItemsForTask(ctx workflow.Context, task Task, host *Host, currentHostFacts map[string]interface{}) ([]interface{}, error) {
+	logger := workflow.GetLogger(ctx)
+	loopItems := []interface{}{nil} // Default: run once if no loop
+	isLoopTask := false
+
+	if task.Loop != nil {
+		// Need a temporary HostContext to use ParseLoop, as ParseLoop expects it for fact lookups.
+		tempHostCtxForLoop, err := InitializeHostContext(host)
+		if err != nil {
+			logger.Error("Failed to initialize temporary host context for loop parsing", "task", task.Name, "host", host.Name, "error", err)
+			return nil, fmt.Errorf("failed to init temp HostContext for loop parsing for task %s on host %s: %w", task.Name, host.Name, err)
+		}
+		defer tempHostCtxForLoop.Close()
+
+		if currentHostFacts != nil {
+			for k, v := range currentHostFacts {
+				tempHostCtxForLoop.Facts.Store(k, v)
+			}
+		}
+
+		parsedLoopItems, err := ParseLoop(task, tempHostCtxForLoop) // ParseLoop is from executor_utils.go
+		if err != nil {
+			logger.Error("Failed to parse loop for task", "task", task.Name, "host", host.Name, "error", err)
+			return nil, fmt.Errorf("failed to parse loop for task %s on host %s: %w", task.Name, host.Name, err)
+		}
+		if len(parsedLoopItems) > 0 {
+			loopItems = parsedLoopItems
+			isLoopTask = true
+		}
+	}
+	logger.Debug("Task loop processing details", "task", task.Name, "host", host.Name, "isLoop", isLoopTask, "itemCount", len(loopItems))
+	return loopItems, nil
 }
 
 // RunSpageTemporalWorkerAndWorkflowOptions defines options for RunSpageTemporalWorkerAndWorkflow.

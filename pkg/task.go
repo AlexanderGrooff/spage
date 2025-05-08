@@ -36,6 +36,8 @@ type TaskResult struct {
 	Status   TaskStatus
 	Failed   bool
 	Changed  bool
+	// ExecutionSpecificOutput can store runner-specific results, e.g., SpageActivityResult for Temporal.
+	ExecutionSpecificOutput interface{}
 }
 
 // IgnoredTaskError is a custom error type used when a task fails
