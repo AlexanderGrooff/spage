@@ -12,6 +12,7 @@ import (
 type Config struct {
 	Logging       LoggingConfig  `mapstructure:"logging"`
 	ExecutionMode string         `mapstructure:"execution_mode"`
+	Executor      string         `mapstructure:"executor"` // "local" or "temporal"
 	Temporal      TemporalConfig `mapstructure:"temporal"`
 }
 
@@ -36,6 +37,8 @@ var ValidOutputFormats = []string{"json", "yaml", "plain"}
 
 // ValidExecutionModes contains the list of supported execution modes
 var ValidExecutionModes = []string{"parallel", "sequential"}
+
+var ValidExecutors = []string{"local", "temporal"}
 
 // Load loads configuration from files and environment variables
 func Load(configPaths ...string) (*Config, error) {
@@ -74,6 +77,12 @@ func Load(configPaths ...string) (*Config, error) {
 			config.ExecutionMode, strings.Join(ValidExecutionModes, ", "))
 	}
 
+	// Validate executor
+	if !isValidExecutor(config.Executor) {
+		return nil, fmt.Errorf("invalid executor %q. Valid executors are: %s",
+			config.Executor, strings.Join(ValidExecutors, ", "))
+	}
+
 	return &config, nil
 }
 
@@ -83,6 +92,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("logging.file", "")
 	v.SetDefault("logging.format", "plain")
 	v.SetDefault("execution_mode", "parallel")
+	v.SetDefault("executor", "local")
 	v.SetDefault("logging.timestamps", true)
 
 	// Temporal defaults
@@ -106,6 +116,15 @@ func isValidOutputFormat(format string) bool {
 func isValidExecutionMode(mode string) bool {
 	for _, validMode := range ValidExecutionModes {
 		if mode == validMode {
+			return true
+		}
+	}
+	return false
+}
+
+func isValidExecutor(executor string) bool {
+	for _, validExecutor := range ValidExecutors {
+		if executor == validExecutor {
 			return true
 		}
 	}

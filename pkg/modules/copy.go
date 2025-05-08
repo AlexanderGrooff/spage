@@ -59,8 +59,8 @@ func (i CopyInput) HasRevert() bool {
 }
 
 func (i CopyInput) Validate() error {
-	if i.Content == "" {
-		return fmt.Errorf("missing Content input")
+	if i.Content == "" && i.Src == "" {
+		return fmt.Errorf("missing Content or Src input")
 	}
 	if i.Dst == "" {
 		return fmt.Errorf("missing Dst input")

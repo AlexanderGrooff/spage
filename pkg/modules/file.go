@@ -58,17 +58,18 @@ func (i FileInput) Validate() error {
 	if i.Path == "" {
 		return fmt.Errorf("missing Path input")
 	}
-	validStates := map[string]bool{
-		"touch":     true,
-		"directory": true,
-		"absent":    true,
-		"link":      true,
-		"file":      true, // Allow 'file' as alias for 'touch'
-		"":          true, // Allow empty state (implies touch if path doesn't exist, or no state change if it does)
-	}
-	if !validStates[i.State] {
-		return fmt.Errorf("invalid State value: %q (must be one of: touch, directory, absent, link, file)", i.State)
-	}
+	// TODO: Validate state once templated
+	// validStates := map[string]bool{
+	// 	"touch":     true,
+	// 	"directory": true,
+	// 	"absent":    true,
+	// 	"link":      true,
+	// 	"file":      true, // Allow 'file' as alias for 'touch'
+	// 	"":          true, // Allow empty state (implies touch if path doesn't exist, or no state change if it does)
+	// }
+	// if !validStates[i.State] {
+	// 	return fmt.Errorf("invalid State value: %q (must be one of: touch, directory, absent, link, file)", i.State)
+	// }
 	if i.State == "link" && i.Src == "" {
 		return fmt.Errorf("missing Src input for state=link")
 	}

@@ -77,28 +77,6 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 		logger.Debug("Loop item added to closure facts", "loopVar", loopVarName, "value", input.LoopItem)
 	}
 
-	whenCondition := input.TaskDefinition.When
-	if whenCondition != "" {
-		renderedWhen, err := EvaluateExpression(whenCondition, closure) // Use EvaluateExpression
-		if err != nil {
-			logger.Error("Failed to evaluate 'when' condition string", "task", input.TaskDefinition.Name, "error", err)
-			return &SpageActivityResult{
-				HostName: input.TargetHost.Name,
-				TaskName: input.TaskDefinition.Name,
-				Error:    fmt.Sprintf("failed to render 'when' condition: %v", err),
-			}, nil
-		}
-		shouldRun := IsExpressionTruthy(renderedWhen) // Use IsExpressionTruthy to get boolean
-		if !shouldRun {
-			logger.Info("Task skipped due to 'when' condition not met", "task", input.TaskDefinition.Name)
-			return &SpageActivityResult{
-				HostName: input.TargetHost.Name,
-				TaskName: input.TaskDefinition.Name,
-				Skipped:  true,
-			}, nil
-		}
-	}
-
 	taskResult := input.TaskDefinition.ExecuteModule(closure)
 	activity.RecordHeartbeat(ctx, fmt.Sprintf("Finished task %s on host %s", input.TaskDefinition.Name, input.TargetHost.Name))
 
@@ -211,7 +189,7 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *Graph, inventoryInp
 		}
 		var futureContexts []activityContextInfo
 
-		for _, task := range taskNodesInLevel {
+		for _, currentTaskDefinition := range taskNodesInLevel {
 
 			var targetHosts map[string]*Host
 			if inventoryInput != nil {
@@ -225,11 +203,11 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *Graph, inventoryInp
 				loopItems := []interface{}{nil}
 				isLoopTask := false
 
-				if task.Loop != nil {
+				if currentTaskDefinition.Loop != nil {
 					tempHostCtx, err := InitializeHostContext(host)
 					if err != nil {
-						logger.Error("Failed to initialize temporary host context for loop", "task", task.Name, "host", hostName, "error", err)
-						return fmt.Errorf("failed to initialize host context for loop processing for task %s on host %s: %w", task.Name, hostName, err)
+						logger.Error("Failed to initialize temporary host context for loop", "task", currentTaskDefinition.Name, "host", hostName, "error", err)
+						return fmt.Errorf("failed to initialize host context for loop processing for task %s on host %s: %w", currentTaskDefinition.Name, hostName, err)
 					}
 					// Populate tempHostCtx.Facts for ParseLoop, using the already compiled hostFacts from the workflow for this host.
 					currentInitialFactsForHost, factsExist := hostFacts[hostName]
@@ -240,19 +218,19 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *Graph, inventoryInp
 					}
 					// Note: host.Vars are already part of currentInitialFactsForHost due to GetInitialFactsForHost logic
 
-					parsedLoopItems, err := ParseLoop(task, tempHostCtx) // Use currentTaskDefinition
+					parsedLoopItems, err := ParseLoop(currentTaskDefinition, tempHostCtx) // Use currentTaskDefinition
 					tempHostCtx.Close()
 
 					if err != nil {
-						logger.Error("Failed to parse loop for task", "task", task.Name, "host", hostName, "error", err)
-						return fmt.Errorf("failed to parse loop for task %s on host %s: %w", task.Name, hostName, err)
+						logger.Error("Failed to parse loop for task", "task", currentTaskDefinition.Name, "host", hostName, "error", err)
+						return fmt.Errorf("failed to parse loop for task %s on host %s: %w", currentTaskDefinition.Name, hostName, err)
 					}
 					if len(parsedLoopItems) > 0 {
 						loopItems = parsedLoopItems
 						isLoopTask = true
 					}
 				}
-				logger.Debug("Task loop processing", "task", task.Name, "host", hostName, "isLoop", isLoopTask, "itemCount", len(loopItems))
+				logger.Debug("Task loop processing", "task", currentTaskDefinition.Name, "host", hostName, "isLoop", isLoopTask, "itemCount", len(loopItems))
 
 				for _, loopItem := range loopItems {
 					currentFactsForActivity, factsOk := hostFacts[hostName] // These are the rich initial facts
@@ -262,7 +240,7 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *Graph, inventoryInp
 						currentFactsForActivity = make(map[string]interface{})
 					}
 					activityInput := SpageActivityInput{
-						TaskDefinition:   task,
+						TaskDefinition:   currentTaskDefinition,
 						TargetHost:       *host,
 						LoopItem:         loopItem,
 						CurrentHostFacts: currentFactsForActivity, // Pass the rich initial facts
@@ -270,7 +248,7 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *Graph, inventoryInp
 					}
 					future := workflow.ExecuteActivity(ctx, ExecuteSpageTaskActivity, activityInput)
 					activityFutures = append(activityFutures, future)
-					futureContexts = append(futureContexts, activityContextInfo{HostName: hostName, TaskName: task.Name})
+					futureContexts = append(futureContexts, activityContextInfo{HostName: hostName, TaskName: currentTaskDefinition.Name})
 				}
 			}
 		}
