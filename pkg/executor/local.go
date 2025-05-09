@@ -12,9 +12,6 @@ import (
 	"github.com/AlexanderGrooff/spage/pkg/config"
 )
 
-// RegisterVariableIfNeeded checks if a task result should be registered as a variable
-// and stores it in the HostContext's Facts if necessary.
-
 // LocalTaskRunner implements the TaskRunner interface for local execution.
 // It directly calls the task's ExecuteModule method.
 type LocalTaskRunner struct{}
@@ -41,13 +38,6 @@ func (r *LocalTaskRunner) RunTask(ctx context.Context, task pkg.Task, closure *p
 	default:
 	}
 
-	// Task.ExecuteModule is responsible for:
-	// 1. Running the module.
-	// 2. Calling handleResult, which:
-	//    a. Sets TaskResult.Status, Failed, Changed.
-	//    b. Calls registerVariableIfNeeded (updates closure.HostContext.Facts).
-	//    c. Calls setTaskStatus (updates closure.HostContext.Facts for register var).
-	//    d. Handles FailedWhen, ChangedWhen, IgnoreErrors.
 	result := task.ExecuteModule(closure)
 
 	// Ensure Task and Closure are set in the result, as ExecuteModule might not always do this
@@ -69,7 +59,6 @@ func ExecuteWithTimeout(cfg *config.Config, graph pkg.Graph, inventoryFile strin
 // ExecuteWithContext now uses the BaseExecutor for its core logic.
 func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph pkg.Graph, inventoryFile string) error {
 	localRunner := &LocalTaskRunner{}
-	// NewBaseExecutor is in pkg/executor.go (which should be in the same package 'pkg')
 	executor := pkg.NewBaseExecutor(localRunner)
 
 	// The error returned by executor.Execute will be the overall status of the play.

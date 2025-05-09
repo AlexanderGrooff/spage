@@ -463,11 +463,6 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *pkg.Graph, inventor
 								tempHostCtx.Facts.Store(k, v)
 							}
 						}
-						// extraFactsForClosure := make(map[string]interface{}) // Not needed as loopItem used directly
-						// if loopItem != nil { extraFactsForClosure["item"] = loopItem }
-
-						// closureForRunner is not created here as it's not passed to ExecuteActivity directly.
-						// The SpageActivityInput is built manually.
 
 						activityInput := SpageActivityInput{
 							TaskDefinition:   currentTaskDefinition,
