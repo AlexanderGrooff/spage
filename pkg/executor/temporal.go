@@ -488,8 +488,27 @@ func (e *TemporalGraphExecutor) processLevelResults(
 			hostChan.Close()
 		}
 	}()
+	receivedResults := 0
+	var result pkg.TaskResult
+	var resPtr interface{}
+	var ok bool
+	for receivedResults < numExpectedResultsOnLevel {
+		resultsCh.Receive(e.Runner.WorkflowCtx, resPtr)
+		result, ok = resPtr.(pkg.TaskResult)
+		if !ok {
+			// TODO
+		}
+		receivedResults++
 
-	return true, nil
+		hostname := result.Closure.HostContext.Host.Name
+		task := result.Task
+		currentClosure := result.Closure
+		currentClosure.HostContext.History.Store(task.Name, result.Output)
+		levelHistMap := executionHistory[executionLevel]
+		levelHistMap[hostname].Send(e.Runner.WorkflowCtx, task)
+	}
+
+	return false, nil
 }
 
 func (e *TemporalGraphExecutor) Execute(hostContexts map[string]*pkg.HostContext, orderedGraph [][]pkg.Task, cfg *config.Config) error {
