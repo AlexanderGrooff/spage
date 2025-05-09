@@ -4,11 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/AlexanderGrooff/spage/pkg"
-	"strings"
-	"time"
-
 	"github.com/AlexanderGrooff/spage/pkg/common"
-
 	"github.com/AlexanderGrooff/spage/pkg/config"
 )
 
@@ -46,39 +42,4 @@ func (r *LocalTaskRunner) RunTask(ctx context.Context, task pkg.Task, closure *p
 	result.Closure = closure
 
 	return result
-}
-
-// ExecuteWithTimeout wraps ExecuteWithContext with a timeout.
-func ExecuteWithTimeout(cfg *config.Config, graph pkg.Graph, inventoryFile string, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	// Pass the already configured cfg directly
-	return ExecuteWithContext(ctx, cfg, graph, inventoryFile)
-}
-
-// ExecuteWithContext now uses the BaseExecutor for its core logic.
-func ExecuteWithContext(ctx context.Context, cfg *config.Config, graph pkg.Graph, inventoryFile string) error {
-	localRunner := &LocalTaskRunner{}
-	executor := pkg.NewBaseExecutor(localRunner)
-
-	// The error returned by executor.Execute will be the overall status of the play.
-	err := executor.Execute(ctx, cfg, graph, inventoryFile)
-	if err != nil {
-		// Log the final error from BaseExecutor if it's not just a run failure message
-		if !strings.Contains(err.Error(), "run failed") && !strings.Contains(err.Error(), "execution cancelled") {
-			common.LogError("Play execution failed with critical error", map[string]interface{}{"error": err.Error()})
-		}
-		return err // Propagate the error (e.g., "run failed and tasks reverted", or a setup error)
-	}
-	return nil
-}
-
-// Execute executes the graph using the default background context and config.
-func Execute(cfg *config.Config, graph pkg.Graph, inventoryFile string) error {
-	// Call ExecuteWithContext, which now uses the BaseExecutor.
-	err := ExecuteWithContext(context.Background(), cfg, graph, inventoryFile)
-	// Debug log for the completion of the Execute call itself.
-	// The BaseExecutor handles its own detailed logging.
-	common.DebugOutput("Local execution (Execute function) completed.", map[string]interface{}{"error": err})
-	return err
 }

@@ -17,8 +17,8 @@ type TaskRunner interface {
 	RunTask(ctx context.Context, task Task, closure *Closure, cfg *config.Config) TaskResult
 }
 
-// Executor defines the interface for running a Spage graph.
-type Executor interface {
+// GraphExecutor defines the interface for running a Spage graph.
+type GraphExecutor interface {
 	Execute(ctx context.Context, cfg *config.Config, graph Graph, inventoryFile string) error
 }
 
