@@ -14,28 +14,29 @@ import (
 // This allows the core execution logic to be generic, while the actual
 // task dispatch (local, Temporal activity, etc.) can be specific.
 type TaskRunner interface {
-	RunTask(ctx context.Context, task Task, closure *Closure, cfg *config.Config) TaskResult
+	ExecuteTask(ctx context.Context, task Task, closure *Closure, cfg *config.Config) TaskResult
+	RevertTask(ctx context.Context, task Task, closure *Closure, cfg *config.Config) TaskResult
 }
 
 // GraphExecutor defines the interface for running a Spage graph.
 type GraphExecutor interface {
-	Execute(ctx context.Context, cfg *config.Config, graph Graph, inventoryFile string) error
+	Execute(hostContexts map[string]*HostContext, orderedGraph [][]Task, cfg *config.Config) error
+	Revert(executedTasks []map[string]chan Task, hostContexts map[string]*HostContext, cfg *config.Config) error
 }
 
-// BaseExecutor provides common logic for executing a Spage graph.
+// LocalGraphExecutor provides common logic for executing a Spage graph.
 // It relies on a TaskRunner to perform the actual execution of individual tasks.
-type BaseExecutor struct {
+type LocalGraphExecutor struct {
 	Runner TaskRunner
 }
 
-// NewBaseExecutor creates a new BaseExecutor with the given TaskRunner.
-func NewBaseExecutor(runner TaskRunner) *BaseExecutor {
-	return &BaseExecutor{Runner: runner}
+// NewLocalGraphExecutor creates a new LocalGraphExecutor with the given TaskRunner.
+func NewLocalGraphExecutor(runner TaskRunner) *LocalGraphExecutor {
+	return &LocalGraphExecutor{Runner: runner}
 }
 
-// Execute implements the main execution loop for a Spage graph.
-func (e *BaseExecutor) Execute(ctx context.Context, cfg *config.Config, graph Graph, inventoryFile string) error {
-	inventory, playTarget, err := e.loadInventory(inventoryFile)
+func ExecuteGraph(executor GraphExecutor, graph Graph, inventoryFile string, cfg *config.Config) error {
+	inventory, err := LoadInventory(inventoryFile)
 	if err != nil {
 		return err
 	}
@@ -44,7 +45,7 @@ func (e *BaseExecutor) Execute(ctx context.Context, cfg *config.Config, graph Gr
 		return fmt.Errorf("failed to check inventory for required inputs: %w", err)
 	}
 
-	hostContexts, err := e.getHostContexts(inventory)
+	hostContexts, err := GetHostContexts(inventory)
 	if err != nil {
 		return err
 	}
@@ -55,19 +56,24 @@ func (e *BaseExecutor) Execute(ctx context.Context, cfg *config.Config, graph Gr
 	}()
 
 	if cfg.Logging.Format == "plain" {
-		fmt.Printf("\nPLAY [%s] ****************************************************\n", playTarget)
+		fmt.Printf("\nPLAY [] ****************************************************\n")
 	} else {
-		common.LogInfo("Starting play", map[string]interface{}{"target": playTarget})
+		common.LogInfo("Starting play", map[string]interface{}{})
 	}
-
-	recapStats := e.initializeRecapStats(hostContexts)
-	var executionHistory []map[string]chan Task // For revert functionality
-
-	orderedGraph, err := e.getOrderedGraph(cfg, graph)
+	orderedGraph, err := GetOrderedGraph(cfg, graph)
 	if err != nil {
 		return err
 	}
 
+	err = executor.Execute(hostContexts, orderedGraph, cfg)
+	return err
+}
+
+// Execute implements the main execution loop for a Spage graph.
+func (e *LocalGraphExecutor) Execute(hostContexts map[string]*HostContext, orderedGraph [][]Task, cfg *config.Config) error {
+	ctx := context.Background()
+	recapStats := InitializeRecapStats(hostContexts)
+	var executionHistory []map[string]chan Task // For revert functionality
 	for executionLevel, tasksInLevel := range orderedGraph {
 		select {
 		case <-ctx.Done():
@@ -100,7 +106,7 @@ func (e *BaseExecutor) Execute(ctx context.Context, cfg *config.Config, graph Gr
 			} else {
 				common.LogInfo("Run failed, starting task reversion", map[string]interface{}{"level": executionLevel})
 			}
-			if errRevert := RevertTasksWithConfig(executionHistory, hostContexts, cfg); errRevert != nil {
+			if errRevert := e.Revert(executionHistory, hostContexts, cfg); errRevert != nil {
 				return fmt.Errorf("run failed on level %d and also failed during revert: %w (original error trigger) | %v (revert error)", executionLevel, errors.New("task failure"), errRevert)
 			}
 			return fmt.Errorf("run failed on level %d and tasks reverted", executionLevel)
@@ -108,32 +114,121 @@ func (e *BaseExecutor) Execute(ctx context.Context, cfg *config.Config, graph Gr
 	}
 
 	e.printPlayRecap(cfg, recapStats)
-	common.LogInfo("Play finished successfully.", map[string]interface{}{"target": playTarget})
+	common.LogInfo("Play finished successfully.", map[string]interface{}{})
 	return nil
 }
 
-func (e *BaseExecutor) loadInventory(inventoryFile string) (*Inventory, string, error) {
-	var inventory *Inventory
-	var errI error
-	playTarget := "localhost"
-	if inventoryFile == "" {
-		common.LogDebug("No inventory file specified, assuming target is this machine", nil)
-		inventory = &Inventory{
-			Hosts: map[string]*Host{
-				"localhost": {Name: "localhost", IsLocal: true, Host: "localhost"},
-			},
+func (e *LocalGraphExecutor) Revert(executedTasks []map[string]chan Task, hostContexts map[string]*HostContext, cfg *config.Config) error {
+	recapStats := make(map[string]map[string]int)
+	for hostname := range hostContexts {
+		recapStats[hostname] = map[string]int{"ok": 0, "changed": 0, "failed": 0}
+	}
+
+	for executionLevel := len(executedTasks) - 1; executionLevel >= 0; executionLevel-- {
+		common.DebugOutput("Reverting level %d", executionLevel)
+		levelTasksByHost := executedTasks[executionLevel]
+
+		for hostname, taskHistoryCh := range levelTasksByHost {
+			common.DebugOutput("Reverting host '%s' on level %d", hostname, executionLevel)
+			hostCtx, contextExists := hostContexts[hostname]
+			if !contextExists {
+				common.LogError("Context not found for host during revert, skipping host", map[string]interface{}{"host": hostname, "level": executionLevel})
+				// How to count this in recap? For now, it's a skip for this host's tasks on this level.
+				continue
+			}
+
+			// Drain the channel for this host and level
+			for task := range taskHistoryCh { // taskHistoryCh should be closed by processLevelResults
+				if cfg.Logging.Format == "plain" {
+					fmt.Printf("\nREVERT TASK [%s] (%s) *****************************************\n", task.Name, hostname)
+				} else {
+					common.LogInfo("Attempting to revert task", map[string]interface{}{"task": task.Name, "host": hostname, "level": executionLevel})
+				}
+				logData := map[string]interface{}{
+					"host": hostname, "task": task.Name, "action": "revert",
+				}
+
+				// Check if the task's module parameters implement HasRevert
+				if P, ok := task.Params.Actual.(interface{ HasRevert() bool }); !ok || !P.HasRevert() {
+					logData["status"] = "ok"
+					logData["changed"] = false
+					logData["message"] = "No revert defined for module or params"
+					recapStats[hostname]["ok"]++
+					if cfg.Logging.Format == "plain" {
+						fmt.Printf("ok: [%s] => (no revert defined)\n", hostname)
+					} else {
+						common.LogInfo("Skipping revert (no revert defined for module/params)", logData)
+					}
+					continue
+				}
+
+				closure := ConstructClosure(hostCtx, task)
+				revertResult := task.RevertModule(closure) // Calls module's Revert via Task.RevertModule
+
+				if revertResult.Error != nil {
+					logData["status"] = "failed"
+					logData["error"] = revertResult.Error.Error()
+					if revertResult.Output != nil {
+						logData["output"] = revertResult.Output.String()
+					}
+					recapStats[hostname]["failed"]++
+					if cfg.Logging.Format == "plain" {
+						fmt.Printf("failed: [%s] => (%v)\n", hostname, revertResult.Error)
+						PPrintOutput(revertResult.Output, revertResult.Error)
+					} else {
+						common.LogError("Revert task failed", logData)
+					}
+				} else if revertResult.Output != nil && revertResult.Output.Changed() {
+					logData["status"] = "changed"
+					logData["changed"] = true
+					if revertResult.Output != nil {
+						logData["output"] = revertResult.Output.String()
+					}
+					recapStats[hostname]["changed"]++
+					if cfg.Logging.Format == "plain" {
+						fmt.Printf("changed: [%s] => \n%v\n", hostname, revertResult.Output)
+					} else {
+						common.LogInfo("Revert task changed", logData)
+					}
+				} else { // OK
+					logData["status"] = "ok"
+					logData["changed"] = false
+					if revertResult.Output != nil {
+						logData["output"] = revertResult.Output.String()
+					}
+					recapStats[hostname]["ok"]++
+					if cfg.Logging.Format == "plain" {
+						fmt.Printf("ok: [%s]\n", hostname)
+						PPrintOutput(revertResult.Output, nil)
+					} else {
+						common.LogInfo("Revert task ok", logData)
+					}
+				}
+			}
+			common.DebugOutput("Finished reverting host '%s' on level %d", hostname, executionLevel)
+		}
+		common.DebugOutput("Finished reverting level %d", executionLevel)
+	}
+
+	if cfg.Logging.Format == "plain" {
+		fmt.Printf("\nREVERT RECAP ****************************************************\n")
+		for hostname, stats := range recapStats {
+			fmt.Printf("%s : ok=%d    changed=%d    failed=%d\n", hostname, stats["ok"], stats["changed"], stats["failed"])
 		}
 	} else {
-		playTarget = inventoryFile
-		inventory, errI = LoadInventory(inventoryFile)
-		if errI != nil {
-			return nil, "", fmt.Errorf("failed to load inventory '%s': %w", inventoryFile, errI)
+		common.LogInfo("Revert recap", map[string]interface{}{"stats": recapStats})
+	}
+
+	for _, stats := range recapStats {
+		if stats["failed"] > 0 {
+			return fmt.Errorf("one or more tasks failed to revert")
 		}
 	}
-	return inventory, playTarget, nil
+	common.DebugOutput("Revert process completed successfully.")
+	return nil
 }
 
-func (e *BaseExecutor) getHostContexts(inventory *Inventory) (map[string]*HostContext, error) {
+func GetHostContexts(inventory *Inventory) (map[string]*HostContext, error) {
 	contexts, err := inventory.GetContextForRun()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get host contexts for run: %w", err)
@@ -141,7 +236,7 @@ func (e *BaseExecutor) getHostContexts(inventory *Inventory) (map[string]*HostCo
 	return contexts, nil
 }
 
-func (e *BaseExecutor) initializeRecapStats(hostContexts map[string]*HostContext) map[string]map[string]int {
+func InitializeRecapStats(hostContexts map[string]*HostContext) map[string]map[string]int {
 	recapStats := make(map[string]map[string]int)
 	for hostname := range hostContexts {
 		recapStats[hostname] = map[string]int{"ok": 0, "changed": 0, "failed": 0, "skipped": 0, "ignored": 0}
@@ -149,7 +244,7 @@ func (e *BaseExecutor) initializeRecapStats(hostContexts map[string]*HostContext
 	return recapStats
 }
 
-func (e *BaseExecutor) getOrderedGraph(cfg *config.Config, graph Graph) ([][]Task, error) {
+func GetOrderedGraph(cfg *config.Config, graph Graph) ([][]Task, error) {
 	if cfg.ExecutionMode == "parallel" {
 		return graph.ParallelTasks(), nil
 	} else if cfg.ExecutionMode == "sequential" {
@@ -158,7 +253,7 @@ func (e *BaseExecutor) getOrderedGraph(cfg *config.Config, graph Graph) ([][]Tas
 	return nil, fmt.Errorf("unknown or unsupported execution mode: %s", cfg.ExecutionMode)
 }
 
-func (e *BaseExecutor) prepareLevelHistoryAndGetCount(
+func (e *LocalGraphExecutor) prepareLevelHistoryAndGetCount(
 	tasksInLevel []Task,
 	hostContexts map[string]*HostContext,
 	executionLevel int,
@@ -186,7 +281,7 @@ func (e *BaseExecutor) prepareLevelHistoryAndGetCount(
 	return levelHistoryForRevert, numExpectedResultsOnLevel
 }
 
-func (e *BaseExecutor) loadLevelTasks(
+func (e *LocalGraphExecutor) loadLevelTasks(
 	ctx context.Context,
 	tasksInLevel []Task,
 	hostContexts map[string]*HostContext,
@@ -238,7 +333,7 @@ func (e *BaseExecutor) loadLevelTasks(
 						case <-ctx.Done():
 							return
 						default:
-							taskResult := e.Runner.RunTask(ctx, task, closure, cfg)
+							taskResult := e.Runner.ExecuteTask(ctx, task, closure, cfg)
 							select {
 							case resultsCh <- taskResult:
 							case <-ctx.Done():
@@ -246,7 +341,7 @@ func (e *BaseExecutor) loadLevelTasks(
 						}
 					}()
 				} else {
-					taskResult := e.Runner.RunTask(ctx, task, closure, cfg)
+					taskResult := e.Runner.ExecuteTask(ctx, task, closure, cfg)
 					select {
 					case resultsCh <- taskResult:
 					case <-ctx.Done():
@@ -262,7 +357,7 @@ func (e *BaseExecutor) loadLevelTasks(
 	}
 }
 
-func (e *BaseExecutor) processLevelResults(
+func (e *LocalGraphExecutor) processLevelResults(
 	ctx context.Context,
 	resultsCh chan TaskResult,
 	errCh chan error,
@@ -432,7 +527,7 @@ endProcessingLoop:
 	return levelHardErrored, nil
 }
 
-func (e *BaseExecutor) printPlayRecap(cfg *config.Config, recapStats map[string]map[string]int) {
+func (e *LocalGraphExecutor) printPlayRecap(cfg *config.Config, recapStats map[string]map[string]int) {
 	if cfg.Logging.Format == "plain" {
 		fmt.Printf("\nPLAY RECAP ****************************************************\n")
 		for hostname, stats := range recapStats {

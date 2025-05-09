@@ -227,7 +227,7 @@ func processActivityResultAndRegisterFacts(
 // It requires access to the workflow.Context to execute activities.
 // Note: This runner is conceptual for showing how Temporal fits the TaskRunner pattern.
 // The SpageTemporalWorkflow will still manage its own execution loop due to
-// differences in fact/state management compared to BaseExecutor's assumptions.
+// differences in fact/state management compared to LocalGraphExecutor's assumptions.
 type TemporalTaskRunner struct {
 	WorkflowCtx workflow.Context // The Temporal workflow context
 }
@@ -240,8 +240,95 @@ func NewTemporalTaskRunner(workflowCtx workflow.Context) *TemporalTaskRunner {
 // RunTask for Temporal dispatches the task as a Temporal activity.
 // It converts the SpageActivityResult from the activity into a TaskResult.
 // The original SpageActivityResult is stored in TaskResult.ExecutionSpecificOutput.
-func (r *TemporalTaskRunner) RunTask(ctx context.Context, task pkg.Task, closure *pkg.Closure, cfg *config.Config) pkg.TaskResult {
-	// ctx is the parent context from the caller of RunTask (e.g., workflow.Background(r.WorkflowCtx)).
+func (r *TemporalTaskRunner) ExecuteTask(ctx context.Context, task pkg.Task, closure *pkg.Closure, cfg *config.Config) pkg.TaskResult {
+	// ctx is the parent context from the caller of ExecuteTask (e.g., workflow.Background(r.WorkflowCtx)).
+	// r.WorkflowCtx is the actual workflow context for Temporal operations.
+	logger := workflow.GetLogger(r.WorkflowCtx)
+
+	currentHostFacts := closure.GetFacts() // Facts from the closure, prepared by SpageTemporalWorkflow
+	loopItem, _ := closure.ExtraFacts["item"]
+
+	activityInput := SpageActivityInput{
+		TaskDefinition:   task,
+		TargetHost:       *closure.HostContext.Host,
+		LoopItem:         loopItem,
+		CurrentHostFacts: currentHostFacts,
+		SpageCoreConfig:  cfg,
+	}
+
+	var activityOutput SpageActivityResult // Use a distinct name from the input
+
+	ao := workflow.ActivityOptions{
+		StartToCloseTimeout: 30 * time.Minute,
+		HeartbeatTimeout:    2 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    time.Second,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    time.Minute,
+			MaximumAttempts:    3,
+		},
+	}
+	// Use r.WorkflowCtx for Temporal API calls like WithActivityOptions and ExecuteActivity
+	temporalAwareCtx := workflow.WithActivityOptions(r.WorkflowCtx, ao)
+
+	startTime := time.Now() // Record start time before executing activity
+	future := workflow.ExecuteActivity(temporalAwareCtx, ExecuteSpageTaskActivity, activityInput)
+	errOnGet := future.Get(r.WorkflowCtx, &activityOutput)
+	duration := time.Since(startTime) // Calculate duration after activity completion or error
+
+	if errOnGet != nil {
+		logger.Error("Temporal activity future.Get() failed", "task", task.Name, "host", closure.HostContext.Host.Name, "error", errOnGet)
+		return pkg.TaskResult{
+			Task:                    task,
+			Closure:                 closure,
+			Error:                   fmt.Errorf("activity %s on host %s failed to complete: %w", task.Name, closure.HostContext.Host.Name, errOnGet),
+			Status:                  pkg.TaskStatusFailed,
+			Failed:                  true,
+			Duration:                duration,
+			ExecutionSpecificOutput: nil, // No successful activityOutput to store
+		}
+	}
+
+	var finalError error
+	if activityOutput.Error != "" {
+		if activityOutput.Ignored {
+			finalError = &pkg.IgnoredTaskError{OriginalErr: errors.New(activityOutput.Error)}
+		} else {
+			finalError = errors.New(activityOutput.Error)
+		}
+	}
+
+	finalStatus := pkg.TaskStatusOk
+	if activityOutput.Skipped {
+		finalStatus = pkg.TaskStatusSkipped
+	} else if finalError != nil {
+		if !activityOutput.Ignored { // Only set to Failed if not ignored
+			finalStatus = pkg.TaskStatusFailed
+		}
+		// If ignored, status remains Ok or Changed (if applicable) unless explicitly set otherwise
+	} else if activityOutput.Changed {
+		finalStatus = pkg.TaskStatusChanged
+	}
+
+	// Note: TaskResult.Output (ModuleOutput) is not directly populated from SpageActivityResult.Output (string).
+	// This would require parsing the string or changing SpageActivityResult.
+	// For now, TaskResult.Output will be nil when using TemporalTaskRunner if ExecuteSpageTaskActivity doesn't provide it.
+
+	return pkg.TaskResult{
+		Task:                    task,
+		Closure:                 closure,
+		Error:                   finalError,
+		Status:                  finalStatus,
+		Failed:                  (finalError != nil && !activityOutput.Ignored), // True if a non-ignored error occurred
+		Changed:                 activityOutput.Changed,
+		Duration:                duration,
+		ExecutionSpecificOutput: activityOutput, // Store the full SpageActivityResult
+		// Output: nil, // ModuleOutput remains nil for now
+	}
+}
+
+func (r *TemporalTaskRunner) RevertTask(ctx context.Context, task pkg.Task, closure *pkg.Closure, cfg *config.Config) pkg.TaskResult {
+	// ctx is the parent context from the caller of ExecuteTask (e.g., workflow.Background(r.WorkflowCtx)).
 	// r.WorkflowCtx is the actual workflow context for Temporal operations.
 	logger := workflow.GetLogger(r.WorkflowCtx)
 
@@ -332,7 +419,7 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *pkg.Graph, inventor
 	logger := workflow.GetLogger(ctx)
 	logger.Info("SpageTemporalWorkflow started", "workflowId", workflow.GetInfo(ctx).WorkflowExecution.ID)
 
-	// Activity options are now set within TemporalTaskRunner.RunTask or globally if preferred.
+	// Activity options are now set within TemporalTaskRunner.ExecuteTask or globally if preferred.
 	// If set globally for the workflow context:
 	// ao := workflow.ActivityOptions{...}
 	// ctx = workflow.WithActivityOptions(ctx, ao)
@@ -395,10 +482,7 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *pkg.Graph, inventor
 							ExtraFacts:  extraFactsForClosure,
 						}
 
-						// Pass context.Background() for the first ctx argument of RunTask, as
-						// TemporalTaskRunner.RunTask uses its internally stored r.WorkflowCtx for actual Temporal operations,
-						// and the first context.Context param is currently not utilized by it for activity logic.
-						taskRunResult := temporalRunner.RunTask(context.Background(), currentTaskDefinition, closureForRunner, spageConfigInput)
+						taskRunResult := temporalRunner.ExecuteTask(context.Background(), currentTaskDefinition, closureForRunner, spageConfigInput)
 						tempHostCtx.Close() // Close the temporary host context
 
 						var activityResult SpageActivityResult

@@ -43,6 +43,14 @@ type Group struct {
 }
 
 func LoadInventory(path string) (*Inventory, error) {
+	if path == "" {
+		common.LogDebug("No inventory file specified, assuming target is this machine", nil)
+		return &Inventory{
+			Hosts: map[string]*Host{
+				"localhost": {Name: "localhost", IsLocal: true, Host: "localhost"},
+			},
+		}, nil
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		log.Fatalf("Error reading YAML file: %v", err)
