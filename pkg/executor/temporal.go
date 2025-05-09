@@ -675,14 +675,11 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 		log.Println("Waiting for workflow to complete...", "WorkflowID", we.GetID())
 		err = we.Get(context.Background(), nil) // Wait for the workflow to complete.
 		if err != nil {
-			log.Printf("Workflow %s completed with error: %v", we.GetID(), err)
+			log.Fatalf("Workflow %s completed with error: %v", we.GetID(), err)
 		} else {
 			log.Println("Workflow completed successfully.", "WorkflowID", we.GetID())
+			myWorker.Stop()
 		}
-
-		log.Println("Shutting down worker after triggered workflow completion...")
-		myWorker.Stop()
-		log.Println("Worker stopped.")
 	} else {
 		// If not triggering a workflow, keep the worker running until interrupted
 		log.Println("Application setup complete. Worker is running. Press Ctrl+C to exit.")

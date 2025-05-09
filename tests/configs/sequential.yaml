@@ -2,3 +2,5 @@ execution_mode: sequential
 logging:
   format: plain
   level: debug
+temporal:
+  trigger: true

@@ -2,3 +2,5 @@ execution_mode: parallel
 logging:
   format: plain
   level: debug
+temporal:
+  trigger: true
