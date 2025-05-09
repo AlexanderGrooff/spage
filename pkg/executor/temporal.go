@@ -8,7 +8,6 @@ import (
 	"log"
 	"time"
 
-	// "github.com/AlexanderGrooff/spage/cmd" // Removed to break import cycle
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/config"
 

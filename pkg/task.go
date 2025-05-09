@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -498,4 +499,201 @@ func HandleResult(r *TaskResult, t Task, c *Closure) TaskResult {
 	// However, we should update the changed/failed status after evaluating these conditions.
 	setTaskStatus(*r, t, c)
 	return *r
+}
+func RegisterVariableIfNeeded(result TaskResult, task Task, c *Closure) {
+	// Only register if the task has a name assigned to the 'register' key
+	if task.Register == "" {
+		return
+	}
+
+	var valueToStore interface{}
+	var ignoredErr *IgnoredTaskError
+
+	// Check if the error is an IgnoredTaskError or just a regular error
+	if errors.As(result.Error, &ignoredErr) {
+		// It's an ignored error
+		originalErr := ignoredErr.Unwrap()    // Get the original error
+		failureMap := map[string]interface{}{ // Register failure details
+			"failed":  true,
+			"changed": false,
+			"msg":     originalErr.Error(),
+			"ignored": true, // Add an explicit ignored flag
+		}
+		// Include output facts if available
+		if result.Output != nil {
+			if factProvider, ok := result.Output.(FactProvider); ok {
+				outputFacts := factProvider.AsFacts()
+				for k, v := range outputFacts {
+					failureMap[k] = v
+				}
+			}
+		}
+		valueToStore = failureMap
+		common.LogDebug("Ignored error", map[string]interface{}{
+			"task":  task.Name,
+			"host":  c.HostContext.Host.Name,
+			"error": originalErr.Error(),
+			"value": valueToStore,
+		})
+	} else if result.Error != nil {
+		// It's a regular, non-ignored error
+		failureMap := map[string]interface{}{ // Register failure details
+			"failed":  true,
+			"changed": false,
+			"msg":     result.Error.Error(),
+		}
+		// Include output facts if available
+		if result.Output != nil {
+			if factProvider, ok := result.Output.(FactProvider); ok {
+				outputFacts := factProvider.AsFacts()
+				for k, v := range outputFacts {
+					failureMap[k] = v
+				}
+			}
+		}
+		valueToStore = failureMap
+	} else if result.Output != nil {
+		// If successful and output exists, register the output facts
+		valueToStore = ConvertOutputToFactsMap(result.Output)
+	} else {
+		// If successful but no output (e.g., skipped task), register a minimal success map
+		valueToStore = map[string]interface{}{ // Ensure something is registered for skipped/ok tasks
+			"failed":  false,
+			"changed": false,
+			"skipped": result.Output == nil, // Mark as skipped if output is nil
+			"ignored": false,                // Explicitly false for non-ignored cases
+		}
+	}
+
+	if valueToStore != nil {
+		common.LogDebug("Registering variable", map[string]interface{}{
+			"task":     task.Name,
+			"host":     c.HostContext.Host.Name,
+			"variable": task.Register,
+			"value":    valueToStore, // Log the actual map being stored
+		})
+		c.HostContext.Facts.Store(task.Register, valueToStore)
+	}
+}
+
+func setTaskStatus(result TaskResult, task Task, c *Closure) {
+	if task.Register == "" {
+		return
+	}
+	facts, _ := c.GetFact(task.Register)
+	if facts == nil {
+		facts = map[string]interface{}{
+			"failed":  result.Failed,
+			"changed": result.Changed,
+		}
+	} else {
+		if factsMap, ok := facts.(map[string]interface{}); ok {
+			factsMap["failed"] = result.Failed
+			factsMap["changed"] = result.Changed
+			facts = factsMap // Assign back the modified map
+		} else {
+			// Handle cases where the loaded value is not a map[string]interface{}
+			// For now, let's overwrite with a new map, but you might want different logic.
+			facts = map[string]interface{}{
+				"failed":  result.Failed,
+				"changed": result.Changed,
+			}
+		}
+	}
+	c.HostContext.Facts.Store(task.Register, facts)
+}
+
+var moduleOutputType = reflect.TypeOf((*ModuleOutput)(nil)).Elem()
+
+func ConvertOutputToFactsMap(output ModuleOutput) interface{} {
+	if output == nil {
+		return nil
+	}
+
+	outputValue := reflect.ValueOf(output)
+	outputType := outputValue.Type()
+
+	if outputType.Kind() == reflect.Ptr {
+		if outputValue.IsNil() {
+			return nil
+		}
+		outputValue = outputValue.Elem()
+		outputType = outputValue.Type()
+	}
+
+	if outputValue.IsValid() && outputType.Kind() == reflect.Struct {
+		factsMap := make(map[string]interface{})
+		for i := 0; i < outputValue.NumField(); i++ {
+			fieldValue := outputValue.Field(i)
+			typeField := outputType.Field(i)
+
+			if typeField.IsExported() {
+				if typeField.Type == moduleOutputType {
+					continue
+				}
+				key := strings.ToLower(typeField.Name)
+				fieldInterface := fieldValue.Interface()
+				fieldValType := reflect.TypeOf(fieldInterface)
+				fieldValKind := fieldValType.Kind()
+				if fieldValKind == reflect.Ptr {
+					fieldValKind = fieldValType.Elem().Kind()
+				}
+
+				if fieldValKind == reflect.Struct {
+					factsMap[key] = convertInterfaceToMapRecursive(fieldInterface)
+				} else {
+					factsMap[key] = fieldInterface
+				}
+			}
+		}
+		if changedMethod := outputValue.MethodByName("Changed"); changedMethod.IsValid() {
+			results := changedMethod.Call(nil)
+			if len(results) > 0 && results[0].Kind() == reflect.Bool {
+				factsMap["changed"] = results[0].Bool()
+			}
+		} else if outputValue.CanAddr() {
+			addrValue := outputValue.Addr()
+			if changedMethod := addrValue.MethodByName("Changed"); changedMethod.IsValid() {
+				results := changedMethod.Call(nil)
+				if len(results) > 0 && results[0].Kind() == reflect.Bool {
+					factsMap["changed"] = results[0].Bool()
+				}
+			}
+		}
+		return factsMap
+	}
+	return output
+}
+
+func convertInterfaceToMapRecursive(data interface{}) interface{} {
+	if data == nil {
+		return nil
+	}
+
+	value := reflect.ValueOf(data)
+	typeInfo := value.Type()
+
+	if typeInfo.Kind() == reflect.Ptr {
+		if value.IsNil() {
+			return nil
+		}
+		value = value.Elem()
+		typeInfo = value.Type()
+	}
+
+	if typeInfo.Kind() != reflect.Struct {
+		return data
+	}
+
+	mapResult := make(map[string]interface{})
+	for i := 0; i < value.NumField(); i++ {
+		fieldValue := value.Field(i)
+		typeField := typeInfo.Field(i)
+
+		if typeField.IsExported() {
+			key := strings.ToLower(typeField.Name)
+			mapResult[key] = convertInterfaceToMapRecursive(fieldValue.Interface())
+		}
+	}
+	return mapResult
 }
