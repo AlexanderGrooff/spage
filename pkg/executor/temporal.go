@@ -260,7 +260,11 @@ func (r *TemporalTaskRunner) ExecuteTask(execCtx workflow.Context, task pkg.Task
 
 	var activityOutput SpageActivityResult // Use a distinct name from the input
 
+	// Construct a unique and descriptive ActivityID
+	activityID := fmt.Sprintf("%s-%s-%s", task.Name, closure.HostContext.Host.Name, uuid.New().String())
+
 	ao := workflow.ActivityOptions{
+		ActivityID:          activityID,
 		StartToCloseTimeout: 30 * time.Minute,
 		HeartbeatTimeout:    2 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
@@ -347,7 +351,11 @@ func (r *TemporalTaskRunner) RevertTask(execCtx workflow.Context, task pkg.Task,
 
 	var activityOutput SpageActivityResult // Use a distinct name from the input
 
+	// Construct a unique and descriptive ActivityID for the revert task
+	activityID := fmt.Sprintf("revert-%s-%s-%s", task.Name, closure.HostContext.Host.Name, uuid.New().String())
+
 	ao := workflow.ActivityOptions{
+		ActivityID:          activityID,
 		StartToCloseTimeout: 30 * time.Minute,
 		HeartbeatTimeout:    2 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
@@ -493,7 +501,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 
 			closures, err := pkg.GetTaskClosures(task, tempHostCtx)
 			if err != nil {
-				errMsg := fmt.Errorf("critical error: failed to get task closures for task '%s' on host '%s': %w. Aborting level.", task.Name, hostName, err)
+				errMsg := fmt.Errorf("critical error: failed to get task closures for task '%s' on host '%s': %w. Aborting level", task.Name, hostName, err)
 				common.LogError("Dispatch error in loadLevelTasks", map[string]interface{}{"error": errMsg})
 				errCh.SendAsync(errMsg)
 				return

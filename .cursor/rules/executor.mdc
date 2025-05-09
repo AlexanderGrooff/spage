@@ -6,3 +6,5 @@ alwaysApply: false
 Make sure that the behaviour of the executors (like local/temporal) are tightly aligned. They are started with ExecuteGraph, and should make sure that the given graph is executed with all relevant provided configs, like sequential/parallel.
 
 The methods on the GraphExecutor interface are there to make sure that the different executors are relatively similar. However, when necessary feel free to edit where necessary.
+
+Make sure that TemporalGraphExecutor and LocalGraphExecutor keep in line with the GraphExecutor interface.
