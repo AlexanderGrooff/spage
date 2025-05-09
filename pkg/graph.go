@@ -83,7 +83,6 @@ func (g Graph) SaveToFile(path string) error {
 	fmt.Fprintln(f, "package main")
 	fmt.Fprintln(f)
 	fmt.Fprintln(f, "import (")
-	fmt.Fprintln(f, `    "context"`)
 	fmt.Fprintln(f, `    "os"`)
 	fmt.Fprintln(f, `    "fmt"`)
 	fmt.Fprintln(f, `    "flag"`)
