@@ -459,6 +459,7 @@ import (
 
 	"github.com/AlexanderGrooff/spage/cmd"
 	"github.com/AlexanderGrooff/spage/pkg"
+	"github.com/AlexanderGrooff/spage/pkg/executor"
 	"github.com/AlexanderGrooff/spage/pkg/modules"
 )
 
@@ -512,14 +513,14 @@ func main() {
 	log.Printf("Preparing to run Temporal worker. Workflow trigger from config: %t", spageAppConfig.Temporal.Trigger)
 
 	// Prepare options for the Temporal worker runner
-	options := pkg.RunSpageTemporalWorkerAndWorkflowOptions{
+	options := executor.RunSpageTemporalWorkerAndWorkflowOptions{
 		Graph:            &GeneratedGraph, // This is the graph code injected above
 		InventoryPath:    *inventoryFile,
 		LoadedConfig:     spageAppConfig, // spageAppConfig now contains Temporal settings from config file, env, or defaults
 	}
 
 	// Run the worker and potentially the workflow
-	pkg.RunSpageTemporalWorkerAndWorkflow(options)
+	executor.RunSpageTemporalWorkerAndWorkflow(options)
 }
 `)
 

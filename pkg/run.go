@@ -27,7 +27,7 @@ func RegisterVariableIfNeeded(result TaskResult, task Task, c *Closure) {
 	// Check if the error is an IgnoredTaskError or just a regular error
 	if errors.As(result.Error, &ignoredErr) {
 		// It's an ignored error
-		originalErr := ignoredErr.Unwrap() // Get the original error
+		originalErr := ignoredErr.Unwrap()    // Get the original error
 		failureMap := map[string]interface{}{ // Register failure details
 			"failed":  true,
 			"changed": false,

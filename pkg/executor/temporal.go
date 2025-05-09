@@ -1,9 +1,10 @@
-package pkg
+package executor
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/AlexanderGrooff/spage/pkg"
 	"log"
 	"time"
 
@@ -22,8 +23,8 @@ import (
 
 // SpageActivityInput defines the input for our generic Spage task activity.
 type SpageActivityInput struct {
-	TaskDefinition   Task
-	TargetHost       Host
+	TaskDefinition   pkg.Task
+	TargetHost       pkg.Host
 	LoopItem         interface{} // nil if not a loop task or for the main item
 	CurrentHostFacts map[string]interface{}
 	SpageCoreConfig  *config.Config // Pass necessary config parts
@@ -48,7 +49,7 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 	logger.Info("ExecuteSpageTaskActivity started", "task", input.TaskDefinition.Name, "host", input.TargetHost.Name)
 	activity.RecordHeartbeat(ctx, fmt.Sprintf("Starting task %s on host %s", input.TaskDefinition.Name, input.TargetHost.Name))
 
-	hostCtx, err := InitializeHostContext(&input.TargetHost)
+	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost)
 	if err != nil {
 		logger.Error("Failed to initialize host context", "host", input.TargetHost.Name, "task", input.TaskDefinition.Name, "error", err)
 		return &SpageActivityResult{
@@ -67,7 +68,7 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 	}
 	// The direct merge of input.TargetHost.Vars is removed as GetInitialFactsForHost now handles this layering.
 
-	closure := ConstructClosure(hostCtx, input.TaskDefinition) // Assumes ConstructClosure is in package pkg
+	closure := pkg.ConstructClosure(hostCtx, input.TaskDefinition) // Assumes ConstructClosure is in package pkg
 
 	if input.LoopItem != nil {
 		loopVarName := "item"
@@ -87,7 +88,7 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 		RegisteredVars: make(map[string]interface{}),
 	}
 
-	var ignoredError *IgnoredTaskError // Assumes IgnoredTaskError is in package pkg
+	var ignoredError *pkg.IgnoredTaskError // Assumes IgnoredTaskError is in package pkg
 	if errors.As(taskResult.Error, &ignoredError) {
 		result.Ignored = true
 		originalErr := ignoredError.Unwrap()
@@ -100,7 +101,7 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 			"ignored": true,
 		}
 		if taskResult.Output != nil {
-			if factProvider, ok := taskResult.Output.(FactProvider); ok { // Assumes FactProvider is in package pkg
+			if factProvider, ok := taskResult.Output.(pkg.FactProvider); ok { // Assumes FactProvider is in package pkg
 				outputFacts := factProvider.AsFacts()
 				for k, v := range outputFacts {
 					failureMap[k] = v
@@ -119,7 +120,7 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 			"msg":     taskResult.Error.Error(),
 		}
 		if taskResult.Output != nil {
-			if factProvider, ok := taskResult.Output.(FactProvider); ok {
+			if factProvider, ok := taskResult.Output.(pkg.FactProvider); ok {
 				outputFacts := factProvider.AsFacts()
 				for k, v := range outputFacts {
 					failureMap[k] = v
@@ -135,7 +136,7 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 			result.Changed = taskResult.Output.Changed()
 			logger.Info("Task executed successfully", "task", input.TaskDefinition.Name, "changed", result.Changed)
 			if input.TaskDefinition.Register != "" {
-				valueToStore := ConvertOutputToFactsMap(taskResult.Output) // Assumes ConvertOutputToFactsMap is in package pkg
+				valueToStore := pkg.ConvertOutputToFactsMap(taskResult.Output) // Assumes ConvertOutputToFactsMap is in package pkg
 				result.RegisteredVars[input.TaskDefinition.Register] = valueToStore
 				logger.Info("Variable registered", "task", input.TaskDefinition.Name, "variable", input.TaskDefinition.Register)
 			}
@@ -240,7 +241,7 @@ func NewTemporalTaskRunner(workflowCtx workflow.Context) *TemporalTaskRunner {
 // RunTask for Temporal dispatches the task as a Temporal activity.
 // It converts the SpageActivityResult from the activity into a TaskResult.
 // The original SpageActivityResult is stored in TaskResult.ExecutionSpecificOutput.
-func (r *TemporalTaskRunner) RunTask(ctx context.Context, task Task, closure *Closure, cfg *config.Config) TaskResult {
+func (r *TemporalTaskRunner) RunTask(ctx context.Context, task pkg.Task, closure *pkg.Closure, cfg *config.Config) pkg.TaskResult {
 	// ctx is the parent context from the caller of RunTask (e.g., workflow.Background(r.WorkflowCtx)).
 	// r.WorkflowCtx is the actual workflow context for Temporal operations.
 	logger := workflow.GetLogger(r.WorkflowCtx)
@@ -278,11 +279,11 @@ func (r *TemporalTaskRunner) RunTask(ctx context.Context, task Task, closure *Cl
 
 	if errOnGet != nil {
 		logger.Error("Temporal activity future.Get() failed", "task", task.Name, "host", closure.HostContext.Host.Name, "error", errOnGet)
-		return TaskResult{
+		return pkg.TaskResult{
 			Task:                    task,
 			Closure:                 closure,
 			Error:                   fmt.Errorf("activity %s on host %s failed to complete: %w", task.Name, closure.HostContext.Host.Name, errOnGet),
-			Status:                  TaskStatusFailed,
+			Status:                  pkg.TaskStatusFailed,
 			Failed:                  true,
 			Duration:                duration,
 			ExecutionSpecificOutput: nil, // No successful activityOutput to store
@@ -292,29 +293,29 @@ func (r *TemporalTaskRunner) RunTask(ctx context.Context, task Task, closure *Cl
 	var finalError error
 	if activityOutput.Error != "" {
 		if activityOutput.Ignored {
-			finalError = &IgnoredTaskError{OriginalErr: errors.New(activityOutput.Error)}
+			finalError = &pkg.IgnoredTaskError{OriginalErr: errors.New(activityOutput.Error)}
 		} else {
 			finalError = errors.New(activityOutput.Error)
 		}
 	}
 
-	finalStatus := TaskStatusOk
+	finalStatus := pkg.TaskStatusOk
 	if activityOutput.Skipped {
-		finalStatus = TaskStatusSkipped
+		finalStatus = pkg.TaskStatusSkipped
 	} else if finalError != nil {
 		if !activityOutput.Ignored { // Only set to Failed if not ignored
-			finalStatus = TaskStatusFailed
+			finalStatus = pkg.TaskStatusFailed
 		}
 		// If ignored, status remains Ok or Changed (if applicable) unless explicitly set otherwise
 	} else if activityOutput.Changed {
-		finalStatus = TaskStatusChanged
+		finalStatus = pkg.TaskStatusChanged
 	}
 
 	// Note: TaskResult.Output (ModuleOutput) is not directly populated from SpageActivityResult.Output (string).
 	// This would require parsing the string or changing SpageActivityResult.
 	// For now, TaskResult.Output will be nil when using TemporalTaskRunner if ExecuteSpageTaskActivity doesn't provide it.
 
-	return TaskResult{
+	return pkg.TaskResult{
 		Task:                    task,
 		Closure:                 closure,
 		Error:                   finalError,
@@ -328,7 +329,7 @@ func (r *TemporalTaskRunner) RunTask(ctx context.Context, task Task, closure *Cl
 }
 
 // SpageTemporalWorkflow defines the main workflow logic.
-func SpageTemporalWorkflow(ctx workflow.Context, graphInput *Graph, inventoryInput *Inventory, spageConfigInput *config.Config) error {
+func SpageTemporalWorkflow(ctx workflow.Context, graphInput *pkg.Graph, inventoryInput *pkg.Inventory, spageConfigInput *config.Config) error {
 	logger := workflow.GetLogger(ctx)
 	logger.Info("SpageTemporalWorkflow started", "workflowId", workflow.GetInfo(ctx).WorkflowExecution.ID)
 
@@ -346,7 +347,7 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *Graph, inventoryInp
 		}
 	}
 
-	var orderedLevelsOfTasks [][]Task
+	var orderedLevelsOfTasks [][]pkg.Task
 	if spageConfigInput.ExecutionMode == "sequential" {
 		orderedLevelsOfTasks = graphInput.SequentialTasks()
 	} else {
@@ -361,7 +362,7 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *Graph, inventoryInp
 
 		targetHosts := inventoryInput.Hosts // Assuming inventoryInput is not nil after initial checks/defaults
 		if targetHosts == nil {
-			targetHosts = make(map[string]*Host)
+			targetHosts = make(map[string]*pkg.Host)
 		} // Safety for nil inventory
 
 		if spageConfigInput.ExecutionMode == "sequential" {
@@ -375,7 +376,7 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *Graph, inventoryInp
 
 					for _, loopItem := range loopItems {
 						// Construct Closure for this specific task run
-						tempHostCtx, err := InitializeHostContext(host) // Fresh HostContext for closure
+						tempHostCtx, err := pkg.InitializeHostContext(host) // Fresh HostContext for closure
 						if err != nil {
 							return fmt.Errorf("failed to init temp HostContext for closure: %w", err)
 						}
@@ -390,7 +391,7 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *Graph, inventoryInp
 							extraFactsForClosure["item"] = loopItem
 						}
 
-						closureForRunner := &Closure{
+						closureForRunner := &pkg.Closure{
 							HostContext: tempHostCtx,
 							ExtraFacts:  extraFactsForClosure,
 						}
@@ -418,7 +419,7 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *Graph, inventoryInp
 								Error:    taskRunResult.Error.Error(), // Use the error from TaskResult
 								// Ignored needs to be derived if possible. Assuming not ignored if we are in this path from direct error.
 							}
-							var ignoredErr *IgnoredTaskError
+							var ignoredErr *pkg.IgnoredTaskError
 							if errors.As(taskRunResult.Error, &ignoredErr) {
 								activityResult.Ignored = true
 							}
@@ -453,7 +454,7 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *Graph, inventoryInp
 						numDispatched++
 						// Constructing SpageActivityInput directly for ExecuteActivity in parallel loop.
 						// tempHostCtx and extraFactsForClosure are used to build activityInput below.
-						tempHostCtx, err := InitializeHostContext(host)
+						tempHostCtx, err := pkg.InitializeHostContext(host)
 						if err != nil {
 							return fmt.Errorf("failed to init temp HostContext for closure (parallel): %w", err)
 						}
@@ -524,14 +525,14 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *Graph, inventoryInp
 }
 
 // Helper to encapsulate loop parsing logic for workflow
-func getLoopItemsForTask(ctx workflow.Context, task Task, host *Host, currentHostFacts map[string]interface{}) ([]interface{}, error) {
+func getLoopItemsForTask(ctx workflow.Context, task pkg.Task, host *pkg.Host, currentHostFacts map[string]interface{}) ([]interface{}, error) {
 	logger := workflow.GetLogger(ctx)
 	loopItems := []interface{}{nil} // Default: run once if no loop
 	isLoopTask := false
 
 	if task.Loop != nil {
 		// Need a temporary HostContext to use ParseLoop, as ParseLoop expects it for fact lookups.
-		tempHostCtxForLoop, err := InitializeHostContext(host)
+		tempHostCtxForLoop, err := pkg.InitializeHostContext(host)
 		if err != nil {
 			logger.Error("Failed to initialize temporary host context for loop parsing", "task", task.Name, "host", host.Name, "error", err)
 			return nil, fmt.Errorf("failed to init temp HostContext for loop parsing for task %s on host %s: %w", task.Name, host.Name, err)
@@ -544,7 +545,7 @@ func getLoopItemsForTask(ctx workflow.Context, task Task, host *Host, currentHos
 			}
 		}
 
-		parsedLoopItems, err := ParseLoop(task, tempHostCtxForLoop) // ParseLoop is from executor_utils.go
+		parsedLoopItems, err := pkg.ParseLoop(task, tempHostCtxForLoop) // ParseLoop is from executor_utils.go
 		if err != nil {
 			logger.Error("Failed to parse loop for task", "task", task.Name, "host", host.Name, "error", err)
 			return nil, fmt.Errorf("failed to parse loop for task %s on host %s: %w", task.Name, host.Name, err)
@@ -560,7 +561,7 @@ func getLoopItemsForTask(ctx workflow.Context, task Task, host *Host, currentHos
 
 // RunSpageTemporalWorkerAndWorkflowOptions defines options for RunSpageTemporalWorkerAndWorkflow.
 type RunSpageTemporalWorkerAndWorkflowOptions struct {
-	Graph         *Graph
+	Graph         *pkg.Graph
 	InventoryPath string
 	LoadedConfig  *config.Config // Changed from ConfigPath to break import cycle with cmd
 }
@@ -603,17 +604,17 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 	defer temporalClient.Close()
 	log.Println("Temporal client connected.")
 
-	var spageAppInventory *Inventory
+	var spageAppInventory *pkg.Inventory
 	if opts.InventoryPath != "" {
-		spageAppInventory, err = LoadInventory(opts.InventoryPath) // Assumes LoadInventory is in package pkg
+		spageAppInventory, err = pkg.LoadInventory(opts.InventoryPath) // Assumes LoadInventory is in package pkg
 		if err != nil {
 			log.Fatalf("Failed to load Spage inventory file '%s': %v", opts.InventoryPath, err)
 		}
 		log.Printf("Spage inventory loaded from '%s'.", opts.InventoryPath)
 	} else {
 		log.Println("No Spage inventory file specified. Creating a default localhost inventory.")
-		spageAppInventory = &Inventory{
-			Hosts: map[string]*Host{
+		spageAppInventory = &pkg.Inventory{
+			Hosts: map[string]*pkg.Host{
 				"localhost": {
 					Name:    "localhost",
 					IsLocal: true,
