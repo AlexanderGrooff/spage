@@ -81,7 +81,7 @@ func (e *LocalGraphExecutor) Execute(hostContexts map[string]*HostContext, order
 		default:
 		}
 
-		levelHistoryForRevert, numExpectedResultsOnLevel := e.prepareLevelHistoryAndGetCount(tasksInLevel, hostContexts, executionLevel)
+		levelHistoryForRevert, numExpectedResultsOnLevel := PrepareLevelHistoryAndGetCount(tasksInLevel, hostContexts, executionLevel)
 		executionHistory = append(executionHistory, levelHistoryForRevert)
 
 		resultsCh := make(chan TaskResult, numExpectedResultsOnLevel)
@@ -253,7 +253,7 @@ func GetOrderedGraph(cfg *config.Config, graph Graph) ([][]Task, error) {
 	return nil, fmt.Errorf("unknown or unsupported execution mode: %s", cfg.ExecutionMode)
 }
 
-func (e *LocalGraphExecutor) prepareLevelHistoryAndGetCount(
+func PrepareLevelHistoryAndGetCount(
 	tasksInLevel []Task,
 	hostContexts map[string]*HostContext,
 	executionLevel int,
@@ -264,7 +264,7 @@ func (e *LocalGraphExecutor) prepareLevelHistoryAndGetCount(
 	for hostname, hc := range hostContexts {
 		numTasksForHostOnLevel := 0
 		for _, task := range tasksInLevel {
-			closures, err := getTaskClosures(task, hc)
+			closures, err := GetTaskClosures(task, hc)
 			if err != nil {
 				common.LogError("Failed to get task closures for count, assuming 1", map[string]interface{}{
 					"task": task.Name, "host": hostname, "level": executionLevel, "error": err,
@@ -300,7 +300,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 			hostCtx := hostCtxInstance
 			hostName := hostNameKey
 
-			closures, err := getTaskClosures(task, hostCtx)
+			closures, err := GetTaskClosures(task, hostCtx)
 			if err != nil {
 				errMsg := fmt.Errorf("critical error: failed to get task closures for task '%s' on host '%s': %w. Aborting level.", task.Name, hostName, err)
 				common.LogError("Dispatch error in loadLevelTasks", map[string]interface{}{"error": errMsg})

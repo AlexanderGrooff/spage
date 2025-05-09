@@ -90,8 +90,8 @@ func ParseLoop(task Task, c *HostContext) ([]interface{}, error) {
 	return loopItems, nil
 }
 
-// getTaskClosures generates one or more Closures for a task, handling loops.
-func getTaskClosures(task Task, c *HostContext) ([]*Closure, error) {
+// GetTaskClosures generates one or more Closures for a task, handling loops.
+func GetTaskClosures(task Task, c *HostContext) ([]*Closure, error) {
 	if task.Loop == nil {
 		closure := ConstructClosure(c, task) // Assumes ConstructClosure is available
 		return []*Closure{closure}, nil

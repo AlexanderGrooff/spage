@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/AlexanderGrooff/spage/pkg"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
@@ -412,6 +413,124 @@ func (r *TemporalTaskRunner) RevertTask(ctx context.Context, task pkg.Task, clos
 		ExecutionSpecificOutput: activityOutput, // Store the full SpageActivityResult
 		// Output: nil, // ModuleOutput remains nil for now
 	}
+}
+
+type TemporalGraphExecutor struct {
+	Runner TemporalTaskRunner
+}
+
+func NewTemporalGraphExecutor(runner TemporalTaskRunner) *TemporalGraphExecutor {
+	return &TemporalGraphExecutor{Runner: runner}
+}
+
+func (e *TemporalGraphExecutor) loadLevelTasks(
+	tasksInLevel []pkg.Task,
+	hostContexts map[string]*pkg.HostContext,
+	resultsCh workflow.Channel,
+	errCh workflow.Channel,
+	cfg *config.Config,
+) {
+	defer resultsCh.Close()
+
+	var wg sync.WaitGroup
+	isParallelDispatch := cfg.ExecutionMode == "parallel"
+
+	for _, taskDefinition := range tasksInLevel {
+		for hostNameKey, hostCtxInstance := range hostContexts {
+			task := taskDefinition
+			hostCtx := hostCtxInstance
+			hostName := hostNameKey
+
+			closures, err := pkg.GetTaskClosures(task, hostCtx)
+			if err != nil {
+				errMsg := fmt.Errorf("critical error: failed to get task closures for task '%s' on host '%s': %w. Aborting level.", task.Name, hostName, err)
+				common.LogError("Dispatch error in loadLevelTasks", map[string]interface{}{"error": errMsg})
+				errCh.SendAsync(errMsg)
+				return
+			}
+
+			for _, individualClosure := range closures {
+				closure := individualClosure
+
+				if isParallelDispatch {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						taskResult := e.Runner.ExecuteTask(nil, task, closure, cfg)
+						resultsCh.SendAsync(taskResult)
+					}()
+				} else {
+					taskResult := e.Runner.ExecuteTask(nil, task, closure, cfg)
+					// TODO: async?
+					resultsCh.SendAsync(taskResult)
+				}
+			}
+		}
+	}
+
+	if isParallelDispatch {
+		wg.Wait()
+	}
+}
+
+func (e *TemporalGraphExecutor) processLevelResults(
+	resultsCh workflow.Channel,
+	errCh workflow.Channel,
+	recapStats map[string]map[string]int,
+	executionHistory []map[string]workflow.Channel,
+	executionLevel int,
+	cfg *config.Config,
+	numExpectedResultsOnLevel int,
+) (bool, error) {
+	defer func() {
+		histEntry := executionHistory[executionLevel]
+		for _, hostChan := range histEntry {
+			hostChan.Close()
+		}
+	}()
+
+	return true, nil
+}
+
+func (e *TemporalGraphExecutor) Execute(hostContexts map[string]*pkg.HostContext, orderedGraph [][]pkg.Task, cfg *config.Config) error {
+	recapStats := pkg.InitializeRecapStats(hostContexts)
+	var executionHistory []map[string]workflow.Channel // For revert functionality
+	for executionLevel, tasksInLevel := range orderedGraph {
+		resultsCh := workflow.NewChannel(e.Runner.WorkflowCtx)
+		errCh := workflow.NewChannel(e.Runner.WorkflowCtx)
+
+		// Prepare revert history
+		_, numExpectedResultsOnLevel := pkg.PrepareLevelHistoryAndGetCount(tasksInLevel, hostContexts, executionLevel)
+		levelHistory := make(map[string]workflow.Channel)
+		for host := range hostContexts {
+			levelHistory[host] = workflow.NewChannel(e.Runner.WorkflowCtx)
+		}
+		executionHistory = append(executionHistory, levelHistory)
+
+		go e.loadLevelTasks(tasksInLevel, hostContexts, resultsCh, errCh, cfg)
+		levelErrored, errProcessingResults := e.processLevelResults(
+			resultsCh, errCh,
+			recapStats, executionHistory, executionLevel,
+			cfg, numExpectedResultsOnLevel,
+		)
+		if errProcessingResults != nil {
+			return errProcessingResults
+		}
+
+		if levelErrored {
+			if cfg.Logging.Format == "plain" {
+				fmt.Printf("\nREVERTING TASKS **********************************************\n")
+			} else {
+				common.LogInfo("Run failed, starting task reversion", map[string]interface{}{"level": executionLevel})
+			}
+			// TODO: REVERT
+			//if errRevert := e.Revert(executionHistory, hostContexts, cfg); errRevert != nil {
+			//	return fmt.Errorf("run failed on level %d and also failed during revert: %w (original error trigger) | %v (revert error)", executionLevel, errors.New("task failure"), errRevert)
+			//}
+			return fmt.Errorf("run failed on level %d and tasks reverted", executionLevel)
+		}
+	}
+	return nil
 }
 
 // SpageTemporalWorkflow defines the main workflow logic.
