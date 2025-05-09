@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/AlexanderGrooff/spage/pkg"
 	"log"
 	"sync"
 	"time"
+
+	"github.com/AlexanderGrooff/spage/pkg"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/config"
@@ -241,10 +242,10 @@ func NewTemporalTaskRunner(workflowCtx workflow.Context) *TemporalTaskRunner {
 // RunTask for Temporal dispatches the task as a Temporal activity.
 // It converts the SpageActivityResult from the activity into a TaskResult.
 // The original SpageActivityResult is stored in TaskResult.ExecutionSpecificOutput.
-func (r *TemporalTaskRunner) ExecuteTask(ctx context.Context, task pkg.Task, closure *pkg.Closure, cfg *config.Config) pkg.TaskResult {
-	// ctx is the parent context from the caller of ExecuteTask (e.g., workflow.Background(r.WorkflowCtx)).
-	// r.WorkflowCtx is the actual workflow context for Temporal operations.
-	logger := workflow.GetLogger(r.WorkflowCtx)
+func (r *TemporalTaskRunner) ExecuteTask(execCtx workflow.Context, task pkg.Task, closure *pkg.Closure, cfg *config.Config) pkg.TaskResult {
+	// execCtx is the context of the coroutine calling ExecuteTask.
+	// r.WorkflowCtx is the root workflow context, kept for logger or other global workflow info if needed, but execCtx for blocking ops.
+	logger := workflow.GetLogger(execCtx) // Use execCtx for logger too for better context association
 
 	currentHostFacts := closure.GetFacts() // Facts from the closure, prepared by SpageTemporalWorkflow
 	loopItem, _ := closure.ExtraFacts["item"]
@@ -269,13 +270,14 @@ func (r *TemporalTaskRunner) ExecuteTask(ctx context.Context, task pkg.Task, clo
 			MaximumAttempts:    3,
 		},
 	}
-	// Use r.WorkflowCtx for Temporal API calls like WithActivityOptions and ExecuteActivity
-	temporalAwareCtx := workflow.WithActivityOptions(r.WorkflowCtx, ao)
+	// Use execCtx for Temporal API calls like WithActivityOptions and ExecuteActivity
+	temporalAwareCtx := workflow.WithActivityOptions(execCtx, ao)
 
-	startTime := time.Now() // Record start time before executing activity
+	startTime := workflow.Now(execCtx) // Record start time before executing activity
 	future := workflow.ExecuteActivity(temporalAwareCtx, ExecuteSpageTaskActivity, activityInput)
-	errOnGet := future.Get(r.WorkflowCtx, &activityOutput)
-	duration := time.Since(startTime) // Calculate duration after activity completion or error
+	errOnGet := future.Get(execCtx, &activityOutput) // Use execCtx for future.Get()
+	endTime := workflow.Now(execCtx)                 // Calculate duration after activity completion or error
+	duration := endTime.Sub(startTime)
 
 	if errOnGet != nil {
 		logger.Error("Temporal activity future.Get() failed", "task", task.Name, "host", closure.HostContext.Host.Name, "error", errOnGet)
@@ -328,12 +330,11 @@ func (r *TemporalTaskRunner) ExecuteTask(ctx context.Context, task pkg.Task, clo
 	}
 }
 
-func (r *TemporalTaskRunner) RevertTask(ctx context.Context, task pkg.Task, closure *pkg.Closure, cfg *config.Config) pkg.TaskResult {
-	// ctx is the parent context from the caller of ExecuteTask (e.g., workflow.Background(r.WorkflowCtx)).
-	// r.WorkflowCtx is the actual workflow context for Temporal operations.
-	logger := workflow.GetLogger(r.WorkflowCtx)
+func (r *TemporalTaskRunner) RevertTask(execCtx workflow.Context, task pkg.Task, closure *pkg.Closure, cfg *config.Config) pkg.TaskResult {
+	// execCtx is the context of the coroutine calling RevertTask.
+	logger := workflow.GetLogger(execCtx) // Use execCtx for logger
 
-	currentHostFacts := closure.GetFacts() // Facts from the closure, prepared by SpageTemporalWorkflow
+	currentHostFacts := closure.GetFacts()
 	loopItem, _ := closure.ExtraFacts["item"]
 
 	activityInput := SpageActivityInput{
@@ -356,13 +357,14 @@ func (r *TemporalTaskRunner) RevertTask(ctx context.Context, task pkg.Task, clos
 			MaximumAttempts:    3,
 		},
 	}
-	// Use r.WorkflowCtx for Temporal API calls like WithActivityOptions and ExecuteActivity
-	temporalAwareCtx := workflow.WithActivityOptions(r.WorkflowCtx, ao)
+	// Use execCtx for Temporal API calls like WithActivityOptions and ExecuteActivity
+	temporalAwareCtx := workflow.WithActivityOptions(execCtx, ao)
 
-	startTime := time.Now() // Record start time before executing activity
+	startTime := workflow.Now(execCtx) // Record start time before executing activity
 	future := workflow.ExecuteActivity(temporalAwareCtx, ExecuteSpageTaskActivity, activityInput)
-	errOnGet := future.Get(r.WorkflowCtx, &activityOutput)
-	duration := time.Since(startTime) // Calculate duration after activity completion or error
+	errOnGet := future.Get(execCtx, &activityOutput) // Use execCtx for future.Get()
+	endTime := workflow.Now(execCtx)                 // Calculate duration after activity completion or error
+	duration := endTime.Sub(startTime)
 
 	if errOnGet != nil {
 		logger.Error("Temporal activity future.Get() failed", "task", task.Name, "host", closure.HostContext.Host.Name, "error", errOnGet)
@@ -424,24 +426,72 @@ func NewTemporalGraphExecutor(runner TemporalTaskRunner) *TemporalGraphExecutor 
 }
 
 func (e *TemporalGraphExecutor) loadLevelTasks(
+	workflowCtx workflow.Context,
 	tasksInLevel []pkg.Task,
-	hostContexts map[string]*pkg.HostContext,
+	inventoryHosts map[string]*pkg.Host,
+	workflowHostFacts map[string]map[string]interface{},
 	resultsCh workflow.Channel,
 	errCh workflow.Channel,
 	cfg *config.Config,
 ) {
-	defer resultsCh.Close()
+	logger := workflow.GetLogger(workflowCtx)
+	logger.Info("loadLevelTasks started")
+	defer logger.Info("loadLevelTasks finished")
 
-	var wg sync.WaitGroup
+	defer resultsCh.Close()
+	defer errCh.Close()
+
 	isParallelDispatch := cfg.ExecutionMode == "parallel"
+	var completionCh workflow.Channel
+	// Pre-calculate numDispatchedTasks for buffered channel capacity if in parallel mode
+	actualDispatchedTasks := 0 // Renamed from numDispatchedTasks to avoid confusion in the pre-calculation loop
+
+	if isParallelDispatch {
+		countForBuffer := 0
+		for _, taskDefinitionForCount := range tasksInLevel {
+			for hostNameForCount, hostDefForCount := range inventoryHosts {
+				tempHostCtxForCount := &pkg.HostContext{
+					Host:  hostDefForCount,
+					Facts: &sync.Map{},
+				}
+				if facts, ok := workflowHostFacts[hostNameForCount]; ok {
+					for k, v := range facts {
+						tempHostCtxForCount.Facts.Store(k, v)
+					}
+				}
+				closuresForCount, err := pkg.GetTaskClosures(taskDefinitionForCount, tempHostCtxForCount)
+				if err != nil {
+					errMsg := fmt.Errorf("critical error during pre-count for task closures: task '%s' on host '%s': %w", taskDefinitionForCount.Name, hostNameForCount, err)
+					common.LogError("Dispatch error in loadLevelTasks (pre-count)", map[string]interface{}{"error": errMsg})
+					errCh.SendAsync(errMsg)
+					return // Abort if counting fails
+				}
+				countForBuffer += len(closuresForCount)
+			}
+		}
+		if countForBuffer > 0 {
+			completionCh = workflow.NewBufferedChannel(workflowCtx, countForBuffer)
+			logger.Debug("Parallel dispatch mode: completionCh created with buffer.", "capacity", countForBuffer)
+		} else {
+			// No tasks to dispatch in parallel, no need for completionCh
+			logger.Debug("Parallel dispatch mode: No tasks to dispatch, completionCh not created.")
+		}
+	}
 
 	for _, taskDefinition := range tasksInLevel {
-		for hostNameKey, hostCtxInstance := range hostContexts {
+		for hostName, hostDef := range inventoryHosts {
 			task := taskDefinition
-			hostCtx := hostCtxInstance
-			hostName := hostNameKey
+			tempHostCtx := &pkg.HostContext{
+				Host:  hostDef,
+				Facts: &sync.Map{},
+			}
+			if facts, ok := workflowHostFacts[hostName]; ok {
+				for k, v := range facts {
+					tempHostCtx.Facts.Store(k, v)
+				}
+			}
 
-			closures, err := pkg.GetTaskClosures(task, hostCtx)
+			closures, err := pkg.GetTaskClosures(task, tempHostCtx)
 			if err != nil {
 				errMsg := fmt.Errorf("critical error: failed to get task closures for task '%s' on host '%s': %w. Aborting level.", task.Name, hostName, err)
 				common.LogError("Dispatch error in loadLevelTasks", map[string]interface{}{"error": errMsg})
@@ -453,83 +503,210 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 				closure := individualClosure
 
 				if isParallelDispatch {
-					wg.Add(1)
-					go func() {
-						defer wg.Done()
-						taskResult := e.Runner.ExecuteTask(nil, task, closure, cfg)
+					actualDispatchedTasks++ // Increment the counter for actual dispatches
+					logger.Debug("Dispatching parallel task", "task", task.Name, "host", hostName, "closure_item", closure.ExtraFacts["item"])
+					workflow.Go(workflowCtx, func(childTaskCtx workflow.Context) {
+						logger.Debug("Parallel task coroutine started", "task", task.Name, "host", hostName)
+						taskResult := e.Runner.ExecuteTask(childTaskCtx, task, closure, cfg)
+						logger.Debug("Parallel task executed, sending to resultsCh", "task", task.Name, "host", hostName)
 						resultsCh.SendAsync(taskResult)
-					}()
+
+						logger.Debug("Attempting to send to completionCh", "task", task.Name, "host", hostName)
+						completionCh.SendAsync(true)
+						logger.Debug("Successfully sent to completionCh", "task", task.Name, "host", hostName)
+					})
 				} else {
-					taskResult := e.Runner.ExecuteTask(nil, task, closure, cfg)
-					// TODO: async?
+					logger.Debug("Executing sequential task", "task", task.Name, "host", hostName, "closure_item", closure.ExtraFacts["item"])
+					taskResult := e.Runner.ExecuteTask(workflowCtx, task, closure, cfg)
+					logger.Debug("Sequential task executed, sending to resultsCh", "task", task.Name, "host", hostName)
 					resultsCh.SendAsync(taskResult)
+					logger.Debug("Sequential task result sent to resultsCh", "task", task.Name, "host", hostName)
 				}
 			}
 		}
 	}
 
-	if isParallelDispatch {
-		wg.Wait()
+	if isParallelDispatch && actualDispatchedTasks > 0 { // Use actualDispatchedTasks here
+		logger.Info("Waiting for parallel tasks to complete", "count", actualDispatchedTasks)
+		for i := 0; i < actualDispatchedTasks; i++ { // Loop up to actualDispatchedTasks
+			logger.Debug("Attempting to receive from completionCh", "iteration", i+1, "total_expected_signals", actualDispatchedTasks, "current_completed_signals_in_loop", i)
+			// Ensure completionCh is not nil (it wouldn't be if actualDispatchedTasks > 0)
+			if completionCh == nil {
+				logger.Error("completionCh is nil before Receive, this should not happen if actualDispatchedTasks > 0")
+				// This is a critical logic error, potentially send to errCh or panic workflow.
+				// For now, let it proceed, it will panic on nil channel receive.
+			}
+			completionCh.Receive(workflowCtx, nil)
+			logger.Debug("Successfully received from completionCh", "iteration", i+1, "completed_signals_in_loop", i+1)
+		}
+		logger.Info("All parallel tasks completed for this level.")
 	}
+	logger.Debug("loadLevelTasks: all tasks dispatched for the level.", "num_dispatched_parallel", actualDispatchedTasks)
 }
 
 func (e *TemporalGraphExecutor) processLevelResults(
 	resultsCh workflow.Channel,
 	errCh workflow.Channel,
-	recapStats map[string]map[string]int,
-	executionHistory []map[string]workflow.Channel,
+	hostFacts map[string]map[string]interface{},
 	executionLevel int,
 	cfg *config.Config,
 	numExpectedResultsOnLevel int,
 ) (bool, error) {
-	defer func() {
-		histEntry := executionHistory[executionLevel]
-		for _, hostChan := range histEntry {
-			hostChan.Close()
+	ctx := e.Runner.WorkflowCtx
+	logger := workflow.GetLogger(ctx)
+
+	var levelHardErrored bool
+	resultsReceived := 0
+	var dispatchError error
+	resultsChActive := true
+	errChActive := true
+
+	selector := workflow.NewSelector(ctx)
+
+	selector.AddReceive(errCh, func(c workflow.ReceiveChannel, more bool) {
+		logger.Debug("errCh handler invoked", "more", more, "current_dispatchError", dispatchError != nil)
+		if !more {
+			logger.Info("errCh closed by sender.")
+			errChActive = false
+			return
 		}
-	}()
-	receivedResults := 0
-	var result pkg.TaskResult
-	var resPtr interface{}
-	var ok bool
-	for receivedResults < numExpectedResultsOnLevel {
-		resultsCh.Receive(e.Runner.WorkflowCtx, resPtr)
-		result, ok = resPtr.(pkg.TaskResult)
-		if !ok {
-			// TODO
+		var errFromDispatch error
+		c.Receive(ctx, &errFromDispatch)
+		if errFromDispatch != nil {
+			dispatchError = errFromDispatch
+			logger.Error("Dispatch error received from loadLevelTasks", "level", executionLevel, "error", dispatchError)
+			levelHardErrored = true
 		}
-		receivedResults++
+	})
+
+	selector.AddReceive(resultsCh, func(c workflow.ReceiveChannel, more bool) {
+		logger.Debug("resultsCh handler invoked", "more", more, "current_resultsReceived", resultsReceived, "expected", numExpectedResultsOnLevel)
+		if !more {
+			logger.Info("resultsCh closed by sender.", "level", executionLevel, "results_received_so_far", resultsReceived)
+			resultsChActive = false
+			return
+		}
+
+		var result pkg.TaskResult
+		c.Receive(ctx, &result)
+		resultsReceived++
+
+		if result.Closure == nil || result.Closure.HostContext == nil || result.Closure.HostContext.Host == nil {
+			logger.Error("Received TaskResult with nil Closure/HostContext/Host", "level", executionLevel, "result_task_name", result.Task.Name)
+			levelHardErrored = true
+			if dispatchError == nil {
+				dispatchError = fmt.Errorf("corrupted task result for task %s on level %d", result.Task.Name, executionLevel)
+			}
+			return
+		}
 
 		hostname := result.Closure.HostContext.Host.Name
-		task := result.Task
-		currentClosure := result.Closure
-		currentClosure.HostContext.History.Store(task.Name, result.Output)
-		levelHistMap := executionHistory[executionLevel]
-		levelHistMap[hostname].Send(e.Runner.WorkflowCtx, task)
+		taskName := result.Task.Name
+
+		activitySpecificOutput, ok := result.ExecutionSpecificOutput.(SpageActivityResult)
+		if !ok {
+			logger.Error("TaskResult.ExecutionSpecificOutput is not of type SpageActivityResult", "task", taskName, "host", hostname)
+		} else {
+			errFactProcessing := processActivityResultAndRegisterFacts(ctx, activitySpecificOutput, taskName, hostname, hostFacts)
+			if errFactProcessing != nil {
+				logger.Error("Task processing reported an error after fact registration", "task", taskName, "host", hostname, "error", errFactProcessing)
+				levelHardErrored = true
+			}
+		}
+
+		var ignoredErrWrapper *pkg.IgnoredTaskError
+		isIgnoredError := errors.As(result.Error, &ignoredErrWrapper)
+
+		if result.Error != nil && !isIgnoredError {
+			logger.Error("Task failed (from TaskResult)", "level", executionLevel, "task", taskName, "host", hostname, "error", result.Error)
+			levelHardErrored = true
+		} else if result.Error != nil && isIgnoredError {
+			logger.Warn("Task failed but was ignored (from TaskResult)", "level", executionLevel, "task", taskName, "host", hostname, "original_error", ignoredErrWrapper.Unwrap())
+		} else {
+			logger.Info("Task completed successfully or skipped (from TaskResult)", "level", executionLevel, "task", taskName, "host", hostname, "status", result.Status.String(), "changed", result.Changed)
+		}
+	})
+
+	for (resultsChActive || errChActive) && resultsReceived < numExpectedResultsOnLevel && dispatchError == nil {
+		selector.Select(ctx)
+		logger.Debug("processLevelResults loop status",
+			"level", executionLevel,
+			"resultsChActive", resultsChActive, "errChActive", errChActive,
+			"resultsReceived", resultsReceived, "numExpectedResultsOnLevel", numExpectedResultsOnLevel,
+			"dispatchError", dispatchError != nil)
 	}
 
-	return false, nil
+	if dispatchError != nil {
+		logger.Error("Level processing stopped due to error.", "level", executionLevel, "error", dispatchError, "results_received", resultsReceived)
+		return true, dispatchError
+	}
+
+	if !resultsChActive && resultsReceived < numExpectedResultsOnLevel {
+		errMsg := fmt.Errorf("level %d results channel closed prematurely: got %d, expected %d. loadLevelTasks might have an issue", executionLevel, resultsReceived, numExpectedResultsOnLevel)
+		logger.Error(errMsg.Error())
+		return true, errMsg
+	}
+
+	if resultsReceived < numExpectedResultsOnLevel {
+		errMsg := fmt.Errorf("level %d did not receive all expected results: got %d, expected %d. resultsCh may have closed prematurely or loadLevelTasks did not send all results", executionLevel, resultsReceived, numExpectedResultsOnLevel)
+		logger.Error(errMsg.Error())
+		return true, errMsg
+	}
+
+	logger.Info("All expected results received for level.", "level", executionLevel, "count", resultsReceived)
+	return levelHardErrored, nil
 }
 
-func (e *TemporalGraphExecutor) Execute(hostContexts map[string]*pkg.HostContext, orderedGraph [][]pkg.Task, cfg *config.Config) error {
-	recapStats := pkg.InitializeRecapStats(hostContexts)
-	var executionHistory []map[string]workflow.Channel // For revert functionality
+func (e *TemporalGraphExecutor) Execute(
+	inventoryHosts map[string]*pkg.Host,
+	workflowHostFacts map[string]map[string]interface{},
+	orderedGraph [][]pkg.Task,
+	cfg *config.Config,
+) error {
 	for executionLevel, tasksInLevel := range orderedGraph {
-		resultsCh := workflow.NewChannel(e.Runner.WorkflowCtx)
+		// numExpectedResultsOnLevel needs to be calculated using workflowHostFacts for GetTaskClosures
+		// This requires adapting PrepareLevelHistoryAndGetCount or similar logic.
+		// For now, this calculation will be simplified or deferred.
+		// Let's assume GetTaskClosures is adapted to use workflowHostFacts.
+
+		// Simplified numExpectedResultsOnLevel calculation for now:
+		var numExpectedResultsOnLevel int
+		for _, task := range tasksInLevel {
+			for _, hostDef := range inventoryHosts {
+				// Construct a temporary, lightweight HostContext for GetTaskClosures
+				tempHostCtxForCount := &pkg.HostContext{
+					Host:  hostDef,
+					Facts: &sync.Map{},
+				}
+				if facts, ok := workflowHostFacts[hostDef.Name]; ok {
+					for k, v := range facts {
+						tempHostCtxForCount.Facts.Store(k, v)
+					}
+				}
+
+				closures, err := pkg.GetTaskClosures(task, tempHostCtxForCount)
+				if err != nil {
+					return fmt.Errorf("failed to get task closures for count on level %d, task %s, host %s: %w", executionLevel, task.Name, hostDef.Name, err)
+				}
+				numExpectedResultsOnLevel += len(closures)
+			}
+		}
+		if numExpectedResultsOnLevel == 0 && len(tasksInLevel) > 0 {
+			workflow.GetLogger(e.Runner.WorkflowCtx).Info("No task instances to execute for level, skipping.", "level", executionLevel)
+			continue
+		}
+
+		resultsCh := workflow.NewBufferedChannel(e.Runner.WorkflowCtx, numExpectedResultsOnLevel)
 		errCh := workflow.NewChannel(e.Runner.WorkflowCtx)
 
-		// Prepare revert history
-		_, numExpectedResultsOnLevel := pkg.PrepareLevelHistoryAndGetCount(tasksInLevel, hostContexts, executionLevel)
-		levelHistory := make(map[string]workflow.Channel)
-		for host := range hostContexts {
-			levelHistory[host] = workflow.NewChannel(e.Runner.WorkflowCtx)
-		}
-		executionHistory = append(executionHistory, levelHistory)
+		workflow.Go(e.Runner.WorkflowCtx, func(ctx workflow.Context) {
+			e.loadLevelTasks(ctx, tasksInLevel, inventoryHosts, workflowHostFacts, resultsCh, errCh, cfg)
+		})
 
-		go e.loadLevelTasks(tasksInLevel, hostContexts, resultsCh, errCh, cfg)
 		levelErrored, errProcessingResults := e.processLevelResults(
 			resultsCh, errCh,
-			recapStats, executionHistory, executionLevel,
+			workflowHostFacts,
+			executionLevel,
 			cfg, numExpectedResultsOnLevel,
 		)
 		if errProcessingResults != nil {
@@ -537,16 +714,8 @@ func (e *TemporalGraphExecutor) Execute(hostContexts map[string]*pkg.HostContext
 		}
 
 		if levelErrored {
-			if cfg.Logging.Format == "plain" {
-				fmt.Printf("\nREVERTING TASKS **********************************************\n")
-			} else {
-				common.LogInfo("Run failed, starting task reversion", map[string]interface{}{"level": executionLevel})
-			}
-			// TODO: REVERT
-			//if errRevert := e.Revert(executionHistory, hostContexts, cfg); errRevert != nil {
-			//	return fmt.Errorf("run failed on level %d and also failed during revert: %w (original error trigger) | %v (revert error)", executionLevel, errors.New("task failure"), errRevert)
-			//}
-			return fmt.Errorf("run failed on level %d and tasks reverted", executionLevel)
+			common.LogInfo("Run failed, task reversion required (Temporal Revert TBD)", map[string]interface{}{"level": executionLevel})
+			return fmt.Errorf("run failed on level %d", executionLevel)
 		}
 	}
 	return nil
@@ -557,222 +726,73 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *pkg.Graph, inventor
 	logger := workflow.GetLogger(ctx)
 	logger.Info("SpageTemporalWorkflow started", "workflowId", workflow.GetInfo(ctx).WorkflowExecution.ID)
 
-	// Activity options are now set within TemporalTaskRunner.ExecuteTask or globally if preferred.
-	// If set globally for the workflow context:
-	// ao := workflow.ActivityOptions{...}
-	// ctx = workflow.WithActivityOptions(ctx, ao)
-	// However, TemporalTaskRunner will apply its own for now.
-
-	hostFacts := make(map[string]map[string]interface{})
-	if inventoryInput != nil {
-		for hostName, host := range inventoryInput.Hosts {
-			hostFacts[hostName] = inventoryInput.GetInitialFactsForHost(host)
-			logger.Debug("Initialized facts for host in workflow", "host", hostName, "facts_count", len(hostFacts[hostName]))
-		}
-	}
-
-	var orderedLevelsOfTasks [][]pkg.Task
-	if spageConfigInput.ExecutionMode == "sequential" {
-		orderedLevelsOfTasks = graphInput.SequentialTasks()
-	} else {
-		orderedLevelsOfTasks = graphInput.ParallelTasks()
-	}
-
-	// Instantiate the runner once for the workflow context
 	temporalRunner := NewTemporalTaskRunner(ctx)
+	e := TemporalGraphExecutor{Runner: *temporalRunner}
 
-	for levelIdx, tasksInThisLevel := range orderedLevelsOfTasks {
-		logger.Info("Processing graph level", "level", levelIdx, "mode", spageConfigInput.ExecutionMode, "task_count_in_level", len(tasksInThisLevel))
-
-		targetHosts := inventoryInput.Hosts // Assuming inventoryInput is not nil after initial checks/defaults
-		if targetHosts == nil {
-			targetHosts = make(map[string]*pkg.Host)
-		} // Safety for nil inventory
-
-		if spageConfigInput.ExecutionMode == "sequential" {
-			logger.Info("Executing level sequentially", "level", levelIdx)
-			for _, currentTaskDefinition := range tasksInThisLevel {
-				for hostName, host := range targetHosts {
-					loopItems, err := getLoopItemsForTask(ctx, currentTaskDefinition, host, hostFacts[hostName])
-					if err != nil {
-						return err
-					} // Propagate error from loop parsing
-
-					for _, loopItem := range loopItems {
-						// Construct Closure for this specific task run
-						tempHostCtx, err := pkg.InitializeHostContext(host) // Fresh HostContext for closure
-						if err != nil {
-							return fmt.Errorf("failed to init temp HostContext for closure: %w", err)
-						}
-						currentFactsForClosure := hostFacts[hostName]
-						if currentFactsForClosure != nil {
-							for k, v := range currentFactsForClosure {
-								tempHostCtx.Facts.Store(k, v)
-							}
-						}
-						extraFactsForClosure := make(map[string]interface{})
-						if loopItem != nil {
-							extraFactsForClosure["item"] = loopItem
-						}
-
-						closureForRunner := &pkg.Closure{
-							HostContext: tempHostCtx,
-							ExtraFacts:  extraFactsForClosure,
-						}
-
-						taskRunResult := temporalRunner.ExecuteTask(context.Background(), currentTaskDefinition, closureForRunner, spageConfigInput)
-						tempHostCtx.Close() // Close the temporary host context
-
-						var activityResult SpageActivityResult
-						if taskRunResult.ExecutionSpecificOutput != nil {
-							var castOk bool
-							activityResult, castOk = taskRunResult.ExecutionSpecificOutput.(SpageActivityResult)
-							if !castOk {
-								errMsg := fmt.Sprintf("failed to cast ExecutionSpecificOutput to SpageActivityResult for task %s on host %s", currentTaskDefinition.Name, hostName)
-								logger.Error(errMsg)
-								return errors.New(errMsg)
-							}
-						} else if taskRunResult.Error != nil { // If ExecutionSpecificOutput is nil but there was an error (e.g. future.Get() failed)
-							// Populate a minimal SpageActivityResult for processActivityResultAndRegisterFacts
-							activityResult = SpageActivityResult{
-								HostName: hostName,
-								TaskName: currentTaskDefinition.Name,
-								Error:    taskRunResult.Error.Error(), // Use the error from TaskResult
-								// Ignored needs to be derived if possible. Assuming not ignored if we are in this path from direct error.
-							}
-							var ignoredErr *pkg.IgnoredTaskError
-							if errors.As(taskRunResult.Error, &ignoredErr) {
-								activityResult.Ignored = true
-							}
-						}
-
-						errProcess := processActivityResultAndRegisterFacts(ctx, activityResult, currentTaskDefinition.Name, hostName, hostFacts)
-						if errProcess != nil {
-							return errProcess // This is a hard failure reported by the activity processing logic
-						}
-					}
+	workflowHostFacts := make(map[string]map[string]interface{})
+	if inventoryInput != nil && inventoryInput.Hosts != nil {
+		for hostName, hostDef := range inventoryInput.Hosts {
+			hostFacts := make(map[string]interface{})
+			if hostDef.Vars != nil {
+				for k, v := range hostDef.Vars {
+					hostFacts[k] = v
 				}
 			}
-		} else { // Parallel execution for the level
-			logger.Info("Executing level in parallel", "level", levelIdx)
-			var activityFutures []workflow.Future
-			type futureInfo struct {
-				TaskName string
-				HostName string
-			}
-			var futureInfos []futureInfo
-
-			numDispatched := 0
-
-			for _, currentTaskDefinition := range tasksInThisLevel {
-				for hostName, host := range targetHosts {
-					loopItems, err := getLoopItemsForTask(ctx, currentTaskDefinition, host, hostFacts[hostName])
-					if err != nil {
-						return err
+			hostFacts["ansible_hostname"] = hostDef.Name
+			workflowHostFacts[hostName] = hostFacts
+		}
+	}
+	if inventoryInput != nil {
+		if allGroup, ok := inventoryInput.Groups["all"]; ok && allGroup.Vars != nil {
+			for hostNameFromFacts := range workflowHostFacts {
+				for k, v := range allGroup.Vars {
+					if hostSpecificFacts, hostExists := workflowHostFacts[hostNameFromFacts]; hostExists {
+						if _, varExists := hostSpecificFacts[k]; !varExists {
+							hostSpecificFacts[k] = v
+						}
 					}
-
-					for _, loopItem := range loopItems {
-						numDispatched++
-						// Constructing SpageActivityInput directly for ExecuteActivity in parallel loop.
-						// tempHostCtx and extraFactsForClosure are used to build activityInput below.
-						tempHostCtx, err := pkg.InitializeHostContext(host)
-						if err != nil {
-							return fmt.Errorf("failed to init temp HostContext for closure (parallel): %w", err)
-						}
-						currentFactsForClosure := hostFacts[hostName]
-						if currentFactsForClosure != nil {
-							for k, v := range currentFactsForClosure {
-								tempHostCtx.Facts.Store(k, v)
-							}
-						}
-
-						activityInput := SpageActivityInput{
-							TaskDefinition:   currentTaskDefinition,
-							TargetHost:       *host,
-							LoopItem:         loopItem, // loopItem used directly
-							CurrentHostFacts: currentFactsForClosure,
-							SpageCoreConfig:  spageConfigInput,
-						}
-						ao := workflow.ActivityOptions{
-							StartToCloseTimeout: 30 * time.Minute,
-							HeartbeatTimeout:    2 * time.Minute,
-							RetryPolicy: &temporal.RetryPolicy{
-								InitialInterval:    time.Second,
-								BackoffCoefficient: 2.0,
-								MaximumInterval:    time.Minute,
-								MaximumAttempts:    3,
-							},
-						}
-						temporalAwareCtx := workflow.WithActivityOptions(ctx, ao)
-						future := workflow.ExecuteActivity(temporalAwareCtx, ExecuteSpageTaskActivity, activityInput)
-						activityFutures = append(activityFutures, future)
-						futureInfos = append(futureInfos, futureInfo{TaskName: currentTaskDefinition.Name, HostName: hostName})
-
-						tempHostCtx.Close() // Close after facts have been potentially copied/used by activityInput logic (or if activity is truly fire and forget about hostCtx itself)
-					}
-				}
-			}
-
-			for i := 0; i < numDispatched; i++ {
-				var activityResult SpageActivityResult
-				// Wait for any of the futures to complete
-				// This is a simplified model; for true parallelism, futures would be collected without blocking sequentially on Get.
-				// The original code collected all futures then iterated .Get() - that's better.
-				f := activityFutures[i] // This sequential get is not truly parallel waiting
-				info := futureInfos[i]
-				errOnGet := f.Get(ctx, &activityResult)
-
-				if errOnGet != nil {
-					logger.Error("Activity future.Get() failed (parallel mode)", "task", info.TaskName, "host", info.HostName, "error", errOnGet)
-					return fmt.Errorf("activity %s on host %s failed to complete: %w", info.TaskName, info.HostName, errOnGet)
-				}
-
-				errProcess := processActivityResultAndRegisterFacts(ctx, activityResult, info.TaskName, info.HostName, hostFacts)
-				if errProcess != nil {
-					return errProcess
 				}
 			}
 		}
-		logger.Info("Completed processing graph level", "level", levelIdx)
+		for groupName, groupDef := range inventoryInput.Groups {
+			if groupName == "all" || groupDef.Vars == nil {
+				continue
+			}
+			for _, hostMember := range groupDef.Hosts {
+				hostMemberNameStr := hostMember.Name
+				if hostSpecificFacts, hostExists := workflowHostFacts[hostMemberNameStr]; hostExists {
+					for k, v := range groupDef.Vars {
+						if _, varExists := hostSpecificFacts[k]; !varExists {
+							hostSpecificFacts[k] = v
+						}
+					}
+				} else {
+					logger.Warn("Host listed in group not found in main host definitions during fact merging", "group", groupName, "host", hostMemberNameStr)
+				}
+			}
+		}
+	}
+
+	orderedGraph, err := pkg.GetOrderedGraph(spageConfigInput, *graphInput)
+	if err != nil {
+		logger.Error("Failed to get ordered graph", "error", err)
+		return err
+	}
+
+	inventoryHostsMap := make(map[string]*pkg.Host)
+	if inventoryInput != nil && inventoryInput.Hosts != nil {
+		inventoryHostsMap = inventoryInput.Hosts
+	}
+
+	err = e.Execute(inventoryHostsMap, workflowHostFacts, orderedGraph, spageConfigInput)
+
+	if err != nil {
+		logger.Error("SpageTemporalWorkflow failed", "error", err)
+		return err
 	}
 
 	logger.Info("SpageTemporalWorkflow completed successfully.")
 	return nil
-}
-
-// Helper to encapsulate loop parsing logic for workflow
-func getLoopItemsForTask(ctx workflow.Context, task pkg.Task, host *pkg.Host, currentHostFacts map[string]interface{}) ([]interface{}, error) {
-	logger := workflow.GetLogger(ctx)
-	loopItems := []interface{}{nil} // Default: run once if no loop
-	isLoopTask := false
-
-	if task.Loop != nil {
-		// Need a temporary HostContext to use ParseLoop, as ParseLoop expects it for fact lookups.
-		tempHostCtxForLoop, err := pkg.InitializeHostContext(host)
-		if err != nil {
-			logger.Error("Failed to initialize temporary host context for loop parsing", "task", task.Name, "host", host.Name, "error", err)
-			return nil, fmt.Errorf("failed to init temp HostContext for loop parsing for task %s on host %s: %w", task.Name, host.Name, err)
-		}
-		defer tempHostCtxForLoop.Close()
-
-		if currentHostFacts != nil {
-			for k, v := range currentHostFacts {
-				tempHostCtxForLoop.Facts.Store(k, v)
-			}
-		}
-
-		parsedLoopItems, err := pkg.ParseLoop(task, tempHostCtxForLoop) // ParseLoop is from executor_utils.go
-		if err != nil {
-			logger.Error("Failed to parse loop for task", "task", task.Name, "host", host.Name, "error", err)
-			return nil, fmt.Errorf("failed to parse loop for task %s on host %s: %w", task.Name, host.Name, err)
-		}
-		if len(parsedLoopItems) > 0 {
-			loopItems = parsedLoopItems
-			isLoopTask = true
-		}
-	}
-	logger.Debug("Task loop processing details", "task", task.Name, "host", host.Name, "isLoop", isLoopTask, "itemCount", len(loopItems))
-	return loopItems, nil
 }
 
 // RunSpageTemporalWorkerAndWorkflowOptions defines options for RunSpageTemporalWorkerAndWorkflow.
@@ -787,16 +807,14 @@ type RunSpageTemporalWorkerAndWorkflowOptions struct {
 func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOptions) {
 	log.Println("Starting Spage Temporal application runner...")
 
-	// Use the provided LoadedConfig first
 	spageAppConfig := opts.LoadedConfig
 	if spageAppConfig == nil {
 		log.Println("Warning: No Spage configuration provided to RunSpageTemporalWorkerAndWorkflow. Using a default config.")
-		// Define a minimal default configuration if none is passed
 		spageAppConfig = &config.Config{
-			ExecutionMode: "parallel",                                           // Default execution mode
-			Logging:       config.LoggingConfig{Format: "plain", Level: "info"}, // Default logging
-			Temporal: config.TemporalConfig{ // Default Temporal config
-				Address:          "", // SDK default (localhost:7233 or TEMPORAL_GRPC_ENDPOINT)
+			ExecutionMode: "parallel",
+			Logging:       config.LoggingConfig{Format: "plain", Level: "info"},
+			Temporal: config.TemporalConfig{
+				Address:          "",
 				TaskQueue:        "SPAGE_DEFAULT_TASK_QUEUE",
 				WorkflowIDPrefix: "spage-workflow",
 			},
@@ -822,7 +840,7 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 
 	var spageAppInventory *pkg.Inventory
 	if opts.InventoryPath != "" {
-		spageAppInventory, err = pkg.LoadInventory(opts.InventoryPath) // Assumes LoadInventory is in package pkg
+		spageAppInventory, err = pkg.LoadInventory(opts.InventoryPath)
 		if err != nil {
 			log.Fatalf("Failed to load Spage inventory file '%s': %v", opts.InventoryPath, err)
 		}
@@ -845,8 +863,8 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 	}
 
 	taskQueue := spageAppConfig.Temporal.TaskQueue
-	if taskQueue == "" { // Should ideally not happen if defaults are set
-		taskQueue = "SPAGE_DEFAULT_TASK_QUEUE" // Fallback just in case
+	if taskQueue == "" {
+		taskQueue = "SPAGE_DEFAULT_TASK_QUEUE"
 		log.Printf("TaskQueue from config is empty, using emergency default: %s", taskQueue)
 	} else {
 		log.Printf("Using Temporal TaskQueue from config: %s", taskQueue)
@@ -862,11 +880,11 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 	}
 	log.Println("Worker started successfully.")
 
-	if spageAppConfig.Temporal.Trigger { // Use the Trigger field from the loaded configuration
+	if spageAppConfig.Temporal.Trigger {
 		log.Println("Attempting to start the SpageTemporalWorkflow based on configuration...")
 		workflowIDPrefix := spageAppConfig.Temporal.WorkflowIDPrefix
-		if workflowIDPrefix == "" { // Should ideally not happen
-			workflowIDPrefix = "spage-workflow" // Fallback
+		if workflowIDPrefix == "" {
+			workflowIDPrefix = "spage-workflow"
 			log.Printf("WorkflowIDPrefix from config is empty, using emergency default: %s", workflowIDPrefix)
 		}
 		workflowID := workflowIDPrefix + "-" + uuid.New().String()
@@ -888,9 +906,8 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 		}
 		log.Println("Successfully started SpageTemporalWorkflow", "WorkflowID", we.GetID(), "RunID", we.GetRunID())
 
-		// Wait for the workflow to complete
 		log.Println("Waiting for workflow to complete...", "WorkflowID", we.GetID())
-		err = we.Get(context.Background(), nil) // Wait for the workflow to complete.
+		err = we.Get(context.Background(), nil)
 		if err != nil {
 			log.Fatalf("Workflow %s completed with error: %v", we.GetID(), err)
 		} else {
@@ -898,7 +915,6 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 			myWorker.Stop()
 		}
 	} else {
-		// If not triggering a workflow, keep the worker running until interrupted
 		log.Println("Application setup complete. Worker is running. Press Ctrl+C to exit.")
 		<-worker.InterruptCh()
 		log.Println("Shutting down worker...")
