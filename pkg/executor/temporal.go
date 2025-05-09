@@ -369,7 +369,7 @@ func (r *TemporalTaskRunner) RevertTask(execCtx workflow.Context, task pkg.Task,
 	temporalAwareCtx := workflow.WithActivityOptions(execCtx, ao)
 
 	startTime := workflow.Now(execCtx) // Record start time before executing activity
-	future := workflow.ExecuteActivity(temporalAwareCtx, ExecuteSpageTaskActivity, activityInput)
+	future := workflow.ExecuteActivity(temporalAwareCtx, RevertSpageTaskActivity, activityInput)
 	errOnGet := future.Get(execCtx, &activityOutput) // Use execCtx for future.Get()
 	endTime := workflow.Now(execCtx)                 // Calculate duration after activity completion or error
 	duration := endTime.Sub(startTime)
@@ -423,6 +423,125 @@ func (r *TemporalTaskRunner) RevertTask(execCtx workflow.Context, task pkg.Task,
 		ExecutionSpecificOutput: activityOutput, // Store the full SpageActivityResult
 		// Output: nil, // ModuleOutput remains nil for now
 	}
+}
+
+// RevertSpageTaskActivity is the generic activity that runs a Spage task's revert action.
+func RevertSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*SpageActivityResult, error) {
+	logger := activity.GetLogger(ctx)
+	logger.Info("RevertSpageTaskActivity started", "task", input.TaskDefinition.Name, "host", input.TargetHost.Name)
+	activity.RecordHeartbeat(ctx, fmt.Sprintf("Starting revert for task %s on host %s", input.TaskDefinition.Name, input.TargetHost.Name))
+
+	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost)
+	if err != nil {
+		logger.Error("Failed to initialize host context for revert", "host", input.TargetHost.Name, "task", input.TaskDefinition.Name, "error", err)
+		return &SpageActivityResult{
+			HostName: input.TargetHost.Name,
+			TaskName: "revert-" + input.TaskDefinition.Name,
+			Error:    fmt.Sprintf("failed to initialize host context for revert task %s: %v", input.TaskDefinition.Name, err),
+		}, nil
+	}
+	defer hostCtx.Close()
+
+	if input.CurrentHostFacts != nil {
+		for k, v := range input.CurrentHostFacts {
+			hostCtx.Facts.Store(k, v)
+		}
+	}
+
+	closure := pkg.ConstructClosure(hostCtx, input.TaskDefinition)
+
+	if input.LoopItem != nil {
+		loopVarName := "item"
+		closure.ExtraFacts[loopVarName] = input.LoopItem
+		logger.Debug("Loop item added to closure facts for revert", "loopVar", loopVarName, "value", input.LoopItem)
+	}
+
+	taskResult := input.TaskDefinition.RevertModule(closure) // Changed to RevertModule
+	activity.RecordHeartbeat(ctx, fmt.Sprintf("Finished revert for task %s on host %s", input.TaskDefinition.Name, input.TargetHost.Name))
+
+	result := &SpageActivityResult{
+		HostName:       input.TargetHost.Name,
+		TaskName:       "revert-" + input.TaskDefinition.Name, // Prefix task name for clarity
+		RegisteredVars: make(map[string]interface{}),
+	}
+
+	var ignoredError *pkg.IgnoredTaskError
+	if errors.As(taskResult.Error, &ignoredError) {
+		result.Ignored = true
+		originalErr := ignoredError.Unwrap()
+		result.Error = originalErr.Error()
+		logger.Warn("Revert task failed but error was ignored", "task", input.TaskDefinition.Name, "originalError", originalErr)
+		failureMap := map[string]interface{}{
+			"failed":  true,
+			"changed": false,
+			"msg":     originalErr.Error(),
+			"ignored": true,
+		}
+		if taskResult.Output != nil {
+			if factProvider, ok := taskResult.Output.(pkg.FactProvider); ok {
+				outputFacts := factProvider.AsFacts()
+				for k, v := range outputFacts {
+					failureMap[k] = v
+				}
+			}
+		}
+		if input.TaskDefinition.Register != "" { // Note: Register on revert might be unusual but technically possible
+			result.RegisteredVars[input.TaskDefinition.Register] = failureMap
+		}
+	} else if taskResult.Error != nil {
+		result.Error = taskResult.Error.Error()
+		logger.Error("Revert task execution failed", "task", input.TaskDefinition.Name, "error", taskResult.Error)
+		failureMap := map[string]interface{}{
+			"failed":  true,
+			"changed": false,
+			"msg":     taskResult.Error.Error(),
+		}
+		if taskResult.Output != nil {
+			if factProvider, ok := taskResult.Output.(pkg.FactProvider); ok {
+				outputFacts := factProvider.AsFacts()
+				for k, v := range outputFacts {
+					failureMap[k] = v
+				}
+			}
+		}
+		if input.TaskDefinition.Register != "" {
+			result.RegisteredVars[input.TaskDefinition.Register] = failureMap
+		}
+	} else {
+		if taskResult.Output != nil {
+			result.Output = taskResult.Output.String()
+			result.Changed = taskResult.Output.Changed()
+			logger.Info("Revert task executed successfully", "task", input.TaskDefinition.Name, "changed", result.Changed)
+			if input.TaskDefinition.Register != "" {
+				valueToStore := pkg.ConvertOutputToFactsMap(taskResult.Output)
+				result.RegisteredVars[input.TaskDefinition.Register] = valueToStore
+				logger.Info("Variable registered during revert", "task", input.TaskDefinition.Name, "variable", input.TaskDefinition.Register)
+			}
+		} else {
+			result.Skipped = true // A revert might be skipped if not applicable
+			logger.Info("Revert task executed, no output (potentially skipped)", "task", input.TaskDefinition.Name)
+			if input.TaskDefinition.Register != "" {
+				result.RegisteredVars[input.TaskDefinition.Register] = map[string]interface{}{
+					"failed":  false,
+					"changed": false,
+					"skipped": true,
+					"ignored": false,
+				}
+			}
+		}
+	}
+
+	result.HostFactsSnapshot = make(map[string]interface{})
+	hostCtx.Facts.Range(func(key, value interface{}) bool {
+		if kStr, ok := key.(string); ok {
+			result.HostFactsSnapshot[kStr] = value
+		} else {
+			logger.Warn("Non-string key found in HostContext facts during revert snapshot", "key_type", fmt.Sprintf("%T", key), "key_value", key)
+		}
+		return true
+	})
+
+	return result, nil
 }
 
 type TemporalGraphExecutor struct {
@@ -559,7 +678,7 @@ func (e *TemporalGraphExecutor) processLevelResults(
 	executionLevel int,
 	cfg *config.Config,
 	numExpectedResultsOnLevel int,
-) (bool, error) {
+) (bool, []pkg.TaskResult, error) {
 	ctx := e.Runner.WorkflowCtx
 	logger := workflow.GetLogger(ctx)
 
@@ -568,6 +687,7 @@ func (e *TemporalGraphExecutor) processLevelResults(
 	var dispatchError error
 	resultsChActive := true
 	errChActive := true
+	var processedTasksOnLevel []pkg.TaskResult // To store task results for this level
 
 	selector := workflow.NewSelector(ctx)
 
@@ -598,6 +718,7 @@ func (e *TemporalGraphExecutor) processLevelResults(
 		var result pkg.TaskResult
 		c.Receive(ctx, &result)
 		resultsReceived++
+		processedTasksOnLevel = append(processedTasksOnLevel, result) // Store the result
 
 		if result.Closure == nil || result.Closure.HostContext == nil || result.Closure.HostContext.Host == nil {
 			logger.Error("Received TaskResult with nil Closure/HostContext/Host", "level", executionLevel, "result_task_name", result.Task.Name)
@@ -646,23 +767,23 @@ func (e *TemporalGraphExecutor) processLevelResults(
 
 	if dispatchError != nil {
 		logger.Error("Level processing stopped due to error.", "level", executionLevel, "error", dispatchError, "results_received", resultsReceived)
-		return true, dispatchError
+		return true, processedTasksOnLevel, dispatchError
 	}
 
 	if !resultsChActive && resultsReceived < numExpectedResultsOnLevel {
 		errMsg := fmt.Errorf("level %d results channel closed prematurely: got %d, expected %d. loadLevelTasks might have an issue", executionLevel, resultsReceived, numExpectedResultsOnLevel)
 		logger.Error(errMsg.Error())
-		return true, errMsg
+		return true, processedTasksOnLevel, errMsg
 	}
 
 	if resultsReceived < numExpectedResultsOnLevel {
 		errMsg := fmt.Errorf("level %d did not receive all expected results: got %d, expected %d. resultsCh may have closed prematurely or loadLevelTasks did not send all results", executionLevel, resultsReceived, numExpectedResultsOnLevel)
 		logger.Error(errMsg.Error())
-		return true, errMsg
+		return true, processedTasksOnLevel, errMsg
 	}
 
 	logger.Info("All expected results received for level.", "level", executionLevel, "count", resultsReceived)
-	return levelHardErrored, nil
+	return levelHardErrored, processedTasksOnLevel, nil
 }
 
 func (e *TemporalGraphExecutor) Execute(
@@ -671,6 +792,13 @@ func (e *TemporalGraphExecutor) Execute(
 	orderedGraph [][]pkg.Task,
 	cfg *config.Config,
 ) error {
+	// recapStats and executionHistory would be initialized and managed here if needed for Temporal version
+	// For now, focusing on fact propagation. RecapStats are not used by processLevelResults anymore.
+	// ExecutionHistory for revert needs careful design for Temporal.
+	workflowCtx := e.Runner.WorkflowCtx                    // Get the root workflow context for performRevert if needed
+	logger := workflow.GetLogger(workflowCtx)              // Define logger for Execute scope
+	executionTaskResults := make(map[int][]pkg.TaskResult) // Store all successful/processed task results per level
+
 	for executionLevel, tasksInLevel := range orderedGraph {
 		// numExpectedResultsOnLevel needs to be calculated using workflowHostFacts for GetTaskClosures
 		// This requires adapting PrepareLevelHistoryAndGetCount or similar logic.
@@ -711,7 +839,7 @@ func (e *TemporalGraphExecutor) Execute(
 			e.loadLevelTasks(ctx, tasksInLevel, inventoryHosts, workflowHostFacts, resultsCh, errCh, cfg)
 		})
 
-		levelErrored, errProcessingResults := e.processLevelResults(
+		levelErrored, processedResultsThisLevel, errProcessingResults := e.processLevelResults(
 			resultsCh, errCh,
 			workflowHostFacts,
 			executionLevel,
@@ -721,12 +849,182 @@ func (e *TemporalGraphExecutor) Execute(
 			return errProcessingResults
 		}
 
+		if len(processedResultsThisLevel) > 0 {
+			executionTaskResults[executionLevel] = processedResultsThisLevel
+		}
+
+		if errProcessingResults != nil {
+			// If processLevelResults itself returns an error (e.g., premature channel close), attempt revert
+			logger.Error("Error processing results, attempting revert", "level", executionLevel, "error", errProcessingResults)
+			if revertErr := e.performRevert(workflowCtx, executionTaskResults, inventoryHosts, workflowHostFacts, cfg, executionLevel); revertErr != nil {
+				return fmt.Errorf("error during graph execution on level %d (%v) and also during revert: %w", executionLevel, errProcessingResults, revertErr)
+			}
+			return fmt.Errorf("error during graph execution on level %d: %w, tasks reverted", executionLevel, errProcessingResults)
+		}
+
 		if levelErrored {
-			common.LogInfo("Run failed, task reversion required (Temporal Revert TBD)", map[string]interface{}{"level": executionLevel})
-			return fmt.Errorf("run failed on level %d", executionLevel)
+			logger.Info("Run failed, task reversion required", map[string]interface{}{"level": executionLevel})
+			if revertErr := e.performRevert(workflowCtx, executionTaskResults, inventoryHosts, workflowHostFacts, cfg, executionLevel); revertErr != nil {
+				return fmt.Errorf("run failed on level %d and also failed during revert: %w", executionLevel, revertErr)
+			}
+			return fmt.Errorf("run failed on level %d and tasks reverted", executionLevel)
 		}
 	}
 	return nil
+}
+
+// performRevert orchestrates the revert process for tasks up to a certain level.
+func (e *TemporalGraphExecutor) performRevert(
+	workflowCtx workflow.Context, // Main workflow context
+	executedTasks map[int][]pkg.TaskResult, // History of tasks processed per level
+	inventoryHosts map[string]*pkg.Host,
+	workflowHostFacts map[string]map[string]interface{},
+	cfg *config.Config,
+	failingLevel int, // The level at or before which failure occurred
+) error {
+	logger := workflow.GetLogger(workflowCtx)
+	logger.Info("Starting revert process", "up_to_level", failingLevel)
+	var overallRevertError error
+
+	// Revert from the failingLevel (or last successfully processed level part of it) down to 0
+	for level := failingLevel; level >= 0; level-- {
+		tasksToRevertOnLevel, levelExists := executedTasks[level]
+		if !levelExists || len(tasksToRevertOnLevel) == 0 {
+			logger.Info("No tasks to revert on level", "level", level)
+			continue
+		}
+
+		logger.Info("Reverting tasks for level", "level", level, "num_tasks_to_revert", len(tasksToRevertOnLevel))
+
+		revertResultsCh := workflow.NewBufferedChannel(workflowCtx, len(tasksToRevertOnLevel))
+		// revertErrCh is for catastrophic dispatch errors, not individual task revert failures.
+		// Individual task revert failures will be collected and will make overallRevertError non-nil.
+		var revertCompletionCh workflow.Channel
+		if cfg.ExecutionMode == "parallel" {
+			revertCompletionCh = workflow.NewBufferedChannel(workflowCtx, len(tasksToRevertOnLevel))
+		}
+
+		actualRevertsDispatched := 0
+
+		for _, taskResultToRevert := range tasksToRevertOnLevel {
+			originalTask := taskResultToRevert.Task       // Capture for goroutine
+			originalClosure := taskResultToRevert.Closure // Capture for goroutine
+
+			if originalClosure == nil || originalClosure.HostContext == nil || originalClosure.HostContext.Host == nil {
+				logger.Error("Cannot revert task due to nil Closure/HostContext/Host in stored TaskResult", "task_name", originalTask.Name)
+				syntheticRevertResult := pkg.TaskResult{
+					Task:    originalTask,
+					Closure: originalClosure,
+					Error:   fmt.Errorf("revert skipped for task %s due to missing context in original result", originalTask.Name),
+					Status:  pkg.TaskStatusFailed,
+				}
+				revertResultsCh.SendAsync(syntheticRevertResult)
+				if cfg.ExecutionMode == "parallel" && revertCompletionCh != nil {
+					revertCompletionCh.SendAsync(true) // Still need to signal completion for the slot
+				}
+				continue
+			}
+			hostName := originalClosure.HostContext.Host.Name // Capture for goroutine
+
+			// Create a new closure with up-to-date facts for the revert operation.
+			// The original closure might have stale facts.
+			clonedRevertClosure := &pkg.Closure{
+				HostContext: &pkg.HostContext{
+					Host:  originalClosure.HostContext.Host, // Use original host definition
+					Facts: &sync.Map{},                      // Fresh facts map for this revert operation
+					// SSHClient: nil, // Should not be needed or used in workflow activities
+				},
+				ExtraFacts: make(map[string]interface{}),
+			}
+			// Copy ExtraFacts (like loop item) from original closure
+			for k, v := range originalClosure.ExtraFacts {
+				clonedRevertClosure.ExtraFacts[k] = v
+			}
+			// Populate facts from current workflowHostFacts
+			if currentFactsForHost, ok := workflowHostFacts[hostName]; ok {
+				for k, v := range currentFactsForHost {
+					clonedRevertClosure.HostContext.Facts.Store(k, v)
+				}
+			} else {
+				logger.Warn("No current facts found for host during revert, revert task will use minimal facts", "host", hostName, "task", originalTask.Name)
+			}
+
+			actualRevertsDispatched++
+			if cfg.ExecutionMode == "parallel" {
+				workflow.Go(workflowCtx, func(revertCtx workflow.Context) {
+					logger.Info("Dispatching revert task (parallel)", "task", originalTask.Name, "host", hostName)
+					revertResult := e.Runner.RevertTask(revertCtx, originalTask, clonedRevertClosure, cfg)
+					revertResultsCh.SendAsync(revertResult)
+					if revertCompletionCh != nil {
+						revertCompletionCh.SendAsync(true)
+					}
+				})
+			} else {
+				logger.Info("Dispatching revert task (sequential)", "task", originalTask.Name, "host", hostName)
+				revertResult := e.Runner.RevertTask(workflowCtx, originalTask, clonedRevertClosure, cfg)
+				revertResultsCh.SendAsync(revertResult)
+			}
+		}
+
+		if cfg.ExecutionMode == "parallel" && actualRevertsDispatched > 0 {
+			// Ensure revertCompletionCh is not nil before using it
+			if revertCompletionCh != nil {
+				for i := 0; i < actualRevertsDispatched; i++ {
+					revertCompletionCh.Receive(workflowCtx, nil)
+				}
+				logger.Info("All parallel revert tasks completed signal-wise for level", "level", level)
+			}
+		}
+		revertResultsCh.Close()
+
+		var levelRevertHardErrored bool
+		revertsReceivedThisLevel := 0
+		for revertsReceivedThisLevel < actualRevertsDispatched {
+			var revertResult pkg.TaskResult
+			more := revertResultsCh.Receive(workflowCtx, &revertResult)
+			if !more {
+				if revertsReceivedThisLevel < actualRevertsDispatched {
+					logger.Error("Revert results channel closed prematurely", "level", level, "received", revertsReceivedThisLevel, "expected", actualRevertsDispatched)
+					levelRevertHardErrored = true
+					break
+				}
+				break
+			}
+			revertsReceivedThisLevel++
+
+			if revertResult.Closure != nil && revertResult.Closure.HostContext != nil && revertResult.Closure.HostContext.Host != nil {
+				hostName := revertResult.Closure.HostContext.Host.Name
+				taskName := revertResult.Task.Name
+				if activityOutput, ok := revertResult.ExecutionSpecificOutput.(SpageActivityResult); ok {
+					if errFact := processActivityResultAndRegisterFacts(workflowCtx, activityOutput, "revert-"+taskName, hostName, workflowHostFacts); errFact != nil {
+						logger.Error("Reverted task reported an error after fact registration", "task", taskName, "host", hostName, "original_error", errFact)
+						levelRevertHardErrored = true
+					} else if activityOutput.Error != "" && !activityOutput.Ignored { // Check activityOutput.Error even if errFact is nil, if not ignored
+						logger.Error("Revert task failed (reported by activity)", "task", taskName, "host", hostName, "activity_error", activityOutput.Error)
+						levelRevertHardErrored = true
+					} else {
+						logger.Info("Revert task processed", "task", taskName, "host", hostName, "changed", activityOutput.Changed, "skipped", activityOutput.Skipped, "ignored", activityOutput.Ignored)
+					}
+				} else if revertResult.Error != nil { // If no SpageActivityResult, check TaskResult.Error
+					logger.Error("Revert task failed (TaskResult.Error)", "task", taskName, "host", hostName, "error", revertResult.Error)
+					levelRevertHardErrored = true
+				} else {
+					logger.Info("Revert task completed (no specific activity result)", "task", taskName, "host", hostName, "changed", revertResult.Changed)
+				}
+			} else if revertResult.Error != nil { // Closure or context was nil, but there's an error
+				logger.Error("Revert task failed (context missing in original result or other error)", "task_name", revertResult.Task.Name, "error", revertResult.Error)
+				levelRevertHardErrored = true
+			}
+		}
+
+		if levelRevertHardErrored {
+			logger.Error("Hard error occurred during revert for level, marking overall revert as failed.", "level", level)
+			overallRevertError = fmt.Errorf("revert failed on level %d", level) // Mark that at least one level's revert had issues
+		}
+	}
+
+	logger.Info("Revert process finished.")
+	return overallRevertError
 }
 
 // SpageTemporalWorkflow defines the main workflow logic.
@@ -881,6 +1179,7 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 
 	myWorker.RegisterWorkflow(SpageTemporalWorkflow)
 	myWorker.RegisterActivity(ExecuteSpageTaskActivity)
+	myWorker.RegisterActivity(RevertSpageTaskActivity) // Register the new activity
 
 	log.Printf("Starting Temporal worker on task queue '%s'...", taskQueue)
 	if err := myWorker.Start(); err != nil {
