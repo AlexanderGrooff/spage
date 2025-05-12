@@ -56,6 +56,34 @@ func processImportTasksDirective(importValue interface{}, currentBasePath string
 	}
 }
 
+func readRoleData(roleDir string) ([]byte, error) {
+	// Assume roles are in a 'roles' directory relative to the current base path.
+	// TODO: Make roles path configurable.
+
+	// Read from yml or yaml
+	roleTasksPath := filepath.Join(roleDir, "main.yaml")
+
+	roleData, err := os.ReadFile(roleTasksPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// .yaml doesn't exist, let's try .yml
+			roleTasksPath = filepath.Join(roleDir, "main.yml")
+			roleData, err = os.ReadFile(roleTasksPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					return nil, fmt.Errorf("role tasks file not found: %s", roleTasksPath)
+				} else {
+					return nil, fmt.Errorf("failed to read role tasks file %s: %w", roleTasksPath, err)
+				}
+			}
+			return roleData, nil
+		} else {
+			return nil, fmt.Errorf("failed to read role tasks file %s: %w", roleTasksPath, err)
+		}
+	}
+	return roleData, nil
+}
+
 // processIncludeRoleDirective handles the 'include_role' directive during preprocessing.
 func processIncludeRoleDirective(roleParams interface{}, currentBasePath string) ([]map[string]interface{}, error) {
 	paramsMap, ok := roleParams.(map[string]interface{})
@@ -74,24 +102,16 @@ func processIncludeRoleDirective(roleParams interface{}, currentBasePath string)
 		return nil, fmt.Errorf("missing or invalid 'name' in include_role directive")
 	}
 
-	// Assume roles are in a 'roles' directory relative to the current base path.
-	// TODO: Make roles path configurable.
-	roleTasksPath := filepath.Join(currentBasePath, "roles", roleName, "tasks", "main.yml")
-
-	roleData, err := os.ReadFile(roleTasksPath)
+	roleTasksBasePath := filepath.Join(currentBasePath, "roles", roleName, "tasks")
+	roleData, err := readRoleData(roleTasksBasePath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("role tasks file not found: %s", roleTasksPath)
-		} else {
-			return nil, fmt.Errorf("failed to read role tasks file %s: %w", roleTasksPath, err)
-		}
+		return nil, err
 	}
 
 	// Recursively preprocess the role's tasks, using the role's tasks directory as the base path
-	roleTasksBasePath := filepath.Dir(roleTasksPath)
 	roleBlocks, err := PreprocessPlaybook(roleData, roleTasksBasePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to preprocess role '%s' tasks from %s: %w", roleName, roleTasksPath, err)
+		return nil, fmt.Errorf("failed to preprocess role '%s' tasks from %s: %w", roleName, roleTasksBasePath, err)
 	}
 	return roleBlocks, nil
 }
