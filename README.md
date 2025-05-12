@@ -85,23 +85,19 @@ go run generated/tasks.go -i inventory.yaml
 TODO:
 
 - Add more modules
-- Implement task when
-- Implement validation step
 - Add revert conditions `revert_when`
 - Make template variables case insensitive
-- Allow variables to not start with a dot
 - Should we compile assets (templates, files) along with the code?
-- Hook up host facts like release, os, etc.
+- Hook up host facts like release, os, etc. This should happen dynamically and only fetch the required host facts.
 - Expression support:
   - "x is defined"
+- Read `ansible.cfg` variables such as `[defaults] roles_path = roles/:shared_roles/` and `[privilege_escalation] become_flags = -H -S`
+- Add config option to prevent `revert` tasks
+- `vars_prompt` on play
+- `gather_facts` on play
+- Don't allow interactive commands in `temporal` executor, or define an option that allows for signals/disallows interactivity.
 
 ## Differences between Spage and Ansible
 
-Inventory:
-
-- `host` in inventory instead of `ansible_host`
-- `groups` string under a host
-
-Templating:
-
-- Use `text/template` instead of Jinja
+- Playbooks are allowed to start without `- tasks:`. It assumes `hosts: localhost` and runs locally.
+- Parallel execution mode and reverts tasks by default.
