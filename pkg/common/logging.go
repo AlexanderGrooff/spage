@@ -182,29 +182,42 @@ func SetExecutionID(id string) {
 	logger = logger.With(zap.String("execution_id", id))
 }
 
-// LogDebug logs a debug message using fmt.Sprintf style formatting.
-func LogDebug(format string, args ...interface{}) {
-	logger.Debugf(format, args...)
+// LogDebug logs a debug message with structured key-value fields.
+func LogDebug(msg string, fields map[string]interface{}) {
+	var kvs []interface{}
+	for k, v := range fields {
+		kvs = append(kvs, k, v)
+	}
+	logger.Debugw(msg, kvs...)
 }
 
-// LogInfo logs an info message using fmt.Sprintf style formatting.
-func LogInfo(format string, args ...interface{}) {
-	logger.Infof(format, args...)
+// LogInfo logs an info message with structured key-value fields.
+func LogInfo(msg string, fields map[string]interface{}) {
+	var kvs []interface{}
+	for k, v := range fields {
+		kvs = append(kvs, k, v)
+	}
+	logger.Infow(msg, kvs...)
 }
 
-// LogWarn logs a warning message using fmt.Sprintf style formatting.
-func LogWarn(format string, args ...interface{}) {
-	logger.Warnf(format, args...)
+// LogWarn logs a warning message with structured key-value fields.
+func LogWarn(msg string, fields map[string]interface{}) {
+	var kvs []interface{}
+	for k, v := range fields {
+		kvs = append(kvs, k, v)
+	}
+	logger.Warnw(msg, kvs...)
 }
 
-// LogError logs an error message using fmt.Sprintf style formatting.
-func LogError(format string, args ...interface{}) {
-	logger.Errorf(format, args...)
+// LogError logs an error message with structured key-value fields.
+func LogError(msg string, fields map[string]interface{}) {
+	var kvs []interface{}
+	for k, v := range fields {
+		kvs = append(kvs, k, v)
+	}
+	logger.Errorw(msg, kvs...)
 }
 
-// DebugOutput logs a debug message using fmt.Sprintf style formatting.
-// It respects the configured log level and formatter.
-// This is now identical to LogDebug.
 func DebugOutput(format string, args ...interface{}) {
 	logger.Debugf(format, args...)
 }

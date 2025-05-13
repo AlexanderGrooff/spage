@@ -31,7 +31,7 @@ func RunLocalCommand(command, username string) (string, string, error) {
 		return "", "", fmt.Errorf("failed to find %s in $PATH: %v", prog, err)
 	}
 	cmd = exec.Command(absProg, args...)
-	common.DebugOutput("Running command: %s\n", cmd.String())
+	common.DebugOutput("Running command: %s", cmd.String())
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
