@@ -95,6 +95,7 @@ TODO:
 - Add config option to prevent `revert` tasks
 - `vars_prompt` on play
 - `gather_facts` on play
+- `vars` on play
 - Don't allow interactive commands in `temporal` executor, or define an option that allows for signals/disallows interactivity.
 
 ## Differences between Spage and Ansible

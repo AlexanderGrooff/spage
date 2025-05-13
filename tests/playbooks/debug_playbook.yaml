@@ -1,0 +1,37 @@
+---
+- name: Test debug module
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: define facts
+      set_fact:
+        nested_var: "nested var string"
+        debug_message_content: "Spage Debug Test"
+        variable_name_to_debug: "{{ nested_var }}"
+        another_variable: "This is another var"
+
+    - name: Debug with a static message (should execute)
+      debug:
+        msg: "Static debug message for execution."
+
+    - name: Debug with a templated message (should execute and then revert)
+      debug:
+        msg: "Templated message: {{ debug_message_content }} (will be reverted)"
+
+    - name: Debug a variable using a templated var parameter (should execute and then revert)
+      debug:
+        var: variable_name_to_debug
+
+    - name: Intentionally fail to trigger revert of preceding debug tasks
+      command: /bin/false
+      # This task's failure should trigger revert on the two debug tasks above.
+
+    # These tasks should NOT be executed due to the failure above.
+    - name: This debug task (msg) should NOT run
+      debug:
+        msg: "This message should NOT appear in logs."
+
+    - name: This debug task (var) should NOT run
+      debug:
+        var: another_variable 

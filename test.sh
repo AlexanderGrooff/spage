@@ -598,7 +598,63 @@ go run main.go generate -p $TESTS_DIR/playbooks/ansible_builtin_playbook.yaml -o
 go build -o generated_tasks generated_tasks.go
 ./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml
 
+# Test 24: Debug module test
+echo "Running debug module test..."
+go run main.go generate -p $TESTS_DIR/playbooks/debug_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
 
+# Run and expect failure, capture output
+echo "Running debug playbook (expecting failure to test revert)..."
+set +e
+DEBUG_OUTPUT=$(./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml 2>&1)
+DEBUG_EXIT_CODE=$?
+set -e
+
+# Check if the exit code indicates failure (should be non-zero)
+if [ $DEBUG_EXIT_CODE -eq 0 ]; then
+    echo "Debug module test failed: Playbook succeeded unexpectedly (Exit Code: $DEBUG_EXIT_CODE). Revert likely did not trigger."
+    echo "Output was:"
+    echo "$DEBUG_OUTPUT"
+    exit 1
+fi
+echo "Debug playbook failed as expected (Exit Code: $DEBUG_EXIT_CODE), checking output..."
+
+# Check for expected execution messages
+if ! echo "$DEBUG_OUTPUT" | grep -q "msg: Static debug message for execution."; then
+    echo "Debug test failed: Did not find static execute message."
+    echo "Output was:"
+    echo "$DEBUG_OUTPUT"
+    exit 1
+fi
+if ! echo "$DEBUG_OUTPUT" | grep -q "msg: Templated message: Spage Debug Test (will be reverted)"; then
+    echo "Debug test failed: Did not find templated execute message."
+    echo "Output was:"
+    echo "$DEBUG_OUTPUT"
+    exit 1
+fi
+
+# Check for expected revert messages
+if ! echo "$DEBUG_OUTPUT" | grep -q "msg: Templated message: Spage Debug Test (will be reverted) \[revert\]"; then
+    echo "Debug test failed: Did not find templated revert message."
+    echo "Output was:"
+    echo "$DEBUG_OUTPUT"
+    exit 1
+fi
+# Check that messages from tasks that should have been skipped are NOT present
+if echo "$DEBUG_OUTPUT" | grep -q "This message should NOT appear in logs."; then
+    echo "Debug test failed: Found message from a task that should have been skipped (msg)."
+    echo "Output was:"
+    echo "$DEBUG_OUTPUT"
+    exit 1
+fi
+if echo "$DEBUG_OUTPUT" | grep -q "var: another_variable"; then # Check if the var 'another_variable' was debugged
+    echo "Debug test failed: Found message from a task that should have been skipped (var another_variable)."
+    echo "Output was:"
+    echo "$DEBUG_OUTPUT"
+    exit 1
+fi
+
+echo "Debug module test succeeded."
 
 echo "All tests completed successfully!"
 
