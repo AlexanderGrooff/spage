@@ -203,6 +203,7 @@ func (i *CommandInput) UnmarshalYAML(node *yaml.Node) error {
 
 func init() {
 	pkg.RegisterModule("command", CommandModule{})
+	pkg.RegisterModule("ansible.builtin.command", CommandModule{})
 }
 
 // ParameterAliases defines aliases for module parameters.

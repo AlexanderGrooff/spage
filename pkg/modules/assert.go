@@ -147,6 +147,7 @@ func (m AssertModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pk
 
 func init() {
 	pkg.RegisterModule("assert", AssertModule{})
+	pkg.RegisterModule("ansible.builtin.assert", AssertModule{})
 }
 
 // ParameterAliases defines aliases for module parameters.

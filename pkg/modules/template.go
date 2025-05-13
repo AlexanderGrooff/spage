@@ -161,6 +161,7 @@ func (m TemplateModule) Revert(params pkg.ConcreteModuleInputProvider, closure *
 
 func init() {
 	pkg.RegisterModule("template", TemplateModule{})
+	pkg.RegisterModule("ansible.builtin.template", TemplateModule{})
 }
 
 // ParameterAliases defines aliases for module parameters.

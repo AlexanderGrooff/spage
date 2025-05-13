@@ -194,6 +194,7 @@ func (m CopyModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.
 
 func init() {
 	pkg.RegisterModule("copy", CopyModule{})
+	pkg.RegisterModule("ansible.builtin.copy", CopyModule{})
 }
 
 // ParameterAliases defines aliases for module parameters.

@@ -217,6 +217,7 @@ func (m SetFactModule) Revert(params pkg.ConcreteModuleInputProvider, closure *p
 
 func init() {
 	pkg.RegisterModule("set_fact", SetFactModule{})
+	pkg.RegisterModule("ansible.builtin.set_fact", SetFactModule{})
 }
 
 // ParameterAliases defines aliases if needed.

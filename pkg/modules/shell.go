@@ -180,6 +180,7 @@ func (i *ShellInput) UnmarshalYAML(node *yaml.Node) error {
 
 func init() {
 	pkg.RegisterModule("shell", ShellModule{})
+	pkg.RegisterModule("ansible.builtin.shell", ShellModule{})
 }
 
 // ParameterAliases defines aliases for module parameters.

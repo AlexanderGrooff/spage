@@ -592,5 +592,13 @@ go run main.go generate -p $TESTS_DIR/playbooks/loop_sequential_playbook.yaml -o
 go build -o generated_tasks generated_tasks.go
 ./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml
 
+# Test 23: Ansible builtin modules test
+echo "Running ansible builtin modules test..."
+go run main.go generate -p $TESTS_DIR/playbooks/ansible_builtin_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml
+
+
+
 echo "All tests completed successfully!"
 

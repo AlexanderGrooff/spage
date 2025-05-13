@@ -503,6 +503,7 @@ func (i *AptInput) UnmarshalYAML(node *yaml.Node) error {
 
 func init() {
 	pkg.RegisterModule("apt", AptModule{})
+	pkg.RegisterModule("ansible.builtin.apt", AptModule{})
 }
 
 // ParameterAliases defines aliases for module parameters.

@@ -187,4 +187,5 @@ func (m SlurpModule) ParameterAliases() map[string]string {
 
 func init() {
 	pkg.RegisterModule("slurp", SlurpModule{})
+	pkg.RegisterModule("ansible.builtin.slurp", SlurpModule{})
 }

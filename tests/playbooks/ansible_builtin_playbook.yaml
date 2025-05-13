@@ -1,0 +1,48 @@
+- name: test ansible.builtin
+  hosts: all
+  tasks:
+  - name: Register a variable
+    ansible.builtin.shell: echo -n "success"
+    register: shell_output
+
+  - name: Assert success variable (should pass)
+    ansible.builtin.assert:
+      that:
+        - shell_output.stdout == 'success'
+    after: Register a variable
+
+  - name: copy
+    ansible.builtin.copy:
+      content: "hello"
+      dest: /tmp/spage/copy_test.txt
+
+  - name: stat
+    ansible.builtin.stat:
+      path: /tmp/spage/copy_test.txt
+    register: stat_result
+
+  - name: assert
+    ansible.builtin.assert:
+      that:
+        - stat_result.stat.exists
+
+  - name: slurp
+    ansible.builtin.slurp:
+      src: /tmp/spage/copy_test.txt
+    register: slurp_result
+
+  - name: set fact
+    ansible.builtin.set_fact:
+      message: "hello"
+
+  - name: template
+    ansible.builtin.template:
+      src: /tmp/spage/template_test.txt
+      dest: /tmp/spage/template_test.txt
+    register: template_result
+
+  - name: command
+    ansible.builtin.command:
+      cmd: "echo"
+    register: command_result
+  

@@ -9,9 +9,9 @@ import (
 
 func TestCopyInput_ModuleInputCompatibility(t *testing.T) {
 	copyInput := &CopyInput{
-		Src:     "/tmp/source.txt",
-		Dst:     "/tmp/destination.txt",
-		Mode:    "0644",
+		Src:  "/tmp/source.txt",
+		Dst:  "/tmp/destination.txt",
+		Mode: "0644",
 	}
 
 	// Ensure it implements ConcreteModuleInputProvider

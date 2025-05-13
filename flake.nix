@@ -16,6 +16,7 @@
           nativeBuildInputs = [
             pkgs.go_1_23 # Or your preferred Go version
             pkgs.temporal-cli
+            pkgs.golangci-lint
             # Add other Go tools or dependencies here if needed, e.g.:
             # pkgs.gopls
             # pkgs.delve

@@ -166,6 +166,7 @@ func (m PacmanModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pk
 
 func init() {
 	pkg.RegisterModule("pacman", PacmanModule{})
+	pkg.RegisterModule("ansible.builtin.pacman", PacmanModule{})
 }
 
 // ParameterAliases defines aliases for module parameters.

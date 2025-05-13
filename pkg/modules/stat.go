@@ -323,6 +323,7 @@ func init() {
 	_ = syscall.Exit // Example usage to avoid unused import error if checks change
 
 	pkg.RegisterModule("stat", StatModule{})
+	pkg.RegisterModule("ansible.builtin.stat", StatModule{})
 }
 
 // ParameterAliases defines aliases for module parameters.

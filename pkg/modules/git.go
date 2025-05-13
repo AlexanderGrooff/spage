@@ -174,6 +174,7 @@ func (m GitModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.C
 
 func init() {
 	pkg.RegisterModule("git", GitModule{})
+	pkg.RegisterModule("ansible.builtin.git", GitModule{})
 }
 
 // ParameterAliases defines aliases for module parameters.

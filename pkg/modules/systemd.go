@@ -205,6 +205,7 @@ func (m SystemdModule) Revert(params pkg.ConcreteModuleInputProvider, closure *p
 
 func init() {
 	pkg.RegisterModule("systemd", SystemdModule{})
+	pkg.RegisterModule("ansible.builtin.systemd", SystemdModule{})
 }
 
 // ParameterAliases defines aliases for module parameters.

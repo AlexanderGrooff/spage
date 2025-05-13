@@ -460,6 +460,7 @@ func (m FileModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.
 
 func init() {
 	pkg.RegisterModule("file", FileModule{})
+	pkg.RegisterModule("ansible.builtin.file", FileModule{})
 }
 
 // ParameterAliases defines aliases for the file module parameters.
