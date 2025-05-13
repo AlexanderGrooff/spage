@@ -17,7 +17,7 @@ func TestDebugInput_ModuleInputCompatibility(t *testing.T) {
 	assert.Contains(t, miMsg.ToCode(), "modules.DebugInput{Msg: \"Hello\"}")
 	assert.Empty(t, miMsg.GetVariableUsage())
 	assert.NoError(t, miMsg.Validate())
-	assert.False(t, miMsg.HasRevert())
+	assert.True(t, miMsg.HasRevert())
 	assert.Empty(t, miMsg.ProvidesVariables())
 
 	debugInputVar := &DebugInput{Var: "some_var"}

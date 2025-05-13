@@ -598,7 +598,46 @@ go run main.go generate -p $TESTS_DIR/playbooks/ansible_builtin_playbook.yaml -o
 go build -o generated_tasks generated_tasks.go
 ./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml
 
-# Test 24: Debug module test
+# Test 24: Fail module test
+echo "Running fail module test..."
+go run main.go generate -p $TESTS_DIR/playbooks/fail_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+
+# Run and expect failure, capture output
+echo "Running fail playbook (expecting failure)..."
+set +e
+FAIL_MODULE_OUTPUT=$(./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml 2>&1)
+FAIL_MODULE_EXIT_CODE=$?
+set -e
+
+# Check if the exit code indicates failure (should be non-zero)
+if [ $FAIL_MODULE_EXIT_CODE -eq 0 ]; then
+    echo "Fail module test failed: Playbook succeeded unexpectedly (Exit Code: $FAIL_MODULE_EXIT_CODE)."
+    echo "Output was:"
+    echo "$FAIL_MODULE_OUTPUT"
+    exit 1
+fi
+echo "Fail playbook failed as expected (Exit Code: $FAIL_MODULE_EXIT_CODE), checking output..."
+
+# Check for the initial debug message
+if ! echo "$FAIL_MODULE_OUTPUT" | grep -q "msg: About to test the fail module."; then
+    echo "Fail module test failed: Did not find the initial debug message."
+    echo "Output was:"
+    echo "$FAIL_MODULE_OUTPUT"
+    exit 1
+fi
+
+# Check that the task after fail did NOT run
+if echo "$FAIL_MODULE_OUTPUT" | grep -q "This message should never appear because the playbook should have failed."; then
+    echo "Fail module test failed: Found message from a task that should have been skipped after fail."
+    echo "Output was:"
+    echo "$FAIL_MODULE_OUTPUT"
+    exit 1
+fi
+
+echo "Fail module test succeeded."
+
+# Test 25: Debug module test
 echo "Running debug module test..."
 go run main.go generate -p $TESTS_DIR/playbooks/debug_playbook.yaml -o generated_tasks.go
 go build -o generated_tasks generated_tasks.go

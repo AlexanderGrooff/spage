@@ -1,0 +1,16 @@
+---
+- name: Test fail module
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: This task will run
+      debug:
+        msg: "About to test the fail module."
+
+    - name: Intentionally fail here with a templated message
+      fail:
+        msg: "Test Failure"
+
+    - name: This task should NOT run
+      debug:
+        msg: "This message should never appear because the playbook should have failed." 
