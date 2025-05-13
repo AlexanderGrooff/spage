@@ -7,21 +7,22 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestShellInput_ModuleInputCompatibility(t *testing.T) {
-	shellInput := &ShellInput{
-		Execute: "echo 'hello world'",
-		Revert:  "echo 'reverting'",
+func TestGitInput_ModuleInputCompatibility(t *testing.T) {
+	gitInput := &GitInput{
+		Repo:    "https://github.com/example/repo",
+		Dest:    "/tmp/repo",
+		Version: "main",
 	}
 
 	// Ensure it implements ConcreteModuleInputProvider
-	var _ pkg.ConcreteModuleInputProvider = shellInput
+	var _ pkg.ConcreteModuleInputProvider = gitInput
 
 	// Wrap in ModuleInput
-	mi := &pkg.ModuleInput{Actual: shellInput}
+	mi := &pkg.ModuleInput{Actual: gitInput}
 
-	// ToCode should not panic and should contain 'ShellInput'
+	// ToCode should not panic and should contain 'GitInput'
 	code := mi.ToCode()
-	assert.Contains(t, code, "ShellInput", "ToCode output should mention ShellInput")
+	assert.Contains(t, code, "GitInput", "ToCode output should mention GitInput")
 
 	// GetVariableUsage should return a slice
 	vars := mi.GetVariableUsage()

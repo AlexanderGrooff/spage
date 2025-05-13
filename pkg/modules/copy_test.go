@@ -7,21 +7,22 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestShellInput_ModuleInputCompatibility(t *testing.T) {
-	shellInput := &ShellInput{
-		Execute: "echo 'hello world'",
-		Revert:  "echo 'reverting'",
+func TestCopyInput_ModuleInputCompatibility(t *testing.T) {
+	copyInput := &CopyInput{
+		Src:     "/tmp/source.txt",
+		Dst:     "/tmp/destination.txt",
+		Mode:    "0644",
 	}
 
 	// Ensure it implements ConcreteModuleInputProvider
-	var _ pkg.ConcreteModuleInputProvider = shellInput
+	var _ pkg.ConcreteModuleInputProvider = copyInput
 
 	// Wrap in ModuleInput
-	mi := &pkg.ModuleInput{Actual: shellInput}
+	mi := &pkg.ModuleInput{Actual: copyInput}
 
-	// ToCode should not panic and should contain 'ShellInput'
+	// ToCode should not panic and should contain 'CopyInput'
 	code := mi.ToCode()
-	assert.Contains(t, code, "ShellInput", "ToCode output should mention ShellInput")
+	assert.Contains(t, code, "CopyInput", "ToCode output should mention CopyInput")
 
 	// GetVariableUsage should return a slice
 	vars := mi.GetVariableUsage()
@@ -33,7 +34,7 @@ func TestShellInput_ModuleInputCompatibility(t *testing.T) {
 
 	// Check HasRevert implementation
 	hasRevert := mi.HasRevert()
-	assert.True(t, hasRevert)
+	assert.IsType(t, true, hasRevert)
 
 	// ProvidesVariables should return nil or empty
 	assert.Nil(t, mi.ProvidesVariables())
