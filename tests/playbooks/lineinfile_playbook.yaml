@@ -1,0 +1,59 @@
+---
+- name: Test lineinfile module
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Ensure a line is present, create file if needed
+      ansible.builtin.lineinfile:
+        path: /tmp/spage/lineinfile_test.txt
+        line: "Spage was here!"
+        create: yes
+        mode: "0644"
+
+    - name: Ensure another line is present using regexp to replace
+      ansible.builtin.lineinfile:
+        path: /tmp/spage/lineinfile_test.txt
+        regexp: "^Spage was here!$"
+        line: "Spage is awesome!"
+
+    - name: Ensure a specific line is absent
+      ansible.builtin.lineinfile:
+        path: /tmp/spage/lineinfile_test.txt
+        regexp: "^# This is a comment to remove$"
+        state: absent
+
+    - name: Add a line if it does not exist (no regexp)
+      ansible.builtin.lineinfile:
+        path: /tmp/spage/lineinfile_test.txt
+        line: "This is a new line without regexp."
+
+    - name: Ensure a line is present using insertafter EOF
+      ansible.builtin.lineinfile:
+        path: /tmp/spage/lineinfile_test.txt
+        line: "Last line, added with insertafter EOF."
+        insertafter: EOF
+
+    - name: Ensure a line is present using insertbefore BOF
+      ansible.builtin.lineinfile:
+        path: /tmp/spage/lineinfile_test.txt
+        line: "First line, added with insertbefore BOF."
+        insertbefore: BOF
+
+    - name: Use backreferences to modify a line
+      ansible.builtin.lineinfile:
+        path: /tmp/spage/lineinfile_test.txt
+        regexp: "^(Spage) is (awesome)!$"
+        line: "\\1 still is \\2, indeed!"
+        backrefs: yes
+
+    - name: Add a line to be removed by the next task
+      ansible.builtin.lineinfile:
+        path: /tmp/spage/lineinfile_test.txt
+        line: "This line will be removed by exact match."
+        insertbefore: BOF # Add it somewhere to be removed, to ensure the next task actually does something
+
+    - name: Remove a line by exact match
+      ansible.builtin.lineinfile:
+        path: /tmp/spage/lineinfile_test.txt
+        line: "This line will be removed by exact match."
+        state: absent 

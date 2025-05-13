@@ -1,0 +1,428 @@
+package modules
+
+import (
+	"fmt"
+	"reflect"
+	"regexp"
+	"strings"
+
+	"github.com/AlexanderGrooff/spage/pkg"
+	"github.com/AlexanderGrooff/spage/pkg/common"
+)
+
+type LineinfileModule struct{}
+
+func (lm LineinfileModule) InputType() reflect.Type {
+	return reflect.TypeOf(LineinfileInput{})
+}
+
+func (lm LineinfileModule) OutputType() reflect.Type {
+	return reflect.TypeOf(LineinfileOutput{})
+}
+
+type LineinfileInput struct {
+	Path         string `yaml:"path"` // Aliases: dest, destfile, name
+	Line         string `yaml:"line"`
+	Regexp       string `yaml:"regexp"`
+	State        string `yaml:"state,omitempty"`        // "present" or "absent", defaults to "present"
+	Backrefs     bool   `yaml:"backrefs,omitempty"`     // Use backreferences from regexp in line
+	Create       bool   `yaml:"create,omitempty"`       // Create the file if it doesn't exist
+	InsertAfter  string `yaml:"insertafter,omitempty"`  // Regex, or "EOF"
+	InsertBefore string `yaml:"insertbefore,omitempty"` // Regex, or "BOF"
+	Mode         string `yaml:"mode,omitempty"`         // File mode if created
+}
+
+type LineinfileOutput struct {
+	Msg                string                       `yaml:"msg"`
+	Diff               pkg.RevertableChange[string] `yaml:"diff"` // For file content changes
+	OriginalFileExists bool                         `yaml:"originalFileExists"`
+	OriginalMode       string                       `yaml:"originalMode"`
+	pkg.ModuleOutput
+}
+
+// ToCode generates the Go code representation of the input.
+func (i LineinfileInput) ToCode() string {
+	return fmt.Sprintf("modules.LineinfileInput{Path: %q, Line: %q, Regexp: %q, State: %q, Backrefs: %t, Create: %t, InsertAfter: %q, InsertBefore: %q, Mode: %q}",
+		i.Path, i.Line, i.Regexp, i.State, i.Backrefs, i.Create, i.InsertAfter, i.InsertBefore, i.Mode)
+}
+
+// GetVariableUsage identifies variables used in templates.
+func (i LineinfileInput) GetVariableUsage() []string {
+	var vars []string
+	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.Path)...)
+	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.Line)...)
+	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.Regexp)...)
+	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.InsertAfter)...)
+	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.InsertBefore)...)
+	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.Mode)...)
+	return vars
+}
+
+// Validate checks the input parameters for correctness.
+func (i LineinfileInput) Validate() error {
+	if i.Path == "" {
+		return fmt.Errorf("path parameter is required for lineinfile module")
+	}
+	if i.State == "" {
+		// Default to "present" if not specified, handled in Execute
+	} else if i.State != "present" && i.State != "absent" {
+		return fmt.Errorf("state parameter must be 'present' or 'absent', got '%s'", i.State)
+	}
+	if i.Backrefs && i.Regexp == "" {
+		return fmt.Errorf("backrefs=true requires regexp to be set")
+	}
+	if i.Line == "" && i.State == "present" && i.Regexp == "" {
+		// This condition is tricky. Ansible's lineinfile allows ensuring a line *matching regexp* is present
+		// without specifying `line` if `regexp` is used for matching.
+		// For now, let's assume if state=present, `line` is usually needed unless `regexp` is the target.
+		// If `line` is empty and `regexp` is set, it means "ensure a line matching regexp exists".
+		// If `line` is also empty and `state` is `present` this is an issue.
+		return fmt.Errorf("line parameter is required when state=present unless regexp is used to identify the target line")
+	}
+	if i.InsertAfter != "" && i.InsertBefore != "" {
+		return fmt.Errorf("cannot specify both insertafter and insertbefore")
+	}
+	return nil
+}
+
+// HasRevert indicates that the lineinfile module can be reverted.
+func (i LineinfileInput) HasRevert() bool {
+	return true
+}
+
+// ProvidesVariables returns nil as lineinfile doesn't inherently define variables.
+func (i LineinfileInput) ProvidesVariables() []string {
+	return nil
+}
+
+// Changed indicates if the module made any changes.
+func (o LineinfileOutput) Changed() bool {
+	return o.Diff.Changed() || (o.Msg != "" && !strings.Contains(o.Msg, "already")) // A bit simplistic, refine
+}
+
+// String provides a human-readable summary of the output.
+func (o LineinfileOutput) String() string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("  msg: %s\n", o.Msg))
+	sb.WriteString(fmt.Sprintf("  original content: %q\n", o.Diff.Before))
+	sb.WriteString(fmt.Sprintf("  new content: %q\n", o.Diff.After))
+	return sb.String()
+}
+
+func (lm LineinfileModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
+	input, ok := params.(LineinfileInput)
+	if !ok {
+		return nil, fmt.Errorf("Execute: incorrect parameter type: expected LineinfileInput, got %T", params)
+	}
+	if err := input.Validate(); err != nil {
+		return nil, fmt.Errorf("validation failed: %w", err)
+	}
+
+	state := input.State
+	if state == "" {
+		state = "present" // Default state
+	}
+
+	common.DebugOutput("Lineinfile: path=%s, line=%s, regexp=%s, state=%s, create=%t, insertafter=%s, insertbefore=%s",
+		input.Path, input.Line, input.Regexp, state, input.Create, input.InsertAfter, input.InsertBefore)
+
+	originalContent, err := closure.HostContext.ReadFile(input.Path, runAs)
+	originalFileExists := err == nil
+	originalMode := "" // Placeholder, implement mode fetching if needed for revert
+
+	if !originalFileExists && !input.Create {
+		return nil, fmt.Errorf("file %s does not exist and create=false", input.Path)
+	}
+
+	// Handle file creation if requested and file doesn't exist
+	if !originalFileExists && input.Create {
+		if state == "present" {
+			common.DebugOutput("Lineinfile: creating file %s with line: %s", input.Path, input.Line)
+			if err := closure.HostContext.WriteFile(input.Path, input.Line+"\n", runAs); err != nil {
+				return nil, fmt.Errorf("failed to create and write to file %s: %w", input.Path, err)
+			}
+			if input.Mode != "" {
+				if err := closure.HostContext.SetFileMode(input.Path, input.Mode, runAs); err != nil {
+					common.LogWarn(fmt.Sprintf("failed to set mode %s on newly created file %s", input.Mode, input.Path), map[string]interface{}{"error": err})
+				}
+			}
+			return LineinfileOutput{
+				Msg:                fmt.Sprintf("file %s created with line", input.Path),
+				Diff:               pkg.RevertableChange[string]{Before: "", After: input.Line + "\n"},
+				OriginalFileExists: false,
+			}, nil
+		} else { // state == "absent"
+			common.DebugOutput("Lineinfile: file %s does not exist and state is absent, doing nothing", input.Path)
+			return LineinfileOutput{
+				Msg:                fmt.Sprintf("file %s does not exist, line is already absent", input.Path),
+				OriginalFileExists: false,
+			}, nil
+		}
+	} else if !originalFileExists {
+		return nil, fmt.Errorf("internal logic error: file %s does not exist but create flag was not handled", input.Path)
+	}
+
+	lines := strings.Split(strings.ReplaceAll(originalContent, "\r\n", "\n"), "\n")
+	// Remove trailing empty line if present (often an artifact of Split from a final newline)
+	if len(lines) > 0 && lines[len(lines)-1] == "" && originalContent != "" {
+		lines = lines[:len(lines)-1]
+	}
+
+	var compiledRegexp *regexp.Regexp
+	if input.Regexp != "" {
+		compiledRegexp, err = regexp.Compile(input.Regexp)
+		if err != nil {
+			return nil, fmt.Errorf("invalid regexp %q: %w", input.Regexp, err)
+		}
+	}
+
+	modified := false
+	found := false
+	newLines := make([]string, 0, len(lines))
+
+	// Primary pass: search for regexp or exact line, and apply modifications
+	for _, currentLine := range lines {
+		match := false
+		if compiledRegexp != nil {
+			if compiledRegexp.MatchString(currentLine) {
+				match = true
+			}
+		} else if state == "present" && currentLine == input.Line { // Exact match for present state if no regexp
+			match = true
+		} else if state == "absent" && currentLine == input.Line { // Exact match for absent state if no regexp (and line is specified)
+			match = true
+		}
+
+		if match {
+			common.DebugOutput("Lineinfile: matched line %q (regexp: %q, exact_line_match: %t)", currentLine, input.Regexp, (compiledRegexp == nil && currentLine == input.Line))
+			found = true
+			if state == "present" {
+				lineToWrite := input.Line
+				if input.Backrefs && compiledRegexp != nil {
+					// Convert Ansible-style backreferences (\1) to Go-style ($1)
+					backrefPattern := regexp.MustCompile(`\\([0-9]+)`)
+					replacementString := backrefPattern.ReplaceAllString(input.Line, "$$$1")
+					common.DebugOutput("Lineinfile: applying backrefs, original line: %q, replacement pattern: %q", currentLine, replacementString)
+					replacedLine := string(compiledRegexp.ReplaceAllString(currentLine, replacementString))
+					common.DebugOutput("Lineinfile: line after backrefs: %q", replacedLine)
+					if currentLine != replacedLine {
+						modified = true
+					}
+					newLines = append(newLines, replacedLine)
+				} else {
+					// Replace line or ensure it's the same
+					if currentLine != lineToWrite {
+						modified = true
+					}
+					newLines = append(newLines, lineToWrite)
+				}
+			} else { // state == "absent"
+				common.DebugOutput("Lineinfile: removing matched line %q", currentLine)
+				modified = true // Line removed
+				// Do not append currentLine
+				continue
+			}
+		} else {
+			newLines = append(newLines, currentLine)
+		}
+	}
+
+	// Secondary pass: handle insertafter/insertbefore or add if not found (for state=present)
+	if state == "present" && !found {
+		common.DebugOutput("Lineinfile: line not found, state is present. Adding line. InsertAfter: %q, InsertBefore: %q", input.InsertAfter, input.InsertBefore)
+		lineToAdd := input.Line
+		if input.InsertAfter != "" {
+			idxToInsert := -1
+			if strings.ToUpper(input.InsertAfter) == "EOF" {
+				idxToInsert = len(newLines)
+			} else {
+				reAfter, err := regexp.Compile(input.InsertAfter)
+				if err != nil {
+					return nil, fmt.Errorf("invalid insertafter regexp %q: %w", input.InsertAfter, err)
+				}
+				for i := len(newLines) - 1; i >= 0; i-- { // Search from bottom for "after"
+					if reAfter.MatchString(newLines[i]) {
+						idxToInsert = i + 1
+						break
+					}
+				}
+				if idxToInsert == -1 { // Not found, append to end as per Ansible behavior
+					common.DebugOutput("Lineinfile: insertafter regexp %q not found, appending to end", input.InsertAfter)
+					idxToInsert = len(newLines)
+				}
+			}
+			common.DebugOutput("Lineinfile: inserting line %q at index %d (due to insertafter)", lineToAdd, idxToInsert)
+			tempLines := make([]string, 0, len(newLines)+1)
+			tempLines = append(tempLines, newLines[:idxToInsert]...)
+			tempLines = append(tempLines, lineToAdd)
+			tempLines = append(tempLines, newLines[idxToInsert:]...)
+			newLines = tempLines
+			modified = true
+		} else if input.InsertBefore != "" {
+			idxToInsert := -1
+			if strings.ToUpper(input.InsertBefore) == "BOF" {
+				idxToInsert = 0
+			} else {
+				reBefore, err := regexp.Compile(input.InsertBefore)
+				if err != nil {
+					return nil, fmt.Errorf("invalid insertbefore regexp %q: %w", input.InsertBefore, err)
+				}
+				for i := 0; i < len(newLines); i++ { // Search from top for "before"
+					if reBefore.MatchString(newLines[i]) {
+						idxToInsert = i
+						break
+					}
+				}
+				if idxToInsert == -1 { // Not found, prepend as per Ansible behavior (insert at BOF if pattern not found)
+					common.DebugOutput("Lineinfile: insertbefore regexp %q not found, inserting at beginning", input.InsertBefore)
+					idxToInsert = 0
+				}
+			}
+			common.DebugOutput("Lineinfile: inserting line %q at index %d (due to insertbefore)", lineToAdd, idxToInsert)
+			tempLines := make([]string, 0, len(newLines)+1)
+			if idxToInsert == 0 {
+				tempLines = append(tempLines, lineToAdd)
+				tempLines = append(tempLines, newLines...)
+			} else {
+				tempLines = append(tempLines, newLines[:idxToInsert]...)
+				tempLines = append(tempLines, lineToAdd)
+				tempLines = append(tempLines, newLines[idxToInsert:]...)
+			}
+			newLines = tempLines
+			modified = true
+		} else {
+			// No insertafter/insertbefore, and line not found. Add to the end of the file.
+			common.DebugOutput("Lineinfile: line not found, no insertafter/insertbefore, adding to end: %q", lineToAdd)
+			newLines = append(newLines, lineToAdd)
+			modified = true
+		}
+	}
+
+	var finalContent string
+	// Ensure a single trailing newline if content exists or was modified to have content.
+	// If the file becomes empty, it should have no trailing newline.
+	if len(newLines) > 0 {
+		finalContent = strings.Join(newLines, "\n") + "\n"
+	} else if modified { // implies newLines is empty, but original file was not, and we deleted content
+		finalContent = "" // explicitly empty
+	} else { // not modified, and newLines is empty (original file was empty and remains empty)
+		finalContent = originalContent // which is empty string
+	}
+
+	if modified {
+		common.DebugOutput("Lineinfile: writing modified content to %s. Content:\n%s", input.Path, finalContent)
+		if err := closure.HostContext.WriteFile(input.Path, finalContent, runAs); err != nil {
+			return nil, fmt.Errorf("failed to write updated content to %s: %w", input.Path, err)
+		}
+		msg := ""
+		if state == "present" {
+			if found {
+				msg = fmt.Sprintf("line replaced in %s", input.Path)
+			} else {
+				msg = fmt.Sprintf("line added to %s", input.Path)
+			}
+		} else { // state == "absent"
+			msg = fmt.Sprintf("line removed from %s", input.Path)
+		}
+		return LineinfileOutput{
+			Msg:                msg,
+			Diff:               pkg.RevertableChange[string]{Before: originalContent, After: finalContent},
+			OriginalFileExists: originalFileExists,
+			OriginalMode:       originalMode, // Store original mode if fetched
+		}, nil
+	}
+
+	// No modifications made
+	msg := ""
+	if state == "present" {
+		// If line is already present, check if it's *exactly* the input.Line.
+		// The `found` flag might be true due to regexp match where the line content is different.
+		// However, Ansible considers it 'ok' if regexp matches and state is present, even if line differs.
+		// For simplicity here, if `found` (by regexp or exact) and `state==present`, it's 'ok'.
+		msg = fmt.Sprintf("line already present in %s", input.Path)
+		// If an exact line match was required (no regexp) and found, it's definitely ok.
+		// If regexp was used, and it matched, Ansible reports 'ok' not 'changed'.
+	} else { // state == "absent"
+		if found { // This should ideally not be reached if logic is correct because 'absent' + 'found' should set modified=true
+			return nil, fmt.Errorf("internal logic error: line found for absent state but not modified")
+		}
+		msg = fmt.Sprintf("line already absent from %s", input.Path)
+	}
+	common.DebugOutput("Lineinfile: no modifications made to %s. Message: %s", input.Path, msg)
+	return LineinfileOutput{
+		Msg:                msg,
+		Diff:               pkg.RevertableChange[string]{Before: originalContent, After: originalContent},
+		OriginalFileExists: originalFileExists,
+		OriginalMode:       originalMode,
+	}, nil
+}
+
+func (lm LineinfileModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, previousOutput pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
+	input, ok := params.(LineinfileInput)
+	if !ok {
+		return nil, fmt.Errorf("Revert: incorrect parameter type: expected LineinfileInput, got %T", params)
+	}
+	prevOutput, ok := previousOutput.(LineinfileOutput)
+	if !ok {
+		// If previousOutput is nil (e.g. task failed before producing output), we might not have Diff.
+		// However, the task execution framework should provide a valid previousOutput if Revert is called.
+		// If it's not LineinfileOutput, that's a problem.
+		return nil, fmt.Errorf("Revert: incorrect previous output type: expected LineinfileOutput, got %T. Value: %+v", previousOutput, previousOutput)
+	}
+
+	common.DebugOutput("Lineinfile Revert: Path: %s, OriginalFileExists: %t, DiffChanged: %t", input.Path, prevOutput.OriginalFileExists, prevOutput.Diff.Changed())
+
+	if !prevOutput.Diff.Changed() && prevOutput.OriginalFileExists {
+		common.DebugOutput("Lineinfile Revert: No changes to revert for %s (diff not changed and file existed)", input.Path)
+		return LineinfileOutput{Msg: "no changes to revert"}, nil
+	}
+
+	// If the file was created by the Execute step, revert is to delete it.
+	// OriginalFileExists in prevOutput tells us if the file was there *before* the Execute ran.
+	if !prevOutput.OriginalFileExists {
+		common.DebugOutput("Lineinfile Revert: File %s was created by Execute. Reverting by deleting.", input.Path)
+		_, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -f %s", input.Path), runAs)
+		if err != nil {
+			return nil, fmt.Errorf("failed to revert by deleting created file %s: %w", input.Path, err)
+		}
+		return LineinfileOutput{
+			Msg:                fmt.Sprintf("file %s deleted during revert", input.Path),
+			Diff:               pkg.RevertableChange[string]{Before: prevOutput.Diff.After, After: ""}, // Content is now empty
+			OriginalFileExists: false,                                                                  // It did not exist before Execute, and now it's gone again.
+		}, nil
+	}
+
+	// File existed before, revert its content (and potentially mode if we tracked it)
+	common.DebugOutput("Lineinfile Revert: File %s existed. Reverting content to: %q", input.Path, prevOutput.Diff.Before)
+	if err := closure.HostContext.WriteFile(input.Path, prevOutput.Diff.Before, runAs); err != nil {
+		return nil, fmt.Errorf("failed to revert content of %s: %w", input.Path, err)
+	}
+
+	// TODO: Revert mode if it was changed during creation or modification.
+	// This would require fetching and storing originalMode in Execute if file existed,
+	// or if file was created and a specific mode was applied.
+	// if prevOutput.OriginalMode != "" && prevOutput.OriginalMode != currentModeAfterWrite {
+	// closure.HostContext.SetFileMode(input.Path, prevOutput.OriginalMode, runAs)
+	// }
+
+	return LineinfileOutput{
+		Msg:                fmt.Sprintf("content of %s reverted", input.Path),
+		Diff:               pkg.RevertableChange[string]{Before: prevOutput.Diff.After, After: prevOutput.Diff.Before},
+		OriginalFileExists: true,                    // It existed before Execute and still exists (content reverted).
+		OriginalMode:       prevOutput.OriginalMode, // Carry over if we had it
+	}, nil
+}
+
+// ParameterAliases defines aliases for module parameters.
+func (lm LineinfileModule) ParameterAliases() map[string]string {
+	return map[string]string{
+		"dest":     "path",
+		"destfile": "path",
+		"name":     "path",
+	}
+}
+
+func init() {
+	pkg.RegisterModule("lineinfile", LineinfileModule{})
+	pkg.RegisterModule("ansible.builtin.lineinfile", LineinfileModule{})
+}

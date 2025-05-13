@@ -695,5 +695,64 @@ fi
 
 echo "Debug module test succeeded."
 
+# Test 26: Lineinfile module test
+echo "Running lineinfile module test..."
+go run main.go generate -p $TESTS_DIR/playbooks/lineinfile_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+
+# This playbook should now complete successfully without intentional errors
+./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml
+LINEINFILE_EXIT_CODE=$?
+
+if [ $LINEINFILE_EXIT_CODE -ne 0 ]; then
+    echo "Lineinfile module test failed: Playbook execution failed unexpectedly (Exit Code: $LINEINFILE_EXIT_CODE)."
+    exit 1
+fi
+
+echo "Lineinfile playbook execution finished (Exit Code: $LINEINFILE_EXIT_CODE), checking results..."
+
+# Check main test file contents on the target
+LIF_TEST_FILE="/tmp/spage/lineinfile_test.txt"
+
+# Expected content after all successful operations
+if ! check_target "grep -q 'First line, added with insertbefore BOF.' $LIF_TEST_FILE"; then echo "Lineinfile Test 26 Check 1 FAILED"; exit 1; fi
+if ! check_target "grep -q 'Spage still is awesome, indeed!' $LIF_TEST_FILE"; then echo "Lineinfile Test 26 Check 2 FAILED"; exit 1; fi
+if ! check_target "grep -q 'This is a new line without regexp.' $LIF_TEST_FILE"; then echo "Lineinfile Test 26 Check 3 FAILED"; exit 1; fi
+if ! check_target "grep -q 'Last line, added with insertafter EOF.' $LIF_TEST_FILE"; then echo "Lineinfile Test 26 Check 4 FAILED"; exit 1; fi
+if ! check_target "! grep -q 'Spage was here!' $LIF_TEST_FILE"; then echo "Lineinfile Test 26 Check 5 FAILED"; exit 1; fi # Should have been replaced
+if ! check_target "! grep -q '# This is a comment to remove' $LIF_TEST_FILE"; then echo "Lineinfile Test 26 Check 6 FAILED"; exit 1; fi # Should be absent
+if ! check_target "! grep -q 'This line will be removed by exact match.' $LIF_TEST_FILE"; then echo "Lineinfile Test 26 Check 7 FAILED"; exit 1; fi # Should be absent
+
+echo "Lineinfile module main test checks passed."
+
+
+# Test 27: Lineinfile revert test
+echo "Running lineinfile revert test..."
+go run main.go generate -p $TESTS_DIR/playbooks/lineinfile_revert_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+
+# Run and expect failure due to the intentional fail task triggering revert
+set +e # Allow for failure
+./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml
+LIF_REVERT_EXIT_CODE=$?
+set -e
+
+if [ $LIF_REVERT_EXIT_CODE -eq 0 ]; then
+    echo "Lineinfile revert test failed: Playbook succeeded unexpectedly (Exit Code: $LIF_REVERT_EXIT_CODE). Revert likely did not trigger."
+    exit 1
+fi
+echo "Lineinfile revert playbook failed as expected (Exit Code: $LIF_REVERT_EXIT_CODE), checking revert results..."
+
+# Check revert test file - it should NOT exist if revert worked because it was created by the reverted task
+LIF_REVERT_SPECIFIC_FILE="/tmp/spage/lineinfile_revert_specific.txt"
+if check_target "[ -f $LIF_REVERT_SPECIFIC_FILE ]"; then
+    echo "Lineinfile revert test failed: revert file $LIF_REVERT_SPECIFIC_FILE still exists on target."
+    check_target "cat $LIF_REVERT_SPECIFIC_FILE || echo 'revert file not found'" # Print content for debugging
+    exit 1
+fi
+
+echo "Lineinfile revert test checks passed."
+
+
 echo "All tests completed successfully!"
 

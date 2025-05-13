@@ -1,0 +1,17 @@
+---
+- name: Test lineinfile module revert
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Create a file with a specific line for revert testing
+      ansible.builtin.lineinfile:
+        path: /tmp/spage/lineinfile_revert_specific.txt
+        line: "This content should be reverted."
+        create: yes
+        mode: "0644"
+      register: lineinfile_revert_target
+
+    - name: This task will intentionally fail to trigger revert
+      ansible.builtin.shell:
+        cmd: "false"
+      register: revert_trigger_shell_fail 
