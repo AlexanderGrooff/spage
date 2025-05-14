@@ -723,6 +723,12 @@ if ! check_target "! grep -q 'Spage was here!' $LIF_TEST_FILE"; then echo "Linei
 if ! check_target "! grep -q '# This is a comment to remove' $LIF_TEST_FILE"; then echo "Lineinfile Test 26 Check 6 FAILED"; exit 1; fi # Should be absent
 if ! check_target "! grep -q 'This line will be removed by exact match.' $LIF_TEST_FILE"; then echo "Lineinfile Test 26 Check 7 FAILED"; exit 1; fi # Should be absent
 
+# Check templated file from set_fact
+LIF_TEMPLATED_FILE="/tmp/spage/lineinfile_templated.txt"
+EXPECTED_TEMPLATED_CONTENT="This line comes from a set_fact variable."
+if ! check_target "[ -f $LIF_TEMPLATED_FILE ]"; then echo "Lineinfile Test 26 Check 8 (templated file existence) FAILED"; exit 1; fi
+if ! check_target "grep -q '$EXPECTED_TEMPLATED_CONTENT' $LIF_TEMPLATED_FILE"; then echo "Lineinfile Test 26 Check 9 (templated file content) FAILED"; exit 1; fi
+
 echo "Lineinfile module main test checks passed."
 
 

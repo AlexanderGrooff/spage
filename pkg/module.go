@@ -17,7 +17,6 @@ type ConcreteModuleInputProvider interface {
 	ProvidesVariables() []string
 }
 
-// ModuleInput is now a struct that wraps the actual module parameters.
 // Its primary role is to facilitate correct JSON/YAML marshaling/unmarshaling
 // when it's a field within another struct (like Task).
 type ModuleInput struct {

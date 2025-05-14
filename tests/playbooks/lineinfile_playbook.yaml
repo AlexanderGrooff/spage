@@ -4,7 +4,7 @@
   gather_facts: no
   tasks:
     - name: Ensure a line is present, create file if needed
-      ansible.builtin.lineinfile:
+      lineinfile:
         path: /tmp/spage/lineinfile_test.txt
         line: "Spage was here!"
         create: yes
@@ -56,4 +56,17 @@
       ansible.builtin.lineinfile:
         path: /tmp/spage/lineinfile_test.txt
         line: "This line will be removed by exact match."
-        state: absent 
+        state: absent
+
+    - name: Set some facts for template testing
+      ansible.builtin.set_fact:
+        templated_filename: "lineinfile_templated.txt"
+        templated_content: "This line comes from a set_fact variable."
+        templated_dir: "/tmp/spage"
+
+    - name: Test lineinfile with templated path and line from set_fact
+      ansible.builtin.lineinfile:
+        path: "{{ templated_dir }}/{{ templated_filename }}"
+        line: "{{ templated_content }}"
+        create: yes
+        mode: "0644" 

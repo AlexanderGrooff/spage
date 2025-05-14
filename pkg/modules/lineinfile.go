@@ -362,6 +362,7 @@ func (lm LineinfileModule) Revert(params pkg.ConcreteModuleInputProvider, closur
 	if !ok {
 		return nil, fmt.Errorf("Revert: incorrect parameter type: expected LineinfileInput, got %T", params)
 	}
+
 	prevOutput, ok := previousOutput.(LineinfileOutput)
 	if !ok {
 		// If previousOutput is nil (e.g. task failed before producing output), we might not have Diff.

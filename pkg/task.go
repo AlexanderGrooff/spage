@@ -355,19 +355,14 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 		return r
 	}
 
-	// Pass t.Params.Actual to module.Execute
-	if t.Params.Actual == nil {
-		// This can happen if YAML/JSON params were empty or module not found during unmarshal
-		// Or if the module genuinely takes no parameters.
-		// We need a way for modules to declare if they accept nil params.
-		// For now, if Actual is nil, we might need to create a zero value of InputType if possible,
-		// or the module must handle nil params.
-		// Let's assume modules that require params will have Actual populated.
-		// If a module *can* take no params, its InputType might be an empty struct or similar.
-		// And its Validate() should reflect that.
-		// We should ensure `Actual` is a valid (even if zero) instance of ConcreteModuleInputProvider.
-		// The unmarshalers should ensure Actual is populated with a zero value if params are empty but module exists.
-		// For now, let's proceed, modules should validate their params. This might panic if module expects non-nil.
+	// Evaluate jinja2 in the module input fields
+	if t.Params.Actual != nil {
+		templatedActualProvider, templateErr := TemplateModuleInputFields(t.Params.Actual, closure)
+		if templateErr != nil {
+			r.Error = fmt.Errorf("failed to template module input fields for task %s (module %s): %w", t.Name, t.Module, templateErr)
+			return r
+		}
+		t.Params.Actual = templatedActualProvider // This could be nil if original was nil and TemplateModuleInputFields returns nil
 	}
 
 	common.DebugOutput("Executing module %s with params %v and context %v", t.Module, t.Params.Actual, closure)
@@ -415,6 +410,16 @@ func (t Task) RevertModule(closure *Closure) TaskResult {
 			r.Duration = time.Since(startTime)
 			return r
 		}
+	}
+
+	// Evaluate jinja2 in the module input fields
+	if t.Params.Actual != nil {
+		templatedActualProvider, templateErr := TemplateModuleInputFields(t.Params.Actual, closure)
+		if templateErr != nil {
+			r.Error = fmt.Errorf("failed to template module input fields for task %s (module %s): %w", t.Name, t.Module, templateErr)
+			return r
+		}
+		t.Params.Actual = templatedActualProvider // This could be nil if original was nil and TemplateModuleInputFields returns nil
 	}
 
 	// Pass t.Params.Actual to module.Revert
