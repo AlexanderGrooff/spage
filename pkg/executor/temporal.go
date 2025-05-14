@@ -1106,6 +1106,7 @@ type RunSpageTemporalWorkerAndWorkflowOptions struct {
 	Graph         *pkg.Graph
 	InventoryPath string
 	LoadedConfig  *config.Config // Changed from ConfigPath to break import cycle with cmd
+	WorkflowIDPrefix string
 }
 
 // RunSpageTemporalWorkerAndWorkflow sets up and runs a Temporal worker for Spage tasks,
@@ -1189,7 +1190,7 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 
 	if spageAppConfig.Temporal.Trigger {
 		log.Println("Attempting to start the SpageTemporalWorkflow based on configuration...")
-		workflowIDPrefix := spageAppConfig.Temporal.WorkflowIDPrefix
+		workflowIDPrefix := opts.WorkflowIDPrefix
 		if workflowIDPrefix == "" {
 			workflowIDPrefix = "spage-workflow"
 			log.Printf("WorkflowIDPrefix from config is empty, using emergency default: %s", workflowIDPrefix)
