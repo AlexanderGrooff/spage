@@ -82,6 +82,7 @@ type Task struct {
 	FailedWhen   string      `yaml:"failed_when,omitempty" json:"failed_when,omitempty"`
 	ChangedWhen  string      `yaml:"changed_when,omitempty" json:"changed_when,omitempty"`
 	Loop         interface{} `yaml:"loop,omitempty" json:"loop,omitempty"`
+	DelegateTo   string      `yaml:"delegate_to,omitempty" json:"delegate_to,omitempty"`
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface for Task.
@@ -279,6 +280,9 @@ func (t Task) ToCode() string {
 	}
 	if t.ChangedWhen != "" {
 		sb.WriteString(fmt.Sprintf(", ChangedWhen: %q", t.ChangedWhen))
+	}
+	if t.DelegateTo != "" {
+		sb.WriteString(fmt.Sprintf(", DelegateTo: %q", t.DelegateTo))
 	}
 	// Handle Loop field in ToCode: generate code for string or slice.
 	switch v := t.Loop.(type) {

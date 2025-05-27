@@ -81,7 +81,10 @@ func (e *LocalGraphExecutor) Execute(hostContexts map[string]*HostContext, order
 		default:
 		}
 
-		levelHistoryForRevert, numExpectedResultsOnLevel := PrepareLevelHistoryAndGetCount(tasksInLevel, hostContexts, executionLevel)
+		levelHistoryForRevert, numExpectedResultsOnLevel, err := PrepareLevelHistoryAndGetCount(tasksInLevel, hostContexts, executionLevel)
+		if err != nil {
+			return fmt.Errorf("failed to prepare level history and get count: %w", err)
+		}
 		executionHistory = append(executionHistory, levelHistoryForRevert)
 
 		resultsCh := make(chan TaskResult, numExpectedResultsOnLevel)
@@ -257,28 +260,31 @@ func PrepareLevelHistoryAndGetCount(
 	tasksInLevel []Task,
 	hostContexts map[string]*HostContext,
 	executionLevel int,
-) (map[string]chan Task, int) {
+) (map[string]chan Task, int, error) {
 	levelHistoryForRevert := make(map[string]chan Task)
 	numExpectedResultsOnLevel := 0
 
 	for hostname, hc := range hostContexts {
 		numTasksForHostOnLevel := 0
 		for _, task := range tasksInLevel {
+			delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts)
+			if err != nil {
+				return nil, 0, fmt.Errorf("failed to get host for task: %w", err)
+			}
+			if delegatedHostContext != nil {
+				hc = delegatedHostContext
+			}
 			closures, err := GetTaskClosures(task, hc)
 			if err != nil {
-				common.LogError("Failed to get task closures for count, assuming 1", map[string]interface{}{
-					"task": task.Name, "host": hostname, "level": executionLevel, "error": err,
-				})
-				numTasksForHostOnLevel++
-			} else {
-				numTasksForHostOnLevel += len(closures)
+				return nil, 0, fmt.Errorf("failed to get task closures for count: %w", err)
 			}
+			numTasksForHostOnLevel += len(closures)
 		}
 		levelHistoryForRevert[hostname] = make(chan Task, numTasksForHostOnLevel)
 		numExpectedResultsOnLevel += numTasksForHostOnLevel
 		common.DebugOutput("Expecting %d task instances for host '%s' on level %d", numTasksForHostOnLevel, hostname, executionLevel)
 	}
-	return levelHistoryForRevert, numExpectedResultsOnLevel
+	return levelHistoryForRevert, numExpectedResultsOnLevel, nil
 }
 
 func (e *LocalGraphExecutor) loadLevelTasks(

@@ -1,0 +1,65 @@
+---
+- name: Test delegate_to functionality
+  hosts: all
+
+  tasks:
+    - name: define facts
+      ansible.builtin.set_fact:
+        delegated_to_localhost_content: "File created on localhost by delegate_to. inventory_hostname was {{ inventory_hostname }}."
+        delegated_to_localhost_file: "/tmp/spage/delegate_test_on_localhost.txt"
+
+        on_inventory_host_content: "File created on {{ inventory_hostname }}. inventory_hostname was {{ inventory_hostname }}."
+        on_inventory_host_file: "/tmp/spage/delegate_test_on_inventory_host.txt"
+
+        delegated_to_inventory_host_content: "File created on {{ inventory_hostname }} by delegate_to. inventory_hostname was {{ inventory_hostname }}."
+        delegated_to_inventory_host_file: "/tmp/spage/delegate_test_delegated_to_inventory_host.txt"
+
+    # Task 1: Create a file on localhost (control node) using delegate_to
+    - name: Create file on localhost via delegate_to
+      ansible.builtin.copy:
+        content: "{{ delegated_to_localhost_content }}"
+        dest: "{{ delegated_to_localhost_file }}"
+        mode: '0644'
+      delegate_to: localhost
+
+    # Task 2: Create a file on the inventory_hostname (target host)
+    - name: Create file on {{ inventory_hostname }}
+      ansible.builtin.copy:
+        content: "{{ on_inventory_host_content }}"
+        dest: "{{ on_inventory_host_file }}"
+        mode: '0644'
+
+    # Task 3: Create a file on inventory_hostname via delegate_to {{ inventory_hostname }}
+    - name: Create file on {{ inventory_hostname }} via delegate_to
+      ansible.builtin.copy:
+        content: "{{ delegated_to_inventory_host_content }}"
+        dest: "{{ delegated_to_inventory_host_file }}"
+        mode: '0644'
+      delegate_to: "{{ inventory_hostname }}"
+
+    # Verification tasks (these run on inventory_hostname unless delegated)
+    - name: Stat file on {{ inventory_hostname }} (created by non-delegated task)
+      ansible.builtin.stat:
+        path: "{{ on_inventory_host_file }}"
+      register: stat_on_inventory_host_file
+
+    - name: Assert file exists on {{ inventory_hostname }} and has correct content
+      ansible.builtin.assert:
+        that:
+          - stat_on_inventory_host_file.stat.exists
+          - "lookup('file', '{{ on_inventory_host_file }}') == on_inventory_host_content"
+        fail_msg: "FAIL: Content or existence check for {{ on_inventory_host_file }} (on {{ inventory_hostname }})"
+        success_msg: "PASS: {{ on_inventory_host_file }} (on {{ inventory_hostname }})"
+
+    - name: Stat file on {{ inventory_hostname }} (created by task delegated to inventory_hostname)
+      ansible.builtin.stat:
+        path: "{{ delegated_to_inventory_host_file }}"
+      register: stat_delegated_to_inventory_host_file
+
+    - name: Assert file delegated to {{ inventory_hostname }} exists and has correct content
+      ansible.builtin.assert:
+        that:
+          - stat_delegated_to_inventory_host_file.stat.exists
+          - "lookup('file', '{{ delegated_to_inventory_host_file }}') == delegated_to_inventory_host_content"
+        fail_msg: "FAIL: Content or existence check for {{ delegated_to_inventory_host_file }} (delegated to {{ inventory_hostname }})"
+        success_msg: "PASS: {{ delegated_to_inventory_host_file }} (delegated to {{ inventory_hostname }})" 

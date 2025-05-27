@@ -97,6 +97,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"failed_when",
 		"changed_when",
 		"loop",
+		"delegate_to",
 	}
 
 	var tasks []GraphNode
@@ -104,13 +105,14 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 
 	for idx, block := range blocks {
 		task := Task{
-			Id:       idx,
-			Name:     getStringFromMap(block, "name"),
-			Validate: getStringFromMap(block, "validate"),
-			Before:   getStringFromMap(block, "before"),
-			After:    getStringFromMap(block, "after"),
-			Register: getStringFromMap(block, "register"),
-			RunAs:    getStringFromMap(block, "run_as"),
+			Id:         idx,
+			Name:       getStringFromMap(block, "name"),
+			Validate:   getStringFromMap(block, "validate"),
+			Before:     getStringFromMap(block, "before"),
+			After:      getStringFromMap(block, "after"),
+			Register:   getStringFromMap(block, "register"),
+			RunAs:      getStringFromMap(block, "run_as"),
+			DelegateTo: getStringFromMap(block, "delegate_to"),
 			// FailedWhen will be handled below
 		}
 

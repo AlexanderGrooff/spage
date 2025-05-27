@@ -90,6 +90,17 @@ func ParseLoop(task Task, c *HostContext) ([]interface{}, error) {
 	return loopItems, nil
 }
 
+func GetDelegatedHostContext(task Task, hostContexts map[string]*HostContext) (*HostContext, error) {
+	if task.DelegateTo != "" {
+		hostContext, ok := hostContexts[task.DelegateTo]
+		if !ok {
+			return nil, fmt.Errorf("host context for delegate_to '%s' not found", task.DelegateTo)
+		}
+		return hostContext, nil
+	}
+	return nil, nil
+}
+
 // GetTaskClosures generates one or more Closures for a task, handling loops.
 func GetTaskClosures(task Task, c *HostContext) ([]*Closure, error) {
 	if task.Loop == nil {

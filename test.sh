@@ -759,6 +759,62 @@ fi
 
 echo "Lineinfile revert test checks passed."
 
+# Test 28: Delegate_to test
+echo "Running delegate_to test..."
+go run main.go generate -p $TESTS_DIR/playbooks/delegate_to_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml
+DELEGATE_EXIT_CODE=$?
+
+if [ $DELEGATE_EXIT_CODE -ne 0 ]; then
+    echo "Delegate_to test failed: Playbook execution failed unexpectedly (Exit Code: $DELEGATE_EXIT_CODE)."
+    exit 1
+fi
+
+DELEGATED_TO_LOCALHOST_FILE="/tmp/spage/delegate_test_on_localhost.txt"
+ON_INVENTORY_HOST_FILE="/tmp/spage/delegate_test_on_inventory_host.txt"
+DELEGATED_TO_INVENTORY_HOST_FILE="/tmp/spage/delegate_test_delegated_to_inventory_host.txt"
+
+# Check 1: File delegated to localhost (should always be on the control node)
+echo "Checking for file delegated to localhost: $DELEGATED_TO_LOCALHOST_FILE"
+if [ ! -f "$DELEGATED_TO_LOCALHOST_FILE" ]; then
+    echo "Delegate_to test failed: File $DELEGATED_TO_LOCALHOST_FILE was NOT found on the control node (localhost)."
+    exit 1
+fi
+echo "File $DELEGATED_TO_LOCALHOST_FILE found on control node."
+
+# Check 2 & 3: Files on inventory_hostname (target)
+if [ -n "$SPAGE_INVENTORY" ]; then
+  # Remote execution checks
+  echo "Remote checks for files on inventory_hostname (e.g., theta)..."
+  if ! check_target "[ -f $ON_INVENTORY_HOST_FILE ]"; then
+      echo "Delegate_to test failed: $ON_INVENTORY_HOST_FILE was not found on remote target."
+      exit 1
+  fi
+  echo "$ON_INVENTORY_HOST_FILE found on remote target."
+
+  if ! check_target "[ -f $DELEGATED_TO_INVENTORY_HOST_FILE ]"; then
+      echo "Delegate_to test failed: $DELEGATED_TO_INVENTORY_HOST_FILE was not found on remote target."
+      exit 1
+  fi
+  echo "$DELEGATED_TO_INVENTORY_HOST_FILE found on remote target."
+else
+  # Local execution checks
+  echo "Local checks for files on inventory_hostname (localhost)..."
+  if [ ! -f "$ON_INVENTORY_HOST_FILE" ]; then
+      echo "Delegate_to test failed: $ON_INVENTORY_HOST_FILE was not found locally (as inventory_hostname)."
+      exit 1
+  fi
+  echo "$ON_INVENTORY_HOST_FILE found locally (as inventory_hostname)."
+
+  if [ ! -f "$DELEGATED_TO_INVENTORY_HOST_FILE" ]; then
+      echo "Delegate_to test failed: $DELEGATED_TO_INVENTORY_HOST_FILE was not found locally (as inventory_hostname)."
+      exit 1
+  fi
+  echo "$DELEGATED_TO_INVENTORY_HOST_FILE found locally (as inventory_hostname)."
+fi
+
+echo "Delegate_to test succeeded."
 
 echo "All tests completed successfully!"
 

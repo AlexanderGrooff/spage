@@ -211,3 +211,11 @@ func (i Inventory) GetInitialFactsForHost(host *Host) map[string]interface{} {
 	})
 	return facts
 }
+
+func (i Inventory) GetHostByName(name string) (*Host, error) {
+	host, ok := i.Hosts[name]
+	if !ok {
+		return nil, fmt.Errorf("host '%s' not found in inventory", name)
+	}
+	return host, nil
+}
