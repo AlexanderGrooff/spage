@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/AlexanderGrooff/jinja-go"
 	"github.com/AlexanderGrooff/spage/pkg"
 	"github.com/AlexanderGrooff/spage/pkg/common"
 )
@@ -95,9 +96,6 @@ func (m AssertModule) Execute(params pkg.ConcreteModuleInputProvider, closure *p
 	output := AssertOutput{}
 
 	for _, assertion := range assertParams.That {
-		// TODO: Implement a more robust expression evaluation engine like CEL or leverage existing 'when' logic.
-		// For now, we'll do a simple check: treat the string as a boolean.
-		// Render any variables first
 		renderedAssertion, err := pkg.EvaluateExpression(assertion, closure)
 		if err != nil {
 			output.FailedAssertion = assertion // Use original assertion on render error
@@ -110,16 +108,15 @@ func (m AssertModule) Execute(params pkg.ConcreteModuleInputProvider, closure *p
 					errMsg = fmt.Sprintf("%s: %s", errMsg, renderedMsg)
 				}
 			}
-			return output, fmt.Errorf(errMsg)
+			return output, fmt.Errorf("%s", errMsg)
 		}
 
 		// Evaluate truthiness using the helper function
-		assertionPassed := pkg.IsExpressionTruthy(renderedAssertion)
-		trimmedResult := strings.TrimSpace(renderedAssertion) // Still needed for logging
+		assertionPassed := jinja.IsTruthy(renderedAssertion)
 
 		// Log the evaluation
-		common.DebugOutput("Evaluated assertion %q -> %q: %t",
-			assertion, trimmedResult, assertionPassed)
+		common.DebugOutput("Evaluated assertion %q -> %v: %t",
+			assertion, renderedAssertion, assertionPassed)
 
 		if !assertionPassed { // Use the evaluated truthiness
 			output.FailedAssertion = assertion // Use original assertion string
@@ -132,7 +129,7 @@ func (m AssertModule) Execute(params pkg.ConcreteModuleInputProvider, closure *p
 					errMsg = fmt.Sprintf("%s: %s", renderedMsg, errMsg) // Custom message first
 				}
 			}
-			return output, fmt.Errorf(errMsg)
+			return output, fmt.Errorf("%s", errMsg)
 		}
 	}
 

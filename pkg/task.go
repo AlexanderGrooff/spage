@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AlexanderGrooff/jinja-go"
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	// Remove pongo2 import if no longer needed directly here
 	// "github.com/flosch/pongo2"
@@ -327,12 +328,11 @@ func (t Task) ShouldExecute(closure *Closure) bool {
 		}
 
 		// Evaluate truthiness using the helper function
-		conditionMet := IsExpressionTruthy(templatedWhen)
-		trimmedResult := strings.TrimSpace(templatedWhen) // Still needed for logging
+		conditionMet := jinja.IsTruthy(templatedWhen)
 
 		// Log the evaluation result
-		common.DebugOutput("Evaluated when condition %q -> %q: %t",
-			t.When, trimmedResult, conditionMet)
+		common.DebugOutput("Evaluated when condition %q -> %v: %t",
+			t.When, templatedWhen, conditionMet)
 
 		// Return the evaluated truthiness
 		return conditionMet
@@ -464,14 +464,13 @@ func HandleResult(r *TaskResult, t Task, c *Closure) TaskResult {
 			r.Failed = true
 		} else {
 			// Evaluate truthiness of the result
-			conditionMet := IsExpressionTruthy(templatedFailedWhen)
-			trimmedResult := strings.TrimSpace(templatedFailedWhen)
-			common.DebugOutput("Evaluated failed_when condition %q -> %q: %t",
-				t.FailedWhen, trimmedResult, conditionMet)
+			conditionMet := jinja.IsTruthy(templatedFailedWhen)
+			common.DebugOutput("Evaluated failed_when condition %q -> %v: %t",
+				t.FailedWhen, templatedFailedWhen, conditionMet)
 
 			if conditionMet {
 				// Set the error if the condition is true
-				r.Error = fmt.Errorf("failed_when condition '%s' evaluated to true (%s)", t.FailedWhen, trimmedResult)
+				r.Error = fmt.Errorf("failed_when condition '%s' evaluated to true (%v)", t.FailedWhen, templatedFailedWhen)
 				r.Status = TaskStatusFailed
 				r.Failed = true
 			}
@@ -495,7 +494,7 @@ func HandleResult(r *TaskResult, t Task, c *Closure) TaskResult {
 			r.Error = fmt.Errorf("error evaluating changed_when condition '%s': %w", t.ChangedWhen, err)
 			r.Failed = true
 		}
-		if IsExpressionTruthy(templatedChangedWhen) {
+		if jinja.IsTruthy(templatedChangedWhen) {
 			r.Status = TaskStatusChanged
 			r.Changed = true
 		} else {

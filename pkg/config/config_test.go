@@ -41,11 +41,6 @@ security:
 					Level: "info",
 					File:  "",
 				},
-				Security: SecurityConfig{
-					EnableTLS: false,
-					CertFile:  "",
-					KeyFile:   "",
-				},
 			},
 		},
 		{
@@ -55,11 +50,6 @@ security:
 				Logging: LoggingConfig{
 					Level: "debug",
 					File:  "test.log",
-				},
-				Security: SecurityConfig{
-					EnableTLS: true,
-					CertFile:  "cert.pem",
-					KeyFile:   "key.pem",
 				},
 			},
 		},
@@ -74,11 +64,6 @@ security:
 				Logging: LoggingConfig{
 					Level: "warn",
 					File:  "",
-				},
-				Security: SecurityConfig{
-					EnableTLS: true,
-					CertFile:  "",
-					KeyFile:   "",
 				},
 			},
 		},

@@ -3,6 +3,8 @@ package pkg
 import (
 	"fmt"
 	"reflect"
+
+	"github.com/AlexanderGrooff/jinja-go"
 )
 
 // processRecursive is the core recursive function that creates a new reflect.Value
@@ -176,4 +178,135 @@ func TemplateModuleInputFields(originalProvider ConcreteModuleInputProvider, clo
 		}
 	}
 	return newProvider, nil
+}
+
+func GetVariableUsageFromModule(input ConcreteModuleInputProvider) ([]string, error) {
+	if input == nil {
+		return nil, nil
+	}
+
+	var allVars []string
+
+	// Use reflection to walk through all fields of the input
+	inputVal := reflect.ValueOf(input)
+
+	// Handle pointer types
+	if inputVal.Kind() == reflect.Ptr {
+		if inputVal.IsNil() {
+			return nil, nil
+		}
+		inputVal = inputVal.Elem()
+	}
+
+	// Ensure we have a struct
+	if inputVal.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("input provider (type %T, kind %s) is not a struct or a pointer to a struct", input, inputVal.Kind())
+	}
+
+	// Recursively extract variables from the struct
+	vars, err := extractVariablesFromValue(inputVal)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract variables from input: %w", err)
+	}
+	allVars = append(allVars, vars...)
+
+	// Deduplicate variables
+	uniqueVars := make(map[string]struct{})
+	for _, v := range allVars {
+		uniqueVars[v] = struct{}{}
+	}
+
+	result := make([]string, 0, len(uniqueVars))
+	for k := range uniqueVars {
+		result = append(result, k)
+	}
+
+	return result, nil
+}
+
+// extractVariablesFromValue recursively extracts variables from a reflect.Value
+func extractVariablesFromValue(val reflect.Value) ([]string, error) {
+	if !val.IsValid() {
+		return nil, nil
+	}
+
+	var vars []string
+
+	// TODO: some values are a direct jinja expression (like when, failed_when, changed_when, etc.)
+	// Instead of assuming that all values are Jinja strings, we should assign separate types to Jinja expressions.
+	switch val.Kind() {
+	case reflect.String:
+		str := val.String()
+		if str != "" {
+			templateVars, err := jinja.ParseVariables(str)
+			if err != nil {
+				// If parsing fails, fall back to the existing regex-based approach
+				templateVars = GetVariableUsageFromTemplate(str)
+			}
+			vars = append(vars, templateVars...)
+		}
+
+	case reflect.Struct:
+		// Iterate through all fields of the struct
+		for i := 0; i < val.NumField(); i++ {
+			fieldVal := val.Field(i)
+			if !fieldVal.CanInterface() {
+				// Skip unexported fields
+				continue
+			}
+
+			fieldVars, err := extractVariablesFromValue(fieldVal)
+			if err != nil {
+				return nil, err
+			}
+			vars = append(vars, fieldVars...)
+		}
+
+	case reflect.Slice, reflect.Array:
+		// Iterate through all elements
+		for i := 0; i < val.Len(); i++ {
+			elemVal := val.Index(i)
+			elemVars, err := extractVariablesFromValue(elemVal)
+			if err != nil {
+				return nil, err
+			}
+			vars = append(vars, elemVars...)
+		}
+
+	case reflect.Map:
+		// Iterate through all map values (keys are typically not templated)
+		iter := val.MapRange()
+		for iter.Next() {
+			mapVal := iter.Value()
+			mapVars, err := extractVariablesFromValue(mapVal)
+			if err != nil {
+				return nil, err
+			}
+			vars = append(vars, mapVars...)
+		}
+
+	case reflect.Ptr:
+		if !val.IsNil() {
+			elemVars, err := extractVariablesFromValue(val.Elem())
+			if err != nil {
+				return nil, err
+			}
+			vars = append(vars, elemVars...)
+		}
+
+	case reflect.Interface:
+		if !val.IsNil() {
+			elemVars, err := extractVariablesFromValue(val.Elem())
+			if err != nil {
+				return nil, err
+			}
+			vars = append(vars, elemVars...)
+		}
+
+	// For other types (int, bool, float, etc.), no variables to extract
+	default:
+		// No variables in non-string types
+	}
+
+	return vars, nil
 }

@@ -1,8 +1,8 @@
 module github.com/AlexanderGrooff/spage
 
-go 1.23.0
+go 1.23.3
 
-toolchain go1.23.3
+toolchain go1.23.8
 
 require (
 	github.com/spf13/cobra v1.2.1
@@ -27,7 +27,7 @@ require (
 )
 
 require (
-	github.com/flosch/pongo2 v0.0.0-20200913210552-0d938eb266f3
+	github.com/AlexanderGrooff/jinja-go v0.1.3
 	github.com/google/go-cmp v0.6.0
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/google/uuid v1.6.0

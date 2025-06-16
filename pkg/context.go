@@ -1,61 +1,22 @@
 package pkg
 
 import (
-	"bytes"
 	"fmt"
 	"net"
 	"os"
 	"os/user"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/AlexanderGrooff/jinja-go"
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/runtime"
 
-	"github.com/flosch/pongo2"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
-
-// No longer using type aliases for History and Facts
-
-// MergeFacts adds all key-value pairs from 'other' into 'target'.
-// It assumes both are *sync.Map.
-func MergeFacts(target, other *sync.Map) {
-	if target == nil || other == nil {
-		// Handle nil maps appropriately, perhaps return an error or initialize
-		return
-	}
-	other.Range(func(key, value interface{}) bool {
-		target.Store(key, value)
-		return true
-	})
-}
-
-// AddFact stores a single key-value pair into the target *sync.Map.
-func AddFact(target *sync.Map, k string, v interface{}) {
-	if target == nil {
-		// Handle nil map
-		return
-	}
-	target.Store(k, v)
-}
-
-// FactsToJinja2 converts a *sync.Map (representing Facts) into a pongo2.Context.
-func FactsToJinja2(facts map[string]interface{}) pongo2.Context {
-	ctx := pongo2.Context{}
-	if facts == nil {
-		return ctx // Return empty context if map is nil
-	}
-	for k, v := range facts {
-		// Ensure key is a string for pongo2.Context
-		ctx[k] = v
-	}
-	return ctx
-}
 
 type HostContext struct {
 	Host      *Host
@@ -227,32 +188,26 @@ func (c *HostContext) RunCommand(command, username string) (string, string, erro
 	return runtime.RunRemoteCommand(c.sshClient, command, username)
 }
 
-func EvaluateExpression(s string, closure *Closure) (string, error) {
-	// TODO: this is a hack to evaluate a string as a Jinja2 template
-	return TemplateString(fmt.Sprintf("{{ %s }}", s), closure)
+func EvaluateExpression(s string, closure *Closure) (interface{}, error) {
+	res, err := jinja.EvaluateExpression(s, closure.GetFacts())
+	common.DebugOutput("Evaluated expression %q -> %v with facts: %v. Error: %v", s, res, closure.GetFacts(), err)
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate expression: %v", err)
+	}
+	return res, nil
 }
 
 // TemplateString processes a Jinja2 template string with provided variables.
-// additionalVars should be a slice of *sync.Map.
 func TemplateString(s string, closure *Closure) (string, error) {
 	if s == "" {
 		return "", nil
 	}
-	tmpl, err := pongo2.FromString(s)
+	facts := closure.GetFacts()
+	res, err := jinja.TemplateString(s, facts)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse template: %v", err)
+		return "", fmt.Errorf("failed to template string: %v", err)
 	}
-
-	// Merge all provided variable maps into one *sync.Map
-	allVars := closure.GetFacts()
-	var buf bytes.Buffer
-	// Convert the final *sync.Map to pongo2.Context before executing
-	facts := FactsToJinja2(allVars)
-	if err := tmpl.ExecuteWriter(facts, &buf); err != nil {
-		return "", fmt.Errorf("failed to execute template: %v", err)
-	}
-	res := buf.String()
-	common.DebugOutput("Templated %q into %q with facts: %v", s, res, facts)
+	common.DebugOutput("Templated %q into %q with facts: %v", s, res, closure.GetFacts())
 	return res, nil
 }
 
@@ -303,34 +258,6 @@ func GetVariableUsageFromTemplate(s string) []string {
 		common.DebugOutput("Found variables %v in %v", vars, s)
 	}
 	return vars
-}
-
-// Helper function (might need adjustment based on actual ModuleOutput type)
-// This is a placeholder, assuming ModuleOutput can be stored directly.
-// If ModuleOutput needs specific conversion before storing in sync.Map, adjust this.
-func OutputToFacts(output ModuleOutput) interface{} {
-	// Placeholder: Directly return the output.
-	// If ModuleOutput is complex, you might need to extract specific fields.
-	return output
-}
-
-// IsExpressionTruthy evaluates a rendered expression string according to Jinja2/Ansible truthiness rules.
-// Explicit "true"/"false" (case-insensitive) are respected.
-// Empty strings are false.
-// All other non-empty strings are true.
-func IsExpressionTruthy(renderedExpr string) bool {
-	trimmedResult := strings.TrimSpace(renderedExpr)
-	lowerTrimmedResult := strings.ToLower(trimmedResult)
-
-	parsedBool, err := strconv.ParseBool(lowerTrimmedResult)
-	if err == nil {
-		// Explicit true/false
-		return parsedBool
-	}
-
-	// Not "true" or "false", evaluate truthiness:
-	// Empty string is false, everything else is true.
-	return trimmedResult != ""
 }
 
 func (c *HostContext) Close() error {

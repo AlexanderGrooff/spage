@@ -34,6 +34,7 @@
           - not stat_result_file.stat.isdir
           - not stat_result_file.stat.islnk
           - stat_result_file.stat.mode == '0644' # Check mode
+          - stat_result_file.stat.size
           - stat_result_file.stat.size > 0
           - stat_result_file.stat.checksum != "" # Checksum exists (SHA1 default)
           - stat_result_file.stat.mime == 'text/plain' # Check mime type

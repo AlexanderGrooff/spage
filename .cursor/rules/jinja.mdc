@@ -1,0 +1,10 @@
+---
+description: Whenever changes are being made that involves Jinja templates
+globs: 
+alwaysApply: false
+---
+The Jinja templating engine is provided by jinja-go, which is provided at github.com/AlexanderGrooff/jinja-go. It's a faster version of Jinja/Pongo2, and provides two critical functions:
+- jinja.TemplateString, which can be used to render strings like `Some string with a {{ variable }}`.
+- jinja.EvaluateExpression, which can be used to render a single variable like `item.name`. Useful in places like `when` on an Ansible task.
+
+Jinja-go is a library maintained by myself, so whenever the library misbehaves we can change whatever we deem necessary.

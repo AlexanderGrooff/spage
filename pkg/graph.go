@@ -217,8 +217,13 @@ func flattenNodes(nodes []GraphNode) []Task {
 	return flatTasks
 }
 
-func GetVariableUsage(task Task) []string {
-	varsUsage := task.Params.GetVariableUsage()
+func GetVariableUsage(task Task) ([]string, error) {
+	varsUsage, err := GetVariableUsageFromModule(task.Params.Actual)
+	if err != nil {
+		return nil, fmt.Errorf("error getting variable usage from module: %w", err)
+	}
+
+	// Get variable usage from fields on the task itself.
 	if task.Loop != nil {
 		// TODO: change name of the variable if loopcontrol is used
 		varsUsage = common.RemoveFromSlice(varsUsage, "item")
@@ -226,7 +231,7 @@ func GetVariableUsage(task Task) []string {
 			varsUsage = append(varsUsage, GetVariableUsageFromTemplate(loop)...)
 		}
 	}
-	return varsUsage
+	return varsUsage, nil
 }
 
 func NewGraph(nodes []GraphNode) (Graph, error) {
@@ -260,7 +265,11 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 			common.DebugOutput("Task %q has no actual params, skipping dependency analysis for params", n.Name)
 			// Continue processing other dependencies like before/after
 		} else {
-			dependsOnVariables[n.Name] = GetVariableUsage(n) // GetVariableUsage itself uses n.Params.Actual
+			vars, err := GetVariableUsage(n)
+			if err != nil {
+				return Graph{}, fmt.Errorf("error getting variable usage for task %q: %w", n.Name, err)
+			}
+			dependsOnVariables[n.Name] = vars
 		}
 
 		if n.Before != "" {
