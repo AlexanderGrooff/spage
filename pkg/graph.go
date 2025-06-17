@@ -44,6 +44,29 @@ func (g Graph) String() string {
 
 func (g Graph) ToCode() string {
 	var f strings.Builder
+	// Determine if we need to inject a gather facts task
+	allowedFacts := map[string]struct{}{
+		"platform":           {},
+		"user":               {},
+		"inventory_hostname": {},
+		"ssh_host_pub_keys":  {},
+	}
+	usedFacts := make(map[string]struct{})
+	for _, level := range g.Tasks {
+		for _, task := range level {
+			vars, _ := GetVariableUsage(task)
+			for _, v := range vars {
+				if _, ok := allowedFacts[v]; ok {
+					usedFacts[v] = struct{}{}
+				}
+			}
+		}
+	}
+	factList := make([]string, 0, len(usedFacts))
+	for fct := range usedFacts {
+		factList = append(factList, fct)
+	}
+
 	fmt.Fprintln(&f, "var GeneratedGraph = pkg.Graph{")
 	fmt.Fprintf(&f, "%sRequiredInputs: []string{\n", Indent(1))
 	for _, input := range g.RequiredInputs {
@@ -51,6 +74,13 @@ func (g Graph) ToCode() string {
 	}
 	fmt.Fprintf(&f, "%s},\n", Indent(1))
 	fmt.Fprintf(&f, "%sTasks: [][]pkg.Task{\n", Indent(1))
+
+	// Inject gather facts task as first step if needed
+	if len(factList) > 0 {
+		fmt.Fprintf(&f, "%s  []pkg.Task{\n", Indent(2))
+		fmt.Fprintf(&f, "%s    pkg.Task{Id: -1, Name: \"gather facts\", Module: \"setup\", Register: \"ansible_facts\", Params: pkg.ModuleInput{Actual: modules.SetupInput{Facts: %#v}}, RunAs: \"\", When: \"\"},\n", Indent(3), factList)
+		fmt.Fprintf(&f, "%s  },\n", Indent(2))
+	}
 
 	for _, node := range g.Tasks {
 		fmt.Fprintf(&f, "%s  []pkg.Task{\n", Indent(2))
@@ -247,6 +277,7 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 
 	// 1. Flatten nodes and record original order index
 	flattenedTasks := flattenNodes(nodes)
+
 	for i, task := range flattenedTasks {
 		if _, exists := taskNameMapping[task.Name]; exists {
 			// Handle potential duplicate task names if necessary, though Ansible usually requires unique names within a play
@@ -328,6 +359,12 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 	}
 
 	// 4. Process variable dependencies
+	allowedFacts := map[string]struct{}{
+		"platform":           {},
+		"user":               {},
+		"inventory_hostname": {},
+		"ssh_host_pub_keys":  {},
+	}
 	for taskName, vars := range dependsOnVariables {
 		for _, varName := range vars {
 			// Skip special vars like 'previous'
@@ -338,10 +375,12 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 			providingTask, ok := variableProvidedBy[varName]
 			if !ok {
 				common.DebugOutput("no task found that provides variable %q for task %q", varName, taskName)
-				if !containsInSlice(g.RequiredInputs, varName) {
-					g.RequiredInputs = append(g.RequiredInputs, varName)
+				// Don't add facts that will be gathered by setup module to RequiredInputs
+				if _, isGatherableFact := allowedFacts[varName]; !isGatherableFact {
+					if !containsInSlice(g.RequiredInputs, varName) {
+						g.RequiredInputs = append(g.RequiredInputs, varName)
+					}
 				}
-
 			} else {
 				// Ensure the dependency is only added if the tasks are different
 				// and the dependency doesn't already exist to avoid duplicates.

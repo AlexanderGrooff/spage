@@ -816,5 +816,40 @@ fi
 
 echo "Delegate_to test succeeded."
 
+# Test 29: Fact gathering test
+echo "Running fact gathering test..."
+go run main.go generate -p tests/playbooks/fact_gathering_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+FACT_OUTPUT=$(./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml 2>&1)
+
+# Check for expected facts in output
+if ! echo "$FACT_OUTPUT" | grep -q "platform"; then
+    echo "Fact gathering test failed: platform fact not found in output."
+    echo "$FACT_OUTPUT"
+    exit 1
+fi
+if ! echo "$FACT_OUTPUT" | grep -q "user"; then
+    echo "Fact gathering test failed: user fact not found in output."
+    echo "$FACT_OUTPUT"
+    exit 1
+fi
+if ! echo "$FACT_OUTPUT" | grep -q "inventory_hostname"; then
+    echo "Fact gathering test failed: inventory_hostname fact not found in output."
+    echo "$FACT_OUTPUT"
+    exit 1
+fi
+if ! echo "$FACT_OUTPUT" | grep -q "ssh_host_pub_keys"; then
+    echo "Fact gathering test failed: ssh_host_pub_keys fact not found in output."
+    echo "$FACT_OUTPUT"
+    exit 1
+fi
+# Check that unsupported_fact is not present (should be empty or error)
+if echo "$FACT_OUTPUT" | grep -q "unsupported_fact"; then
+    echo "Fact gathering test failed: unsupported_fact should not be present in output."
+    echo "$FACT_OUTPUT"
+    exit 1
+fi
+echo "Fact gathering test succeeded."
+
 echo "All tests completed successfully!"
 
