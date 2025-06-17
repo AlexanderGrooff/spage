@@ -14,6 +14,13 @@
         delegated_to_inventory_host_content: "File created on {{ inventory_hostname }} by delegate_to. inventory_hostname was {{ inventory_hostname }}."
         delegated_to_inventory_host_file: "/tmp/spage/delegate_test_delegated_to_inventory_host.txt"
 
+    # Define a fact that contains a hostname to test templating in delegate_to
+    - name: Define hostname fact for delegate_to testing
+      ansible.builtin.set_fact:
+        target_hostname: "{{ inventory_hostname }}"
+        delegated_via_fact_content: "File created on {{ inventory_hostname }} via delegate_to using a fact. target_hostname was {{ target_hostname }}."
+        delegated_via_fact_file: "/tmp/spage/delegate_test_via_fact.txt"
+
     # Task 1: Create a file on localhost (control node) using delegate_to
     - name: Create file on localhost via delegate_to
       ansible.builtin.copy:
@@ -36,6 +43,14 @@
         dest: "{{ delegated_to_inventory_host_file }}"
         mode: '0644'
       delegate_to: "{{ inventory_hostname }}"
+
+    # Task 4: Create a file using a fact in delegate_to field
+    - name: Create file via delegate_to using fact
+      ansible.builtin.copy:
+        content: "{{ delegated_via_fact_content }}"
+        dest: "{{ delegated_via_fact_file }}"
+        mode: '0644'
+      delegate_to: "{{ target_hostname }}"
 
     # Verification tasks (these run on inventory_hostname unless delegated)
     - name: Stat file on {{ inventory_hostname }} (created by non-delegated task)
@@ -62,4 +77,18 @@
           - stat_delegated_to_inventory_host_file.stat.exists
           - "lookup('file', '{{ delegated_to_inventory_host_file }}') == delegated_to_inventory_host_content"
         fail_msg: "FAIL: Content or existence check for {{ delegated_to_inventory_host_file }} (delegated to {{ inventory_hostname }})"
-        success_msg: "PASS: {{ delegated_to_inventory_host_file }} (delegated to {{ inventory_hostname }})" 
+        success_msg: "PASS: {{ delegated_to_inventory_host_file }} (delegated to {{ inventory_hostname }})"
+
+    # Verification for delegate_to via fact
+    - name: Stat file created via delegate_to using fact
+      ansible.builtin.stat:
+        path: "{{ delegated_via_fact_file }}"
+      register: stat_delegated_via_fact_file
+
+    - name: Assert file delegated via fact exists and has correct content
+      ansible.builtin.assert:
+        that:
+          - stat_delegated_via_fact_file.stat.exists
+          - "lookup('file', '{{ delegated_via_fact_file }}') == delegated_via_fact_content"
+        fail_msg: "FAIL: Content or existence check for {{ delegated_via_fact_file }} (delegated via fact {{ target_hostname }})"
+        success_msg: "PASS: {{ delegated_via_fact_file }} (delegated via fact {{ target_hostname }})" 

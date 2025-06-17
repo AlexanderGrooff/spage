@@ -16,6 +16,14 @@ var SpecialVars = []string{
 	"previous", // Provided in 'revert' context
 }
 
+// Facts that can be gathered by the setup module
+var AllowedFacts = map[string]struct{}{
+	"platform":           {},
+	"user":               {},
+	"inventory_hostname": {},
+	"ssh_host_pub_keys":  {},
+}
+
 // GraphNode represents either a list of tasks or a nested graph
 type GraphNode interface {
 	String() string
@@ -45,18 +53,12 @@ func (g Graph) String() string {
 func (g Graph) ToCode() string {
 	var f strings.Builder
 	// Determine if we need to inject a gather facts task
-	allowedFacts := map[string]struct{}{
-		"platform":           {},
-		"user":               {},
-		"inventory_hostname": {},
-		"ssh_host_pub_keys":  {},
-	}
 	usedFacts := make(map[string]struct{})
 	for _, level := range g.Tasks {
 		for _, task := range level {
 			vars, _ := GetVariableUsage(task)
 			for _, v := range vars {
-				if _, ok := allowedFacts[v]; ok {
+				if _, ok := AllowedFacts[v]; ok {
 					usedFacts[v] = struct{}{}
 				}
 			}
@@ -375,12 +377,6 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 	}
 
 	// 4. Process variable dependencies
-	allowedFacts := map[string]struct{}{
-		"platform":           {},
-		"user":               {},
-		"inventory_hostname": {},
-		"ssh_host_pub_keys":  {},
-	}
 	for taskName, vars := range dependsOnVariables {
 		for _, varName := range vars {
 			// Skip special vars like 'previous'
@@ -392,7 +388,7 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 			if !ok {
 				common.DebugOutput("no task found that provides variable %q for task %q", varName, taskName)
 				// Don't add facts that will be gathered by setup module to RequiredInputs
-				if _, isGatherableFact := allowedFacts[varName]; !isGatherableFact {
+				if _, isGatherableFact := AllowedFacts[varName]; !isGatherableFact {
 					if !containsInSlice(g.RequiredInputs, varName) {
 						g.RequiredInputs = append(g.RequiredInputs, varName)
 					}

@@ -267,7 +267,9 @@ func PrepareLevelHistoryAndGetCount(
 	for hostname, hc := range hostContexts {
 		numTasksForHostOnLevel := 0
 		for _, task := range tasksInLevel {
-			delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts)
+			// Create a temporary closure for delegate_to resolution
+			tempClosure := ConstructClosure(hc, task)
+			delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, tempClosure)
 			if err != nil {
 				return nil, 0, fmt.Errorf("failed to get host for task: %w", err)
 			}
@@ -319,6 +321,24 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 
 			for _, individualClosure := range closures {
 				closure := individualClosure
+
+				// Resolve delegate_to if specified
+				if task.DelegateTo != "" {
+					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure)
+					if err != nil {
+						errMsg := fmt.Errorf("failed to resolve delegate_to for task '%s': %w", task.Name, err)
+						common.LogError("Delegate resolution error in loadLevelTasks", map[string]interface{}{"error": errMsg})
+						select {
+						case errCh <- errMsg:
+						case <-ctx.Done():
+						}
+						return
+					}
+					if delegatedHostContext != nil {
+						// Update the closure to use the delegated host context
+						closure.HostContext = delegatedHostContext
+					}
+				}
 
 				select {
 				case <-ctx.Done():

@@ -65,14 +65,8 @@ func (m SetupModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pk
 		return nil, fmt.Errorf("expected SetupInput, got %T", params)
 	}
 	facts := make(map[string]interface{})
-	allowedFacts := map[string]struct{}{
-		"platform":           {},
-		"user":               {},
-		"inventory_hostname": {},
-		"ssh_host_pub_keys":  {},
-	}
 	for _, fact := range input.Facts {
-		if _, allowed := allowedFacts[fact]; !allowed {
+		if _, allowed := pkg.AllowedFacts[fact]; !allowed {
 			continue // skip facts not in the allowed list
 		}
 		var factValue interface{}

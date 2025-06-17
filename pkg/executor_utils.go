@@ -90,11 +90,17 @@ func ParseLoop(task Task, c *HostContext) ([]interface{}, error) {
 	return loopItems, nil
 }
 
-func GetDelegatedHostContext(task Task, hostContexts map[string]*HostContext) (*HostContext, error) {
+func GetDelegatedHostContext(task Task, hostContexts map[string]*HostContext, closure *Closure) (*HostContext, error) {
 	if task.DelegateTo != "" {
-		hostContext, ok := hostContexts[task.DelegateTo]
+		// Template the delegate_to value in case it contains Jinja variables
+		delegateTo, err := TemplateString(task.DelegateTo, closure)
+		if err != nil {
+			return nil, fmt.Errorf("failed to template delegate_to '%s': %w", task.DelegateTo, err)
+		}
+
+		hostContext, ok := hostContexts[delegateTo]
 		if !ok {
-			return nil, fmt.Errorf("host context for delegate_to '%s' not found", task.DelegateTo)
+			return nil, fmt.Errorf("host context for delegate_to '%s' not found", delegateTo)
 		}
 		return hostContext, nil
 	}
