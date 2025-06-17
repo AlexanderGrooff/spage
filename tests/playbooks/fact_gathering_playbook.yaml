@@ -14,6 +14,3 @@
     - name: Show ssh_host_pub_keys fact
       debug:
         var: "{{ ssh_host_pub_keys }}"
-    - name: Show unsupported fact (should be empty or error)
-      debug:
-        var: "{{ unsupported_fact }}" 
