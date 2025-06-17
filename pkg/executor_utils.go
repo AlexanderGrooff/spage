@@ -98,11 +98,40 @@ func GetDelegatedHostContext(task Task, hostContexts map[string]*HostContext, cl
 			return nil, fmt.Errorf("failed to template delegate_to '%s': %w", task.DelegateTo, err)
 		}
 
+		// First try to find the host in the existing hostContexts
 		hostContext, ok := hostContexts[delegateTo]
-		if !ok {
-			return nil, fmt.Errorf("host context for delegate_to '%s' not found", delegateTo)
+		if ok {
+			return hostContext, nil
 		}
-		return hostContext, nil
+
+		// If not found in inventory, check for special/implicit hosts
+		if delegateTo == "localhost" {
+			// Create a localhost host dynamically
+			localhostHost := &Host{
+				Name:    "localhost",
+				Host:    "localhost",
+				IsLocal: true,
+				Vars:    make(map[string]interface{}),
+				Groups:  make(map[string]string),
+			}
+
+			// Initialize host context for localhost
+			localhostContext, err := InitializeHostContext(localhostHost)
+			if err != nil {
+				return nil, fmt.Errorf("failed to initialize context for localhost: %w", err)
+			}
+
+			// Add basic localhost facts
+			localhostContext.Facts.Store("inventory_hostname", "localhost")
+			localhostContext.Facts.Store("ansible_hostname", "localhost")
+
+			return localhostContext, nil
+		}
+
+		// Could extend this to handle other special hosts in the future
+		// For example: 127.0.0.1, or dynamic IP addresses
+
+		return nil, fmt.Errorf("host context for delegate_to '%s' not found", delegateTo)
 	}
 	return nil, nil
 }
@@ -243,4 +272,50 @@ func RevertTasksWithConfig(
 	}
 	common.DebugOutput("Revert process completed successfully.")
 	return nil
+}
+
+// GetFirstAvailableHost returns the first host from the hostContexts map
+// Used for run_once tasks to select the execution host
+func GetFirstAvailableHost(hostContexts map[string]*HostContext) (*HostContext, string) {
+	for hostName, hostCtx := range hostContexts {
+		return hostCtx, hostName
+	}
+	return nil, ""
+}
+
+// CreateRunOnceResultsForAllHosts creates TaskResult copies for all hosts when run_once is used
+// This ensures that facts and results are propagated to all hosts in the batch
+func CreateRunOnceResultsForAllHosts(originalResult TaskResult, hostContexts map[string]*HostContext, executionHostName string) []TaskResult {
+	var results []TaskResult
+
+	for _, hostCtx := range hostContexts {
+		// Create a copy of the result for each host
+		result := TaskResult{
+			Task:                    originalResult.Task,
+			Error:                   originalResult.Error,
+			Status:                  originalResult.Status,
+			Failed:                  originalResult.Failed,
+			Changed:                 originalResult.Changed,
+			Duration:                originalResult.Duration,
+			Output:                  originalResult.Output,
+			ExecutionSpecificOutput: originalResult.ExecutionSpecificOutput,
+		}
+
+		// Create a new closure for each host with their own context
+		result.Closure = &Closure{
+			HostContext: hostCtx,
+			ExtraFacts:  make(map[string]interface{}),
+		}
+
+		// Copy extra facts from the original closure
+		if originalResult.Closure != nil {
+			for k, v := range originalResult.Closure.ExtraFacts {
+				result.Closure.ExtraFacts[k] = v
+			}
+		}
+
+		results = append(results, result)
+	}
+
+	return results
 }

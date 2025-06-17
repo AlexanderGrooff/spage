@@ -1,0 +1,34 @@
+---
+- name: Test run_once functionality
+  hosts: all
+  gather_facts: no
+  tasks:
+    - name: Create a unique file on first host only
+      shell: echo "run_once_$(date +%s)" > /tmp/spage/run_once_test.txt
+      run_once: true
+      register: run_once_result
+
+    - name: Verify the file was created on all hosts in facts
+      debug:
+        msg: "run_once result: {{ run_once_result }}"
+
+    - name: Normal task on all hosts for comparison
+      shell: echo "normal_task_$(hostname)" > /tmp/spage/normal_task.txt
+      register: normal_result
+
+    - name: Show normal task result
+      debug:
+        msg: "normal task result: {{ normal_result }}"
+
+    - name: Run_once task with a loop (should still only run once)
+      shell: echo "loop_item_{{ item }}" >> /tmp/spage/run_once_loop.txt
+      run_once: true
+      loop:
+        - first
+        - second
+        - third
+      register: loop_run_once_result
+
+    - name: Show loop run_once result
+      debug:
+        msg: "loop run_once result: {{ loop_run_once_result }}" 

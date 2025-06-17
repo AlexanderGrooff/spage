@@ -106,6 +106,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"changed_when",
 		"loop",
 		"delegate_to",
+		"run_once",
 	}
 
 	var tasks []GraphNode
@@ -165,6 +166,18 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			if ignoreFound {
 				task.IgnoreErrors = ignoreVal
 			} // else task.IgnoreErrors keeps its default zero value (false)
+		}
+
+		// Handle 'run_once' using the helper function
+		runOnceVal, runOnceFound, runOnceErr := parseBoolOrStringBoolValue(block, "run_once", task.Name)
+		if runOnceErr != nil {
+			errors = append(errors, runOnceErr)
+			errored = true
+		} else {
+			// If found, use the parsed value, otherwise default to false (handled by initial Task struct value)
+			if runOnceFound {
+				task.RunOnce = runOnceVal
+			} // else task.RunOnce keeps its default zero value (false)
 		}
 
 		// Handle 'failed_when' using the helper function

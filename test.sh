@@ -829,5 +829,59 @@ if [ $FACT_GATHERING_EXIT_CODE -ne 0 ]; then
 fi
 echo "Fact gathering test succeeded."
 
+# Test 30: Run_once functionality test
+echo "Running run_once functionality test..."
+go run main.go generate -p tests/playbooks/run_once_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml
+RUN_ONCE_EXIT_CODE=$?
+
+if [ $RUN_ONCE_EXIT_CODE -ne 0 ]; then
+    echo "Run_once test failed: Playbook execution failed unexpectedly (Exit Code: $RUN_ONCE_EXIT_CODE)."
+    exit 1
+fi
+
+# Check that the run_once file was created on the target
+if ! check_target "[ -f /tmp/spage/run_once_test.txt ]"; then
+    echo "Run_once test failed: run_once file /tmp/spage/run_once_test.txt was not found on target"
+    exit 1
+fi
+
+# Check that the normal task file was created on the target (this should run on all hosts)
+if ! check_target "[ -f /tmp/spage/normal_task.txt ]"; then
+    echo "Run_once test failed: normal task file /tmp/spage/normal_task.txt was not found on target"
+    exit 1
+fi
+
+# Check that the run_once loop file was created and has the expected content
+if ! check_target "[ -f /tmp/spage/run_once_loop.txt ]"; then
+    echo "Run_once test failed: run_once loop file /tmp/spage/run_once_loop.txt was not found on target"
+    exit 1
+fi
+
+# Verify the loop file has all three entries (first, second, third)
+if ! check_target "grep -q 'loop_item_first' /tmp/spage/run_once_loop.txt"; then
+    echo "Run_once test failed: loop file missing 'first' entry on target"
+    exit 1
+fi
+if ! check_target "grep -q 'loop_item_second' /tmp/spage/run_once_loop.txt"; then
+    echo "Run_once test failed: loop file missing 'second' entry on target"
+    exit 1
+fi
+if ! check_target "grep -q 'loop_item_third' /tmp/spage/run_once_loop.txt"; then
+    echo "Run_once test failed: loop file missing 'third' entry on target"
+    exit 1
+fi
+
+# Verify the loop file has exactly 3 lines (no duplicates from multiple host execution)
+loop_line_count=$(check_target "wc -l < /tmp/spage/run_once_loop.txt")
+if [ "$loop_line_count" -ne 3 ]; then
+    echo "Run_once test failed: loop file has $loop_line_count lines, expected 3 on target"
+    check_target "cat /tmp/spage/run_once_loop.txt" # Print content for debugging
+    exit 1
+fi
+
+echo "Run_once test succeeded."
+
 echo "All tests completed successfully!"
 

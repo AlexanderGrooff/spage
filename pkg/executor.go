@@ -276,11 +276,25 @@ func PrepareLevelHistoryAndGetCount(
 			if delegatedHostContext != nil {
 				hc = delegatedHostContext
 			}
-			closures, err := GetTaskClosures(task, hc)
-			if err != nil {
-				return nil, 0, fmt.Errorf("failed to get task closures for count: %w", err)
+
+			// For run_once tasks, we still need to count them for each host
+			// because we'll send results to all hosts, but we only execute once
+			if task.RunOnce {
+				// For run_once tasks, count them as 1 per host (for result propagation)
+				// but we'll only execute on the first host
+				closures, err := GetTaskClosures(task, hc)
+				if err != nil {
+					return nil, 0, fmt.Errorf("failed to get task closures for count: %w", err)
+				}
+				numTasksForHostOnLevel += len(closures)
+			} else {
+				// Normal task counting
+				closures, err := GetTaskClosures(task, hc)
+				if err != nil {
+					return nil, 0, fmt.Errorf("failed to get task closures for count: %w", err)
+				}
+				numTasksForHostOnLevel += len(closures)
 			}
-			numTasksForHostOnLevel += len(closures)
 		}
 		levelHistoryForRevert[hostname] = make(chan Task, numTasksForHostOnLevel)
 		numExpectedResultsOnLevel += numTasksForHostOnLevel
@@ -303,8 +317,94 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 	isParallelDispatch := cfg.ExecutionMode == "parallel"
 
 	for _, taskDefinition := range tasksInLevel {
+		task := taskDefinition
+
+		// Handle run_once tasks separately
+		if task.RunOnce {
+			// Get the first available host
+			firstHostCtx, firstHostName := GetFirstAvailableHost(hostContexts)
+			if firstHostCtx == nil {
+				errMsg := fmt.Errorf("no hosts available for run_once task '%s'", task.Name)
+				common.LogError("No hosts available for run_once task", map[string]interface{}{"error": errMsg})
+				select {
+				case errCh <- errMsg:
+				case <-ctx.Done():
+				}
+				return
+			}
+
+			// Execute only on the first host
+			closures, err := GetTaskClosures(task, firstHostCtx)
+			if err != nil {
+				errMsg := fmt.Errorf("critical error: failed to get task closures for run_once task '%s' on host '%s': %w", task.Name, firstHostName, err)
+				common.LogError("Dispatch error for run_once task", map[string]interface{}{"error": errMsg})
+				select {
+				case errCh <- errMsg:
+				case <-ctx.Done():
+				}
+				return
+			}
+
+			for _, individualClosure := range closures {
+				closure := individualClosure
+
+				// Resolve delegate_to if specified
+				if task.DelegateTo != "" {
+					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure)
+					if err != nil {
+						errMsg := fmt.Errorf("failed to resolve delegate_to for run_once task '%s': %w", task.Name, err)
+						common.LogError("Delegate resolution error for run_once task", map[string]interface{}{"error": errMsg})
+						select {
+						case errCh <- errMsg:
+						case <-ctx.Done():
+						}
+						return
+					}
+					if delegatedHostContext != nil {
+						// Update the closure to use the delegated host context
+						closure.HostContext = delegatedHostContext
+					}
+				}
+
+				select {
+				case <-ctx.Done():
+					common.LogWarn("Context cancelled, stopping run_once task dispatch", map[string]interface{}{"task": task.Name, "host": firstHostName})
+					select {
+					case errCh <- fmt.Errorf("run_once task dispatch cancelled for task '%s' on host '%s': %w", task.Name, firstHostName, ctx.Err()):
+					default:
+					}
+					return
+				default:
+				}
+
+				common.LogInfo("Executing run_once task", map[string]interface{}{
+					"task":           task.Name,
+					"execution_host": firstHostName,
+					"total_hosts":    len(hostContexts),
+				})
+
+				// Execute the task on the first host
+				originalResult := e.Runner.ExecuteTask(ctx, task, closure, cfg)
+
+				// Create results for all hosts based on the original execution
+				allResults := CreateRunOnceResultsForAllHosts(originalResult, hostContexts, firstHostName)
+
+				// Send results for all hosts
+				for _, result := range allResults {
+					select {
+					case resultsCh <- result:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+
+			// Continue to next task since run_once is handled
+			continue
+		}
+
+		// Normal task execution for non-run_once tasks
 		for hostNameKey, hostCtxInstance := range hostContexts {
-			task := taskDefinition
 			hostCtx := hostCtxInstance
 			hostName := hostNameKey
 
