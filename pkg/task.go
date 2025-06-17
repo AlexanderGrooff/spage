@@ -10,6 +10,7 @@ import (
 
 	"github.com/AlexanderGrooff/jinja-go"
 	"github.com/AlexanderGrooff/spage/pkg/common"
+
 	// Remove pongo2 import if no longer needed directly here
 	// "github.com/flosch/pongo2"
 	"gopkg.in/yaml.v3"
@@ -80,8 +81,8 @@ type Task struct {
 	Register     string      `yaml:"register" json:"register,omitempty"`
 	RunAs        string      `yaml:"run_as" json:"run_as,omitempty"`
 	IgnoreErrors bool        `yaml:"ignore_errors,omitempty" json:"ignore_errors,omitempty"`
-	FailedWhen   string      `yaml:"failed_when,omitempty" json:"failed_when,omitempty"`
-	ChangedWhen  string      `yaml:"changed_when,omitempty" json:"changed_when,omitempty"`
+	FailedWhen   interface{} `yaml:"failed_when,omitempty" json:"failed_when,omitempty"`
+	ChangedWhen  interface{} `yaml:"changed_when,omitempty" json:"changed_when,omitempty"`
 	Loop         interface{} `yaml:"loop,omitempty" json:"loop,omitempty"`
 	DelegateTo   string      `yaml:"delegate_to,omitempty" json:"delegate_to,omitempty"`
 }
@@ -276,11 +277,43 @@ func (t Task) ToCode() string {
 	if t.IgnoreErrors {
 		sb.WriteString(fmt.Sprintf(", IgnoreErrors: %t", t.IgnoreErrors))
 	}
-	if t.FailedWhen != "" {
-		sb.WriteString(fmt.Sprintf(", FailedWhen: %q", t.FailedWhen))
+	if t.FailedWhen != nil {
+		switch v := t.FailedWhen.(type) {
+		case string:
+			if v != "" {
+				sb.WriteString(fmt.Sprintf(", FailedWhen: %q", v))
+			}
+		case []interface{}:
+			if len(v) > 0 {
+				sb.WriteString(", FailedWhen: []interface{}{")
+				for i, item := range v {
+					sb.WriteString(fmt.Sprintf("%#v", item))
+					if i < len(v)-1 {
+						sb.WriteString(", ")
+					}
+				}
+				sb.WriteString("}")
+			}
+		}
 	}
-	if t.ChangedWhen != "" {
-		sb.WriteString(fmt.Sprintf(", ChangedWhen: %q", t.ChangedWhen))
+	if t.ChangedWhen != nil {
+		switch v := t.ChangedWhen.(type) {
+		case string:
+			if v != "" {
+				sb.WriteString(fmt.Sprintf(", ChangedWhen: %q", v))
+			}
+		case []interface{}:
+			if len(v) > 0 {
+				sb.WriteString(", ChangedWhen: []interface{}{")
+				for i, item := range v {
+					sb.WriteString(fmt.Sprintf("%#v", item))
+					if i < len(v)-1 {
+						sb.WriteString(", ")
+					}
+				}
+				sb.WriteString("}")
+			}
+		}
 	}
 	if t.DelegateTo != "" {
 		sb.WriteString(fmt.Sprintf(", DelegateTo: %q", t.DelegateTo))
@@ -435,6 +468,64 @@ func (t Task) RevertModule(closure *Closure) TaskResult {
 	return HandleResult(&r, t, closure)
 }
 
+// evaluateConditions evaluates either a single condition string or a list of condition strings.
+// For a list, it returns true if ANY condition evaluates to true (OR logic).
+// Returns the evaluated result and any error encountered.
+func evaluateConditions(conditions interface{}, c *Closure) (bool, error) {
+	if conditions == nil {
+		return false, nil
+	}
+
+	switch v := conditions.(type) {
+	case string:
+		if v == "" {
+			return false, nil
+		}
+		templatedCondition, err := EvaluateExpression(v, c)
+		if err != nil {
+			return false, fmt.Errorf("error evaluating condition '%s': %w", v, err)
+		}
+		return jinja.IsTruthy(templatedCondition), nil
+	case []interface{}:
+		for _, condition := range v {
+			if condStr, ok := condition.(string); ok {
+				templatedCondition, err := EvaluateExpression(condStr, c)
+				if err != nil {
+					return false, fmt.Errorf("error evaluating condition '%s': %w", condStr, err)
+				}
+				if jinja.IsTruthy(templatedCondition) {
+					return true, nil // Any true condition makes the whole evaluation true
+				}
+			} else {
+				return false, fmt.Errorf("condition in list is not a string: %T", condition)
+			}
+		}
+		return false, nil // All conditions were false
+	default:
+		return false, fmt.Errorf("conditions must be a string or list of strings, got %T", v)
+	}
+}
+
+// formatConditionsForError returns a string representation of conditions for error messages
+func formatConditionsForError(conditions interface{}) string {
+	switch v := conditions.(type) {
+	case string:
+		return v
+	case []interface{}:
+		var condStrs []string
+		for _, condition := range v {
+			if condStr, ok := condition.(string); ok {
+				condStrs = append(condStrs, fmt.Sprintf("'%s'", condStr))
+			} else {
+				condStrs = append(condStrs, fmt.Sprintf("%v", condition))
+			}
+		}
+		return fmt.Sprintf("[%s]", strings.Join(condStrs, ", "))
+	default:
+		return fmt.Sprintf("%v", conditions)
+	}
+}
+
 func HandleResult(r *TaskResult, t Task, c *Closure) TaskResult {
 	if r.Error != nil {
 		r.Status = TaskStatusFailed
@@ -448,32 +539,25 @@ func HandleResult(r *TaskResult, t Task, c *Closure) TaskResult {
 	RegisterVariableIfNeeded(*r, t, c)
 
 	// Evaluate failed_when only if the module execution itself succeeded
-	if r.Error == nil && t.FailedWhen != "" {
-		// Evaluate the expression, merging host facts and task output facts
-		templatedFailedWhen, err := EvaluateExpression(t.FailedWhen, c)
+	if r.Error == nil && t.FailedWhen != nil {
+		conditionMet, err := evaluateConditions(t.FailedWhen, c)
 		if err != nil {
-			// TODO: should we return a list of errors?
 			// Treat evaluation errors as task failure, as we can't determine the condition
-			r.Error = fmt.Errorf("error evaluating failed_when condition '%s': %w", t.FailedWhen, err)
+			r.Error = fmt.Errorf("error evaluating failed_when condition '%s': %w", formatConditionsForError(t.FailedWhen), err)
 			common.LogWarn("Error evaluating failed_when condition, marking task as failed", map[string]interface{}{
 				"task":      t.Name,
 				"host":      c.HostContext.Host.Name,
-				"condition": t.FailedWhen,
+				"condition": formatConditionsForError(t.FailedWhen),
 				"error":     err.Error(),
 			})
 			r.Failed = true
-		} else {
-			// Evaluate truthiness of the result
-			conditionMet := jinja.IsTruthy(templatedFailedWhen)
-			common.DebugOutput("Evaluated failed_when condition %q -> %v: %t",
-				t.FailedWhen, templatedFailedWhen, conditionMet)
-
-			if conditionMet {
-				// Set the error if the condition is true
-				r.Error = fmt.Errorf("failed_when condition '%s' evaluated to true (%v)", t.FailedWhen, templatedFailedWhen)
-				r.Status = TaskStatusFailed
-				r.Failed = true
-			}
+		} else if conditionMet {
+			// Set the error if the condition is true
+			r.Error = fmt.Errorf("failed_when condition '%s' evaluated to true", formatConditionsForError(t.FailedWhen))
+			r.Status = TaskStatusFailed
+			r.Failed = true
+			common.DebugOutput("Evaluated failed_when condition %s: %t",
+				formatConditionsForError(t.FailedWhen), conditionMet)
 		}
 	}
 
@@ -488,13 +572,12 @@ func HandleResult(r *TaskResult, t Task, c *Closure) TaskResult {
 		r.Failed = true
 	}
 
-	if t.ChangedWhen != "" && r.Status != TaskStatusFailed {
-		templatedChangedWhen, err := EvaluateExpression(t.ChangedWhen, c)
+	if t.ChangedWhen != nil && r.Status != TaskStatusFailed {
+		conditionMet, err := evaluateConditions(t.ChangedWhen, c)
 		if err != nil {
-			r.Error = fmt.Errorf("error evaluating changed_when condition '%s': %w", t.ChangedWhen, err)
+			r.Error = fmt.Errorf("error evaluating changed_when condition '%s': %w", formatConditionsForError(t.ChangedWhen), err)
 			r.Failed = true
-		}
-		if jinja.IsTruthy(templatedChangedWhen) {
+		} else if conditionMet {
 			r.Status = TaskStatusChanged
 			r.Changed = true
 		} else {

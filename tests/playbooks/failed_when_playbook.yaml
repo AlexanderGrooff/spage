@@ -18,6 +18,16 @@
         content: "actual failure content present"
         dest: /tmp/spage/failed_when_fail.txt
 
+    - name: Create file for list conditions test
+      copy:
+        content: "testing list conditions with failure pattern"
+        dest: /tmp/spage/failed_when_list.txt
+
+    - name: Create file for changed_when test
+      copy:
+        content: "testing changed_when behavior"
+        dest: /tmp/spage/changed_when_test.txt
+
     # Test 1: Should succeed (failed_when condition is false)
     - name: Task should succeed
       shell: cat /tmp/spage/failed_when_succeed.txt
@@ -42,7 +52,91 @@
         that:
           - ignored_fail_result.failed # Registered as failed internally
 
-    # Test 3: Should cause playbook failure (failed_when condition is true)
+    # Test 3: Should succeed with list conditions (all false)
+    - name: Task should succeed with list conditions
+      shell: cat /tmp/spage/failed_when_list.txt
+      register: list_succeed_result
+      failed_when:
+        - "'nonexistent pattern' in list_succeed_result.stdout"
+        - "list_succeed_result.stderr != ''"
+        - "'another missing pattern' in list_succeed_result.stdout"
+
+    - name: Verify list success task result
+      assert:
+        that:
+          - not list_succeed_result.failed
+          - "'testing list conditions' in list_succeed_result.stdout"
+
+    # Test 4: Should fail with list conditions (one true)
+    - name: Task should fail with list conditions
+      shell: cat /tmp/spage/failed_when_list.txt
+      register: list_fail_result
+      failed_when:
+        - "'nonexistent pattern' in list_fail_result.stdout"  # False
+        - "'failure pattern' in list_fail_result.stdout"      # True - should cause failure
+        - "list_fail_result.stderr != ''"                     # False
+      ignore_errors: true
+
+    - name: Verify list failure task result
+      assert:
+        that:
+          - list_fail_result.failed # Should be marked as failed
+
+    # Test 5: changed_when with single condition (should not be changed)
+    - name: Task should not be changed (single condition)
+      shell: cat /tmp/spage/changed_when_test.txt
+      register: not_changed_result
+      changed_when: "'nonexistent pattern' in not_changed_result.stdout"
+
+    - name: Verify not changed result (single condition)
+      assert:
+        that:
+          - not not_changed_result.changed
+          - not not_changed_result.failed
+
+    # Test 6: changed_when with single condition (should be changed)
+    - name: Task should be changed (single condition)
+      shell: cat /tmp/spage/changed_when_test.txt
+      register: changed_result
+      changed_when: "'testing changed_when' in changed_result.stdout"
+
+    - name: Verify changed result (single condition)
+      assert:
+        that:
+          - changed_result.changed
+          - not changed_result.failed
+
+    # Test 7: changed_when with list conditions (should not be changed - all false)
+    - name: Task should not be changed (list conditions)
+      shell: cat /tmp/spage/changed_when_test.txt
+      register: not_changed_list_result
+      changed_when:
+        - "'nonexistent pattern' in not_changed_list_result.stdout"
+        - "not_changed_list_result.stderr != ''"
+        - "'another missing pattern' in not_changed_list_result.stdout"
+
+    - name: Verify not changed result (list conditions)
+      assert:
+        that:
+          - not not_changed_list_result.changed
+          - not not_changed_list_result.failed
+
+    # Test 8: changed_when with list conditions (should be changed - one true)
+    - name: Task should be changed (list conditions)
+      shell: cat /tmp/spage/changed_when_test.txt
+      register: changed_list_result
+      changed_when:
+        - "'nonexistent pattern' in changed_list_result.stdout"  # False
+        - "'testing changed_when' in changed_list_result.stdout" # True - should mark as changed
+        - "changed_list_result.stderr != ''"                     # False
+
+    - name: Verify changed result (list conditions)
+      assert:
+        that:
+          - changed_list_result.changed
+          - not changed_list_result.failed
+
+    # Test 9: Should cause playbook failure (failed_when condition is true)
     - name: Task should actually fail
       shell: cat /tmp/spage/failed_when_fail.txt
       register: actual_fail_result

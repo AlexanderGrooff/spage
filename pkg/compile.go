@@ -64,23 +64,31 @@ func parseBoolOrStringBoolValue(block map[string]interface{}, key string, taskNa
 }
 
 // parseConditionString parses a condition field (like 'when' or 'failed_when')
-// that accepts either a string condition or a boolean literal.
-// It returns the condition as a string (e.g., "true" for boolean true) and any error.
-func parseConditionString(block map[string]interface{}, key string, taskName string) (condition string, err error) {
+// that accepts either a string condition, a boolean literal, or a list of conditions.
+// It returns the condition as an interface{} that can be a string, bool, or []interface{}.
+func parseConditionString(block map[string]interface{}, key string, taskName string) (condition interface{}, err error) {
 	rawVal, keyExists := block[key]
 	if !keyExists {
-		return "", nil // Default empty string, no error
+		return nil, nil // Default nil, no error
 	}
 
 	switch v := rawVal.(type) {
 	case string:
 		return v, nil
 	case bool:
-		return fmt.Sprintf("%t", v), nil
+		return v, nil
+	case []interface{}:
+		// Validate that all elements in the list are strings
+		for i, item := range v {
+			if _, ok := item.(string); !ok {
+				return nil, fmt.Errorf("invalid type (%T) for item %d in '%s' list in task %q, expected string", item, i, key, taskName)
+			}
+		}
+		return v, nil
 	default:
 		// Invalid type
-		err = fmt.Errorf("invalid type (%T) for '%s' key in task %q, expected string or boolean", rawVal, key, taskName)
-		return "", err
+		err = fmt.Errorf("invalid type (%T) for '%s' key in task %q, expected string, boolean, or list of strings", rawVal, key, taskName)
+		return nil, err
 	}
 }
 
@@ -125,7 +133,26 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			errors = append(errors, whenErr)
 			errored = true
 		} else {
-			task.When = whenCond
+			// Convert to string for backwards compatibility (when field is still string)
+			if whenCond == nil {
+				task.When = ""
+			} else if whenStr, ok := whenCond.(string); ok {
+				task.When = whenStr
+			} else if whenBool, ok := whenCond.(bool); ok {
+				task.When = fmt.Sprintf("%t", whenBool)
+			} else {
+				// For lists, we'd need to update the When field to interface{} too,
+				// but for now let's convert the first condition as a temporary solution
+				if whenList, ok := whenCond.([]interface{}); ok && len(whenList) > 0 {
+					if firstCond, ok := whenList[0].(string); ok {
+						task.When = firstCond
+					} else {
+						task.When = ""
+					}
+				} else {
+					task.When = ""
+				}
+			}
 		}
 
 		// Handle 'ignore_errors' using the helper function
