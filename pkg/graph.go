@@ -67,6 +67,8 @@ func (g Graph) ToCode() string {
 		factList = append(factList, fct)
 	}
 
+	hasSetupTask := len(factList) > 0
+
 	fmt.Fprintln(&f, "var GeneratedGraph = pkg.Graph{")
 	fmt.Fprintf(&f, "%sRequiredInputs: []string{\n", Indent(1))
 	for _, input := range g.RequiredInputs {
@@ -76,16 +78,30 @@ func (g Graph) ToCode() string {
 	fmt.Fprintf(&f, "%sTasks: [][]pkg.Task{\n", Indent(1))
 
 	// Inject gather facts task as first step if needed
-	if len(factList) > 0 {
+	if hasSetupTask {
 		fmt.Fprintf(&f, "%s  []pkg.Task{\n", Indent(2))
-		fmt.Fprintf(&f, "%s    pkg.Task{Id: -1, Name: \"gather facts\", Module: \"setup\", Register: \"ansible_facts\", Params: pkg.ModuleInput{Actual: modules.SetupInput{Facts: %#v}}, RunAs: \"\", When: \"\"},\n", Indent(3), factList)
+		fmt.Fprintf(&f, "%s    pkg.Task{Id: 0, Name: \"gather facts\", Module: \"setup\", Register: \"ansible_facts\", Params: pkg.ModuleInput{Actual: modules.SetupInput{Facts: %#v}}, RunAs: \"\", When: \"\"},\n", Indent(3), factList)
 		fmt.Fprintf(&f, "%s  },\n", Indent(2))
 	}
 
 	for _, node := range g.Tasks {
 		fmt.Fprintf(&f, "%s  []pkg.Task{\n", Indent(2))
 		for _, task := range node {
-			fmt.Fprintf(&f, "%s    %s", Indent(3), task.ToCode())
+			// Increment task ID by 1 if we have a setup task
+			taskId := task.Id
+			if hasSetupTask {
+				taskId = task.Id + 1
+			}
+			// Generate task code with potentially incremented ID
+			taskCode := task.ToCode()
+			// Replace the ID in the generated code
+			if hasSetupTask {
+				// Find and replace the Id field in the task code
+				oldIdStr := fmt.Sprintf("Id: %d", task.Id)
+				newIdStr := fmt.Sprintf("Id: %d", taskId)
+				taskCode = strings.Replace(taskCode, oldIdStr, newIdStr, 1)
+			}
+			fmt.Fprintf(&f, "%s    %s", Indent(3), taskCode)
 		}
 		fmt.Fprintf(&f, "%s  },\n", Indent(2))
 	}
