@@ -525,6 +525,11 @@ func (e *LocalGraphExecutor) processLevelResults(
 			task := result.Task
 			currentClosure := result.Closure
 
+			// Ensure recapStats entry exists for this hostname (e.g., for delegate_to localhost)
+			if _, exists := recapStats[hostname]; !exists {
+				recapStats[hostname] = map[string]int{"ok": 0, "changed": 0, "failed": 0, "skipped": 0, "ignored": 0}
+			}
+
 			if cfg.Logging.Format == "plain" {
 				fmt.Printf("\nTASK [%s] (%s) ****************************************************\n", task.Name, hostname)
 			}

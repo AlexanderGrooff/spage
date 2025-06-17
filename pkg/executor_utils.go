@@ -121,7 +121,14 @@ func GetDelegatedHostContext(task Task, hostContexts map[string]*HostContext, cl
 				return nil, fmt.Errorf("failed to initialize context for localhost: %w", err)
 			}
 
-			// Add basic localhost facts
+			// Copy all facts from the original closure's context to the localhost context
+			// This ensures that variables set in previous tasks are available
+			closure.HostContext.Facts.Range(func(key, value interface{}) bool {
+				localhostContext.Facts.Store(key, value)
+				return true
+			})
+
+			// Add basic localhost facts (override any existing ones)
 			localhostContext.Facts.Store("inventory_hostname", "localhost")
 			localhostContext.Facts.Store("ansible_hostname", "localhost")
 

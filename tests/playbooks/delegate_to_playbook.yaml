@@ -21,6 +21,11 @@
         delegated_via_fact_content: "File created on {{ inventory_hostname }} via delegate_to using a fact. target_hostname was {{ target_hostname }}."
         delegated_via_fact_file: "/tmp/spage/delegate_test_via_fact.txt"
 
+    - name: create dir
+      file:
+        path: /tmp/spage
+        state: directory
+
     # Task 1: Create a file on localhost (control node) using delegate_to
     - name: Create file on localhost via delegate_to
       ansible.builtin.copy:
@@ -58,11 +63,16 @@
         path: "{{ on_inventory_host_file }}"
       register: stat_on_inventory_host_file
 
+    - name: Read file content on {{ inventory_hostname }} (created by non-delegated task)
+      ansible.builtin.slurp:
+        src: "{{ on_inventory_host_file }}"
+      register: slurp_on_inventory_host_file
+
     - name: Assert file exists on {{ inventory_hostname }} and has correct content
       ansible.builtin.assert:
         that:
           - stat_on_inventory_host_file.stat.exists
-          - "lookup('file', '{{ on_inventory_host_file }}') == on_inventory_host_content"
+          - "slurp_on_inventory_host_file.content | b64decode | trim == on_inventory_host_content"
         fail_msg: "FAIL: Content or existence check for {{ on_inventory_host_file }} (on {{ inventory_hostname }})"
         success_msg: "PASS: {{ on_inventory_host_file }} (on {{ inventory_hostname }})"
 
@@ -71,11 +81,16 @@
         path: "{{ delegated_to_inventory_host_file }}"
       register: stat_delegated_to_inventory_host_file
 
+    - name: Read file content on {{ inventory_hostname }} (created by task delegated to inventory_hostname)
+      ansible.builtin.slurp:
+        src: "{{ delegated_to_inventory_host_file }}"
+      register: slurp_delegated_to_inventory_host_file
+
     - name: Assert file delegated to {{ inventory_hostname }} exists and has correct content
       ansible.builtin.assert:
         that:
           - stat_delegated_to_inventory_host_file.stat.exists
-          - "lookup('file', '{{ delegated_to_inventory_host_file }}') == delegated_to_inventory_host_content"
+          - "slurp_delegated_to_inventory_host_file.content | b64decode | trim == delegated_to_inventory_host_content"
         fail_msg: "FAIL: Content or existence check for {{ delegated_to_inventory_host_file }} (delegated to {{ inventory_hostname }})"
         success_msg: "PASS: {{ delegated_to_inventory_host_file }} (delegated to {{ inventory_hostname }})"
 
@@ -85,10 +100,15 @@
         path: "{{ delegated_via_fact_file }}"
       register: stat_delegated_via_fact_file
 
+    - name: Read file content created via delegate_to using fact
+      ansible.builtin.slurp:
+        src: "{{ delegated_via_fact_file }}"
+      register: slurp_delegated_via_fact_file
+
     - name: Assert file delegated via fact exists and has correct content
       ansible.builtin.assert:
         that:
           - stat_delegated_via_fact_file.stat.exists
-          - "lookup('file', '{{ delegated_via_fact_file }}') == delegated_via_fact_content"
+          - "slurp_delegated_via_fact_file.content | b64decode | trim == delegated_via_fact_content"
         fail_msg: "FAIL: Content or existence check for {{ delegated_via_fact_file }} (delegated via fact {{ target_hostname }})"
         success_msg: "PASS: {{ delegated_via_fact_file }} (delegated via fact {{ target_hostname }})" 
