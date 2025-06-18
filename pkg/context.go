@@ -25,6 +25,19 @@ type HostContext struct {
 	sshClient *ssh.Client
 }
 
+func (c *HostContext) HistoryAsMap() map[string]interface{} {
+	m := make(map[string]interface{})
+	if c.History != nil {
+		c.History.Range(func(key, value interface{}) bool {
+			if k, ok := key.(string); ok {
+				m[k] = value
+			}
+			return true
+		})
+	}
+	return m
+}
+
 func InitializeHostContext(host *Host) (*HostContext, error) {
 	hc := &HostContext{
 		Host:    host,
