@@ -156,7 +156,7 @@ func (g Graph) SaveToFile(path string) error {
 	fmt.Fprintln(f)
 	fmt.Fprintln(f, "    // Execute the graph using the loaded configuration")
 	fmt.Fprintln(f, "    cfg := cmd.GetConfig() // Function to get the loaded config from cmd package")
-	fmt.Fprintln(f, "    exec := pkg.NewLocalGraphExecutor(&executor.LocalTaskRunner{})")
+	fmt.Fprintln(f, "    exec := executor.NewLocalGraphExecutor(&executor.LocalTaskRunner{})")
 	fmt.Fprintln(f, "    err = pkg.ExecuteGraph(exec, GeneratedGraph, *inventoryFile, cfg)")
 	fmt.Fprintln(f, "    if err != nil {")
 	fmt.Fprintf(f, "        fmt.Printf(\"Execution failed: %%v\\n\", err)\n")

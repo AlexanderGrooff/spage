@@ -584,7 +584,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 						Host:  hostDefForCount,
 						Facts: &sync.Map{},
 					}
-					closures, err := pkg.GetTaskClosures(taskDefinitionForCount, tempHostCtxForCount)
+					closures, err := GetTaskClosures(taskDefinitionForCount, tempHostCtxForCount)
 					if err != nil {
 						errMsg := fmt.Errorf("critical error during pre-count for run_once task closures: task '%s': %w", taskDefinitionForCount.Name, err)
 						common.LogError("Dispatch error in loadLevelTasks (pre-count)", map[string]interface{}{"error": errMsg})
@@ -605,7 +605,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 							tempHostCtxForCount.Facts.Store(k, v)
 						}
 					}
-					closures, err := pkg.GetTaskClosures(taskDefinitionForCount, tempHostCtxForCount)
+					closures, err := GetTaskClosures(taskDefinitionForCount, tempHostCtxForCount)
 					if err != nil {
 						errMsg := fmt.Errorf("critical error during pre-count for task closures: task '%s' on host '%s': %w", taskDefinitionForCount.Name, hostNameForCount, err)
 						common.LogError("Dispatch error in loadLevelTasks (pre-count)", map[string]interface{}{"error": errMsg})
@@ -657,7 +657,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 				}
 			}
 
-			closures, err := pkg.GetTaskClosures(task, tempHostCtx)
+			closures, err := GetTaskClosures(task, tempHostCtx)
 			if err != nil {
 				errMsg := fmt.Errorf("critical error: failed to get task closures for run_once task '%s' on host '%s': %w", task.Name, firstHostName, err)
 				common.LogError("Dispatch error for run_once task", map[string]interface{}{"error": errMsg})
@@ -692,7 +692,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 						}
 
 						// Create results for all hosts based on the original execution
-						allResults := pkg.CreateRunOnceResultsForAllHosts(originalResult, hostContextsMap, firstHostName)
+						allResults := CreateRunOnceResultsForAllHosts(originalResult, hostContextsMap, firstHostName)
 
 						// Send results for all hosts
 						for _, result := range allResults {
@@ -724,7 +724,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 					}
 
 					// Create results for all hosts based on the original execution
-					allResults := pkg.CreateRunOnceResultsForAllHosts(originalResult, hostContextsMap, firstHostName)
+					allResults := CreateRunOnceResultsForAllHosts(originalResult, hostContextsMap, firstHostName)
 
 					// Send results for all hosts
 					for _, result := range allResults {
@@ -750,7 +750,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 				}
 			}
 
-			closures, err := pkg.GetTaskClosures(task, tempHostCtx)
+			closures, err := GetTaskClosures(task, tempHostCtx)
 			if err != nil {
 				errMsg := fmt.Errorf("critical error: failed to get task closures for task '%s' on host '%s': %w. Aborting level", task.Name, hostName, err)
 				common.LogError("Dispatch error in loadLevelTasks", map[string]interface{}{"error": errMsg})
@@ -919,15 +919,32 @@ func (e *TemporalGraphExecutor) processLevelResults(
 }
 
 func (e *TemporalGraphExecutor) Execute(
-	inventoryHosts map[string]*pkg.Host,
-	workflowHostFacts map[string]map[string]interface{},
+	hostContexts map[string]*pkg.HostContext,
 	orderedGraph [][]pkg.Task,
 	cfg *config.Config,
 ) error {
+	// Convert hostContexts to the format needed by temporal executor
+	inventoryHosts := make(map[string]*pkg.Host)
+	workflowHostFacts := make(map[string]map[string]interface{})
+
+	for hostName, hostCtx := range hostContexts {
+		inventoryHosts[hostName] = hostCtx.Host
+
+		// Extract facts from HostContext
+		hostFacts := make(map[string]interface{})
+		hostCtx.Facts.Range(func(key, value interface{}) bool {
+			if kStr, ok := key.(string); ok {
+				hostFacts[kStr] = value
+			}
+			return true
+		})
+		workflowHostFacts[hostName] = hostFacts
+	}
+
 	// recapStats and executionHistory would be initialized and managed here if needed for Temporal version
 	// For now, focusing on fact propagation. RecapStats are not used by processLevelResults anymore.
 	// ExecutionHistory for revert needs careful design for Temporal.
-	workflowCtx := e.Runner.WorkflowCtx                    // Get the root workflow context for performRevert if needed
+	workflowCtx := e.Runner.WorkflowCtx                    // Get the root workflow context for Revert if needed
 	logger := workflow.GetLogger(workflowCtx)              // Define logger for Execute scope
 	executionTaskResults := make(map[int][]pkg.TaskResult) // Store all successful/processed task results per level
 
@@ -949,7 +966,7 @@ func (e *TemporalGraphExecutor) Execute(
 						}
 					}
 
-					closures, err := pkg.GetTaskClosures(task, tempHostCtxForCount)
+					closures, err := GetTaskClosures(task, tempHostCtxForCount)
 					if err != nil {
 						return fmt.Errorf("failed to get task closures for count on level %d, run_once task %s, host %s: %w", executionLevel, task.Name, hostDef.Name, err)
 					}
@@ -969,7 +986,7 @@ func (e *TemporalGraphExecutor) Execute(
 						}
 					}
 
-					closures, err := pkg.GetTaskClosures(task, tempHostCtxForCount)
+					closures, err := GetTaskClosures(task, tempHostCtxForCount)
 					if err != nil {
 						return fmt.Errorf("failed to get task closures for count on level %d, task %s, host %s: %w", executionLevel, task.Name, hostDef.Name, err)
 					}
@@ -1006,7 +1023,7 @@ func (e *TemporalGraphExecutor) Execute(
 		if errProcessingResults != nil {
 			// If processLevelResults itself returns an error (e.g., premature channel close), attempt revert
 			logger.Error("Error processing results, attempting revert", "level", executionLevel, "error", errProcessingResults)
-			if revertErr := e.performRevert(workflowCtx, executionTaskResults, inventoryHosts, workflowHostFacts, cfg, executionLevel); revertErr != nil {
+			if revertErr := e.revertWorkflow(workflowCtx, executionTaskResults, inventoryHosts, workflowHostFacts, cfg, executionLevel); revertErr != nil {
 				return fmt.Errorf("error during graph execution on level %d (%v) and also during revert: %w", executionLevel, errProcessingResults, revertErr)
 			}
 			return fmt.Errorf("error during graph execution on level %d: %w, tasks reverted", executionLevel, errProcessingResults)
@@ -1014,7 +1031,7 @@ func (e *TemporalGraphExecutor) Execute(
 
 		if levelErrored {
 			logger.Info("Run failed, task reversion required", map[string]interface{}{"level": executionLevel})
-			if revertErr := e.performRevert(workflowCtx, executionTaskResults, inventoryHosts, workflowHostFacts, cfg, executionLevel); revertErr != nil {
+			if revertErr := e.revertWorkflow(workflowCtx, executionTaskResults, inventoryHosts, workflowHostFacts, cfg, executionLevel); revertErr != nil {
 				return fmt.Errorf("run failed on level %d and also failed during revert: %w", executionLevel, revertErr)
 			}
 			return fmt.Errorf("run failed on level %d and tasks reverted", executionLevel)
@@ -1023,8 +1040,25 @@ func (e *TemporalGraphExecutor) Execute(
 	return nil
 }
 
-// performRevert orchestrates the revert process for tasks up to a certain level.
-func (e *TemporalGraphExecutor) performRevert(
+// Revert implements the GraphExecutor interface for Temporal.
+// It requires a workflow context, which must be passed in via the context.Context argument.
+func (e *TemporalGraphExecutor) Revert(
+	ctx context.Context,
+	executedTasksHistory []map[string]chan pkg.Task,
+	hostContexts map[string]*pkg.HostContext,
+	cfg *config.Config,
+) error {
+	// The Temporal executor's Revert logic is deeply tied to the workflow's state and execution history.
+	// The `executedTasksHistory` from the generic interface is not suitable for reconstructing the
+	// necessary state (like loop items, specific closures, etc.) for a Temporal revert.
+	// Revert operations are instead handled inside the `Execute` method, which has access
+	// to the `workflow.Context` and the full `TaskResult` history.
+	// This method is here to satisfy the interface, but the actual logic is in `revertWorkflow`.
+	return fmt.Errorf("direct call to Revert on TemporalGraphExecutor is not supported. Reversion is handled within the workflow execution")
+}
+
+// revertWorkflow orchestrates the revert process for tasks up to a certain level within a workflow.
+func (e *TemporalGraphExecutor) revertWorkflow(
 	workflowCtx workflow.Context, // Main workflow context
 	executedTasks map[int][]pkg.TaskResult, // History of tasks processed per level
 	inventoryHosts map[string]*pkg.Host,
@@ -1178,69 +1212,14 @@ func (e *TemporalGraphExecutor) performRevert(
 }
 
 // SpageTemporalWorkflow defines the main workflow logic.
-func SpageTemporalWorkflow(ctx workflow.Context, graphInput *pkg.Graph, inventoryInput *pkg.Inventory, spageConfigInput *config.Config) error {
+func SpageTemporalWorkflow(ctx workflow.Context, graphInput *pkg.Graph, inventoryFile string, spageConfigInput *config.Config) error {
 	logger := workflow.GetLogger(ctx)
 	logger.Info("SpageTemporalWorkflow started", "workflowId", workflow.GetInfo(ctx).WorkflowExecution.ID)
 
 	temporalRunner := NewTemporalTaskRunner(ctx)
-	e := TemporalGraphExecutor{Runner: *temporalRunner}
+	e := &TemporalGraphExecutor{Runner: *temporalRunner}
 
-	workflowHostFacts := make(map[string]map[string]interface{})
-	if inventoryInput != nil && inventoryInput.Hosts != nil {
-		for hostName, hostDef := range inventoryInput.Hosts {
-			hostFacts := make(map[string]interface{})
-			if hostDef.Vars != nil {
-				for k, v := range hostDef.Vars {
-					hostFacts[k] = v
-				}
-			}
-			hostFacts["ansible_hostname"] = hostDef.Name
-			workflowHostFacts[hostName] = hostFacts
-		}
-	}
-	if inventoryInput != nil {
-		if allGroup, ok := inventoryInput.Groups["all"]; ok && allGroup.Vars != nil {
-			for hostNameFromFacts := range workflowHostFacts {
-				for k, v := range allGroup.Vars {
-					if hostSpecificFacts, hostExists := workflowHostFacts[hostNameFromFacts]; hostExists {
-						if _, varExists := hostSpecificFacts[k]; !varExists {
-							hostSpecificFacts[k] = v
-						}
-					}
-				}
-			}
-		}
-		for groupName, groupDef := range inventoryInput.Groups {
-			if groupName == "all" || groupDef.Vars == nil {
-				continue
-			}
-			for _, hostMember := range groupDef.Hosts {
-				hostMemberNameStr := hostMember.Name
-				if hostSpecificFacts, hostExists := workflowHostFacts[hostMemberNameStr]; hostExists {
-					for k, v := range groupDef.Vars {
-						if _, varExists := hostSpecificFacts[k]; !varExists {
-							hostSpecificFacts[k] = v
-						}
-					}
-				} else {
-					logger.Warn("Host listed in group not found in main host definitions during fact merging", "group", groupName, "host", hostMemberNameStr)
-				}
-			}
-		}
-	}
-
-	orderedGraph, err := pkg.GetOrderedGraph(spageConfigInput, *graphInput)
-	if err != nil {
-		logger.Error("Failed to get ordered graph", "error", err)
-		return err
-	}
-
-	inventoryHostsMap := make(map[string]*pkg.Host)
-	if inventoryInput != nil && inventoryInput.Hosts != nil {
-		inventoryHostsMap = inventoryInput.Hosts
-	}
-
-	err = e.Execute(inventoryHostsMap, workflowHostFacts, orderedGraph, spageConfigInput)
+	err := pkg.ExecuteGraph(e, *graphInput, inventoryFile, spageConfigInput)
 
 	if err != nil {
 		logger.Error("SpageTemporalWorkflow failed", "error", err)
