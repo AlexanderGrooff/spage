@@ -1274,30 +1274,6 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 	defer temporalClient.Close()
 	log.Println("Temporal client connected.")
 
-	var spageAppInventory *pkg.Inventory
-	if opts.InventoryPath != "" {
-		spageAppInventory, err = pkg.LoadInventory(opts.InventoryPath)
-		if err != nil {
-			log.Fatalf("Failed to load Spage inventory file '%s': %v", opts.InventoryPath, err)
-		}
-		log.Printf("Spage inventory loaded from '%s'.", opts.InventoryPath)
-	} else {
-		log.Println("No Spage inventory file specified. Creating a default localhost inventory.")
-		spageAppInventory = &pkg.Inventory{
-			Hosts: map[string]*pkg.Host{
-				"localhost": {
-					Name:    "localhost",
-					IsLocal: true,
-					Host:    "localhost",
-					Vars:    make(map[string]interface{}),
-				},
-			},
-		}
-	}
-	if err := opts.Graph.CheckInventoryForRequiredInputs(spageAppInventory); err != nil {
-		log.Fatalf("Inventory check failed for required inputs: %v", err)
-	}
-
 	taskQueue := spageAppConfig.Temporal.TaskQueue
 	if taskQueue == "" {
 		taskQueue = "SPAGE_DEFAULT_TASK_QUEUE"
@@ -1333,11 +1309,11 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 
 		common.LogDebug("Executing workflow with graph, inventory, and config.", map[string]interface{}{
 			"graph_tasks_count":     len(opts.Graph.Tasks),
-			"inventory_hosts_count": len(spageAppInventory.Hosts),
+			"inventory_path":        opts.InventoryPath,
 			"config_mode":           spageAppConfig.ExecutionMode,
 		})
 
-		we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, SpageTemporalWorkflow, opts.Graph, spageAppInventory, spageAppConfig)
+		we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, SpageTemporalWorkflow, opts.Graph, opts.InventoryPath, spageAppConfig)
 		if err != nil {
 			log.Fatalf("Unable to execute SpageTemporalWorkflow: %v", err)
 		}
