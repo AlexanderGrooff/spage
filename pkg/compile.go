@@ -101,6 +101,8 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"when",
 		"register",
 		"run_as",
+		"become",
+		"become_user",
 		"ignore_errors",
 		"failed_when",
 		"changed_when",
@@ -122,7 +124,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			Register:   getStringFromMap(block, "register"),
 			RunAs:      getStringFromMap(block, "run_as"),
 			DelegateTo: getStringFromMap(block, "delegate_to"),
-			// FailedWhen will be handled below
+			// Booleans (that might be strings like 'yes') are handled below
 		}
 
 		// Declare errored flag here
@@ -154,6 +156,32 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 					task.When = ""
 				}
 			}
+		}
+
+		becomeUser := getStringFromMap(block, "become_user")
+
+		// Handle 'become' using the helper function
+		becomeVal, becomeFound, becomeErr := parseBoolOrStringBoolValue(block, "become", task.Name)
+		if becomeErr != nil {
+			errors = append(errors, becomeErr)
+			errored = true
+		} else {
+			// If found, use the parsed value, otherwise default to false (handled by initial Task struct value)
+			if becomeFound {
+				task.RunOnce = becomeVal
+			} // else task.RunOnce keeps its default zero value (false)
+		}
+
+		if task.RunAs != "" && (becomeFound || becomeUser != "") {
+			errors = append(errors, fmt.Errorf("'become'/'become_user' and 'run_as' are mutually exclusive"))
+			errored = true
+		}
+
+		// Use become/become_user to fill in run_as
+		if becomeFound && becomeUser != "" {
+			task.RunAs = becomeUser
+		} else if becomeFound && becomeUser == "" {
+			task.RunAs = "root"
 		}
 
 		// Handle 'ignore_errors' using the helper function

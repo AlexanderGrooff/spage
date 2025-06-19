@@ -1,0 +1,49 @@
+---
+- name: Test run_as/become functionality
+  hosts: all
+  tasks:
+    - name: whoami unpriv
+      shell: whoami
+      register: whoami_unpriv
+
+    - name: assert unpriv
+      assert:
+        that:
+          - '"root" not in whoami_unpriv.stdout'
+
+    - name: whoami run_as
+      shell: whoami
+      run_as: root
+      register: whoami_run_as
+      ignore_errors: true
+
+    - name: assert run_as
+      assert:
+        that:
+          - '"root" in whoami_run_as.stdout'
+      when: not whoami_run_as.failed
+
+    - name: whoami become
+      shell: whoami
+      become: yes
+      register: whoami_become
+      ignore_errors: true
+
+    - name: assert become
+      assert:
+        that:
+          - '"root" in whoami_become.stdout'
+      when: not whoami_become.failed
+
+    - name: whoami become user
+      shell: whoami
+      become: yes
+      become_user: alex
+      register: whoami_become_user
+      ignore_errors: true
+
+    - name: assert become user
+      assert:
+        that:
+          - '"root" in whoami_become_user.stdout'
+      when: not whoami_become_user.failed
