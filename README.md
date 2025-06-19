@@ -96,6 +96,7 @@ TODO:
 - `vars_prompt` on play
 - `gather_facts` on play
 - `vars` on play
+- Logic for `no_log`
 - Don't allow interactive commands in `temporal` executor, or define an option that allows for signals/disallows interactivity.
 
 ## Differences between Spage and Ansible

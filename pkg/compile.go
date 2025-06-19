@@ -109,6 +109,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"loop",
 		"delegate_to",
 		"run_once",
+		"no_log",
 	}
 
 	var tasks []GraphNode
@@ -161,15 +162,10 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		becomeUser := getStringFromMap(block, "become_user")
 
 		// Handle 'become' using the helper function
-		becomeVal, becomeFound, becomeErr := parseBoolOrStringBoolValue(block, "become", task.Name)
+		_, becomeFound, becomeErr := parseBoolOrStringBoolValue(block, "become", task.Name)
 		if becomeErr != nil {
 			errors = append(errors, becomeErr)
 			errored = true
-		} else {
-			// If found, use the parsed value, otherwise default to false (handled by initial Task struct value)
-			if becomeFound {
-				task.RunOnce = becomeVal
-			} // else task.RunOnce keeps its default zero value (false)
 		}
 
 		if task.RunAs != "" && (becomeFound || becomeUser != "") {
@@ -194,6 +190,18 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			if ignoreFound {
 				task.IgnoreErrors = ignoreVal
 			} // else task.IgnoreErrors keeps its default zero value (false)
+		}
+
+		// Handle 'no_log' using the helper function
+		noLogVal, noLogFound, noLogErr := parseBoolOrStringBoolValue(block, "no_log", task.Name)
+		if noLogErr != nil {
+			errors = append(errors, noLogErr)
+			errored = true
+		} else {
+			// If found, use the parsed value, otherwise default to false (handled by initial Task struct value)
+			if noLogFound {
+				task.NoLog = noLogVal
+			} // else task.RunOnce keeps its default zero value (false)
 		}
 
 		// Handle 'run_once' using the helper function

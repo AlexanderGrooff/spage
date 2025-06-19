@@ -86,6 +86,7 @@ type Task struct {
 	Loop         interface{} `yaml:"loop,omitempty" json:"loop,omitempty"`
 	DelegateTo   string      `yaml:"delegate_to,omitempty" json:"delegate_to,omitempty"`
 	RunOnce      bool        `yaml:"run_once,omitempty" json:"run_once,omitempty"`
+	NoLog        bool        `yaml:"no_log,omitempty" json:"no_log,omitempty"`
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface for Task.
