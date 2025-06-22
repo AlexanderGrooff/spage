@@ -672,6 +672,27 @@ if ! echo "$DEBUG_OUTPUT" | grep -q "msg: Templated message: Spage Debug Test (w
     exit 1
 fi
 
+# Check for list message execution
+# The output is multi-line, so we'll check for each part.
+if ! echo "$DEBUG_OUTPUT" | grep -q "msg: This is the first line in the list."; then
+    echo "Debug test failed: Did not find first line of list message."
+    echo "Output was:"
+    echo "$DEBUG_OUTPUT"
+    exit 1
+fi
+if ! echo "$DEBUG_OUTPUT" | grep -q "msg: This is a templated list item."; then
+    echo "Debug test failed: Did not find second (templated) line of list message."
+    echo "Output was:"
+    echo "$DEBUG_OUTPUT"
+    exit 1
+fi
+if ! echo "$DEBUG_OUTPUT" | grep -q "msg: This is the third line."; then
+    echo "Debug test failed: Did not find third line of list message."
+    echo "Output was:"
+    echo "$DEBUG_OUTPUT"
+    exit 1
+fi
+
 # Check for expected revert messages
 if ! echo "$DEBUG_OUTPUT" | grep -q "msg: Templated message: Spage Debug Test (will be reverted) \[revert\]"; then
     echo "Debug test failed: Did not find templated revert message."
@@ -679,6 +700,27 @@ if ! echo "$DEBUG_OUTPUT" | grep -q "msg: Templated message: Spage Debug Test (w
     echo "$DEBUG_OUTPUT"
     exit 1
 fi
+
+# Check for list message revert. Each line will have the [revert] suffix.
+if ! echo "$DEBUG_OUTPUT" | grep -q "msg: This is the first line in the list. \[revert\]"; then
+    echo "Debug test failed: Did not find first line of list message on revert."
+    echo "Output was:"
+    echo "$DEBUG_OUTPUT"
+    exit 1
+fi
+if ! echo "$DEBUG_OUTPUT" | grep -q "msg: This is a templated list item. \[revert\]"; then
+    echo "Debug test failed: Did not find second (templated) line of list message on revert."
+    echo "Output was:"
+    echo "$DEBUG_OUTPUT"
+    exit 1
+fi
+if ! echo "$DEBUG_OUTPUT" | grep -q "msg: This is the third line. \[revert\]"; then
+    echo "Debug test failed: Did not find third line of list message on revert."
+    echo "Output was:"
+    echo "$DEBUG_OUTPUT"
+    exit 1
+fi
+
 # Check that messages from tasks that should have been skipped are NOT present
 if echo "$DEBUG_OUTPUT" | grep -q "This message should NOT appear in logs."; then
     echo "Debug test failed: Found message from a task that should have been skipped (msg)."

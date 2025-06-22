@@ -23,8 +23,8 @@ func (m DebugModule) OutputType() reflect.Type {
 // DebugInput defines the structure for the debug module's input.
 // It can take a 'msg' to print directly, or a 'var' to print a variable's content.
 type DebugInput struct {
-	Msg string `yaml:"msg,omitempty"`
-	Var string `yaml:"var,omitempty"`
+	Msg interface{} `yaml:"msg,omitempty"`
+	Var string      `yaml:"var,omitempty"`
 }
 
 // DebugOutput provides information about what was printed.
@@ -35,9 +35,27 @@ type DebugOutput struct {
 // ToCode generates Go code representation of the DebugInput.
 func (i DebugInput) ToCode() string {
 	var parts []string
-	if i.Msg != "" {
-		parts = append(parts, fmt.Sprintf("Msg: %q", i.Msg))
+	if i.Msg != nil {
+		switch v := i.Msg.(type) {
+		case string:
+			parts = append(parts, fmt.Sprintf("Msg: %#v", v))
+		case []interface{}:
+			// To generate Go code, we create a slice of strings.
+			// The items in YAML are unmarshalled into interface{}, so we format them within an interface{} slice in Go.
+			strSlice := make([]string, len(v))
+			for i, item := range v {
+				strSlice[i] = fmt.Sprintf("%#v", item)
+			}
+			parts = append(parts, fmt.Sprintf("Msg: []interface{}{%s}", strings.Join(strSlice, ", ")))
+		case []string:
+			strSlice := make([]string, len(v))
+			for i, item := range v {
+				strSlice[i] = fmt.Sprintf("%#v", item)
+			}
+			parts = append(parts, fmt.Sprintf("Msg: []interface{}{%s}", strings.Join(strSlice, ", ")))
+		}
 	}
+
 	if i.Var != "" {
 		parts = append(parts, fmt.Sprintf("Var: %q", i.Var))
 	}
@@ -47,8 +65,21 @@ func (i DebugInput) ToCode() string {
 // GetVariableUsage extracts variables used within the 'msg' or 'var' fields.
 func (i DebugInput) GetVariableUsage() []string {
 	var vars []string
-	if i.Msg != "" {
-		vars = append(vars, pkg.GetVariableUsageFromTemplate(i.Msg)...)
+	if i.Msg != nil {
+		switch msg := i.Msg.(type) {
+		case string:
+			vars = append(vars, pkg.GetVariableUsageFromTemplate(msg)...)
+		case []interface{}:
+			for _, item := range msg {
+				if itemStr, ok := item.(string); ok {
+					vars = append(vars, pkg.GetVariableUsageFromTemplate(itemStr)...)
+				}
+			}
+		case []string:
+			for _, itemStr := range msg {
+				vars = append(vars, pkg.GetVariableUsageFromTemplate(itemStr)...)
+			}
+		}
 	}
 	// The 'var' field itself is a variable name, but it could also be a path like 'some_dict.key'
 	// For now, we'll treat 'var' as a potential variable to be looked up directly.
@@ -82,10 +113,15 @@ func (i DebugInput) ProvidesVariables() []string {
 
 // Validate ensures that either 'msg' or 'var' is provided.
 func (i DebugInput) Validate() error {
-	if i.Msg == "" && i.Var == "" {
+	msgIsSet := i.Msg != nil
+	// An empty string for 'msg' is not considered set.
+	if msgStr, ok := i.Msg.(string); ok && msgStr == "" {
+		msgIsSet = false
+	}
+	if !msgIsSet && i.Var == "" {
 		return fmt.Errorf("either 'msg' or 'var' must be provided to debug module")
 	}
-	if i.Msg != "" && i.Var != "" {
+	if msgIsSet && i.Var != "" {
 		return fmt.Errorf("only one of 'msg' or 'var' can be provided to debug module")
 	}
 	return nil
@@ -111,15 +147,16 @@ func (i *DebugInput) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	// Try unmarshalling into a temporary map to check keys
 	tempMap := make(map[string]interface{})
 	if err := unmarshal(&tempMap); err != nil {
+		var str string
+		if unmarshal(&str) == nil {
+			i.Msg = str
+			return i.Validate()
+		}
 		return err
 	}
 
 	if msg, ok := tempMap["msg"]; ok {
-		if msgStr, ok := msg.(string); ok {
-			i.Msg = msgStr
-		} else {
-			return fmt.Errorf("debug 'msg' parameter must be a string")
-		}
+		i.Msg = msg
 	}
 
 	if varParam, ok := tempMap["var"]; ok {
@@ -130,9 +167,7 @@ func (i *DebugInput) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		}
 	}
 
-	// Ansible also allows 'verbosity' parameter, but we'll keep it simple for now.
-
-	return i.Validate() // Validate after parsing
+	return i.Validate()
 }
 
 // private helper function for shared debug logic
@@ -143,17 +178,39 @@ func (m DebugModule) debugAction(params DebugInput, closure *pkg.Closure, action
 		suffix = " [revert]"
 	}
 
-	if params.Msg != "" {
-		templatedMsg, err := pkg.TemplateString(params.Msg, closure)
+	processMessage := func(msg string) (string, error) {
+		templatedMsg, err := pkg.TemplateString(msg, closure)
 		if err != nil {
-			common.LogWarn(fmt.Sprintf("Failed to template debug 'msg' during %s, printing raw value", action), map[string]interface{}{
+			common.LogWarn(fmt.Sprintf("Failed to template debug message during %s, printing raw value", action), map[string]interface{}{
 				"host":    closure.HostContext.Host.Name,
-				"raw_msg": params.Msg,
+				"raw_msg": msg,
 				"error":   err.Error(),
 			})
-			outputMessage = fmt.Sprintf("msg: %s (templating failed: %v)%s", params.Msg, err, suffix)
-		} else {
-			outputMessage = fmt.Sprintf("msg: %s%s", templatedMsg, suffix)
+			return fmt.Sprintf("msg: %s (templating failed: %v)%s", msg, err, suffix), err
+		}
+		return fmt.Sprintf("msg: %s%s", templatedMsg, suffix), nil
+	}
+
+	if params.Msg != nil {
+		switch msg := params.Msg.(type) {
+		case string:
+			outputMessage, _ = processMessage(msg)
+		case []interface{}:
+			var messages []string
+			for _, item := range msg {
+				if itemStr, ok := item.(string); ok {
+					processedMsg, _ := processMessage(itemStr)
+					messages = append(messages, processedMsg)
+				}
+			}
+			outputMessage = strings.Join(messages, "\n")
+		case []string:
+			var messages []string
+			for _, itemStr := range msg {
+				processedMsg, _ := processMessage(itemStr)
+				messages = append(messages, processedMsg)
+			}
+			outputMessage = strings.Join(messages, "\n")
 		}
 		common.LogInfo(outputMessage, map[string]interface{}{"host": closure.HostContext.Host.Name, "module": "debug", "action": action})
 	} else if params.Var != "" {

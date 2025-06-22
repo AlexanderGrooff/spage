@@ -10,6 +10,7 @@
         debug_message_content: "Spage Debug Test"
         variable_name_to_debug: "{{ nested_var }}"
         another_variable: "This is another var"
+        my_list_item: "list item"
 
     - name: Debug with a static message (should execute)
       debug:
@@ -19,13 +20,20 @@
       debug:
         msg: "Templated message: {{ debug_message_content }} (will be reverted)"
 
+    - name: Debug with a list of messages (should execute and then revert)
+      debug:
+        msg:
+          - "This is the first line in the list."
+          - "This is a templated {{ my_list_item }}."
+          - "This is the third line."
+
     - name: Debug a variable using a templated var parameter (should execute and then revert)
       debug:
         var: variable_name_to_debug
 
     - name: Intentionally fail to trigger revert of preceding debug tasks
       command: /bin/false
-      # This task's failure should trigger revert on the two debug tasks above.
+      # This task's failure should trigger revert on the three debug tasks above.
 
     # These tasks should NOT be executed due to the failure above.
     - name: This debug task (msg) should NOT run
