@@ -151,7 +151,7 @@ func (cm CommandModule) Revert(params pkg.ConcreteModuleInputProvider, closure *
 	if previous != nil {
 		// Ensure type assertion is safe
 		prevAsserted, ok := previous.(CommandOutput)
-		if !ok && previous != nil {
+		if !ok {
 			return nil, fmt.Errorf("internal error: unexpected previous output type %T for command module revert", previous)
 		}
 		prev = prevAsserted
