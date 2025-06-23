@@ -993,5 +993,25 @@ fi
 
 echo "Run_once test succeeded."
 
+# Test 31: Until loop test
+echo "Running until loop test..."
+go run main.go generate -p tests/playbooks/until_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml
+UNTIL_EXIT_CODE=$?
+
+if [ $UNTIL_EXIT_CODE -ne 0 ]; then
+    echo "Until loop test failed: Playbook execution failed unexpectedly (Exit Code: $UNTIL_EXIT_CODE)."
+    exit 1
+fi
+
+# Check that the success file was created on the target
+if ! check_target "[ -f /tmp/spage/until_succeeded.txt ]"; then
+    echo "Until loop test failed: success file /tmp/spage/until_succeeded.txt was not found on target"
+    exit 1
+fi
+
+echo "Until loop test succeeded."
+
 echo "All tests completed successfully!"
 

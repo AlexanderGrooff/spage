@@ -87,6 +87,10 @@ type Task struct {
 	DelegateTo   string      `yaml:"delegate_to,omitempty" json:"delegate_to,omitempty"`
 	RunOnce      bool        `yaml:"run_once,omitempty" json:"run_once,omitempty"`
 	NoLog        bool        `yaml:"no_log,omitempty" json:"no_log,omitempty"`
+
+	Until   string `yaml:"until,omitempty" json:"until,omitempty"`
+	Retries int    `yaml:"retries,omitempty" json:"retries,omitempty"`
+	Delay   int    `yaml:"delay,omitempty" json:"delay,omitempty"`
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface for Task.
@@ -323,6 +327,15 @@ func (t Task) ToCode() string {
 	if t.RunOnce {
 		sb.WriteString(fmt.Sprintf(", RunOnce: %t", t.RunOnce))
 	}
+	if t.Until != "" {
+		sb.WriteString(fmt.Sprintf(", Until: %q", t.Until))
+	}
+	if t.Retries > 0 {
+		sb.WriteString(fmt.Sprintf(", Retries: %d", t.Retries))
+	}
+	if t.Delay > 0 {
+		sb.WriteString(fmt.Sprintf(", Delay: %d", t.Delay))
+	}
 	// Handle Loop field in ToCode: generate code for string or slice.
 	switch v := t.Loop.(type) {
 	case string:
@@ -381,15 +394,127 @@ func (t Task) ShouldExecute(closure *Closure) bool {
 
 func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	startTime := time.Now()
-	r := TaskResult{Task: t, Closure: closure, Status: TaskStatusSkipped}
 
+	// Initial check on the 'when' condition. If false, we skip everything.
 	if !t.ShouldExecute(closure) {
-		common.LogDebug("Skipping execution of task", map[string]interface{}{
+		common.LogDebug("Skipping execution of task due to 'when' condition", map[string]interface{}{
 			"task": t.Name,
 			"host": closure.HostContext.Host.Name,
 		})
-		return r
+		return TaskResult{Task: t, Closure: closure, Status: TaskStatusSkipped}
 	}
+
+	// If 'until' is not defined, execute once as normal.
+	if t.Until == "" {
+		return t.executeOnce(closure)
+	}
+
+	// 'until' is defined, so we enter the retry loop.
+	retries := t.Retries
+	if retries == 0 {
+		retries = 3 // Default retries
+	}
+
+	delay := t.Delay
+	if delay == 0 {
+		delay = 5 // Default delay in seconds
+	}
+
+	var lastResult TaskResult
+	for i := 0; i <= retries; i++ {
+		common.LogDebug("Executing task, attempt %d/%d", map[string]interface{}{
+			"task":    t.Name,
+			"host":    closure.HostContext.Host.Name,
+			"attempt": i + 1,
+			"retries": retries,
+		})
+
+		lastResult = t.executeOnce(closure)
+
+		if t.Register != "" {
+			if fact, ok := closure.GetFact(t.Register); ok {
+				if factMap, ok := fact.(map[string]interface{}); ok {
+					factMap["attempts"] = i + 1
+					closure.HostContext.Facts.Store(t.Register, factMap)
+				}
+			}
+		}
+
+		// The variable from the task run must be registered before 'until' is evaluated.
+		// `executeOnce` already handles registration via HandleResult.
+		// RegisterVariableIfNeeded(lastResult, t, closure)
+
+		// Now evaluate the 'until' condition.
+		conditionMet, err := evaluateConditions(t.Until, closure)
+		if err != nil {
+			common.LogWarn("Error evaluating until condition, considering it false", map[string]interface{}{
+				"task":      t.Name,
+				"host":      closure.HostContext.Host.Name,
+				"condition": t.Until,
+				"error":     err.Error(),
+			})
+			conditionMet = false
+		}
+
+		common.DebugOutput("Evaluated until condition %q -> %t", t.Until, conditionMet)
+
+		if conditionMet {
+			// Condition met, task is successful.
+			// If the last attempt had an error, we clear it because 'until' is true.
+			if lastResult.Error != nil {
+				common.LogDebug("Until condition met, ignoring previous error", map[string]interface{}{
+					"task":  t.Name,
+					"host":  closure.HostContext.Host.Name,
+					"error": lastResult.Error.Error(),
+				})
+				lastResult.Error = nil
+				lastResult.Failed = false
+				// The status might need to be re-evaluated now that it's not failed.
+				if lastResult.Output != nil && lastResult.Output.Changed() {
+					lastResult.Status = TaskStatusChanged
+				} else {
+					lastResult.Status = TaskStatusOk
+				}
+			}
+			lastResult.Duration = time.Since(startTime) // Update total duration
+			return lastResult
+		}
+
+		// Condition not met, if we have more retries, wait and try again.
+		if i < retries {
+			common.LogInfo("Until condition not met, waiting for delay before retrying", map[string]interface{}{
+				"task":  t.Name,
+				"host":  closure.HostContext.Host.Name,
+				"delay": delay,
+			})
+			time.Sleep(time.Duration(delay) * time.Second)
+		}
+	}
+
+	// All retries are exhausted and the condition was never met. The task fails.
+	// The lastResult from the final attempt is returned.
+	common.LogWarn("Task failed after all retries, until condition never met", map[string]interface{}{
+		"task":    t.Name,
+		"host":    closure.HostContext.Host.Name,
+		"retries": retries,
+	})
+	if lastResult.Error == nil {
+		lastResult.Error = fmt.Errorf("task failed after %d retries, until condition was never met", retries)
+		lastResult.Failed = true
+		lastResult.Status = TaskStatusFailed
+	}
+	lastResult.Duration = time.Since(startTime)
+	return lastResult
+}
+
+// executeOnce performs a single execution of the task's module.
+// It handles templating, execution, and result processing.
+func (t Task) executeOnce(closure *Closure) TaskResult {
+	startTime := time.Now()
+	r := TaskResult{Task: t, Closure: closure, Status: TaskStatusSkipped}
+
+	// The 'when' condition is checked in the calling ExecuteModule function
+	// to avoid re-checking in a loop. Here we proceed directly to execution.
 
 	module, ok := GetModule(t.Module)
 	if !ok {
@@ -491,6 +616,8 @@ func evaluateConditions(conditions interface{}, c *Closure) (bool, error) {
 			return false, fmt.Errorf("error evaluating condition '%s': %w", v, err)
 		}
 		return jinja.IsTruthy(templatedCondition), nil
+	case bool:
+		return v, nil
 	case []interface{}:
 		for _, condition := range v {
 			if condStr, ok := condition.(string); ok {

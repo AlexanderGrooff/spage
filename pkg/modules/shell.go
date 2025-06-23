@@ -85,15 +85,12 @@ func (m ShellModule) templateAndExecute(command string, closure *pkg.Closure, pr
 		return ShellOutput{}, fmt.Errorf("failed to template shell command: %w", err) // Added error wrapping
 	}
 
-	// Escape backslashes and double quotes for embedding in a shell double-quoted string.
-	escaper := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
-	escapedCmd := escaper.Replace(templatedCmd)
+	// Correctly escape for 'sh -c'. The standard way is to replace ' with '\''
+	// inside a single-quoted string. This is much more robust than escaping double quotes.
+	escapedCmd := strings.ReplaceAll(templatedCmd, "'", "'\\''")
+	commandForShell := fmt.Sprintf("sh -c '%s'", escapedCmd)
 
-	// Format the command for "sh -c" using double quotes.
-	// This allows internal single quotes and preserves newlines (as \n interpreted by shell).
-	commandForShell := fmt.Sprintf("sh -c \"%s\"", escapedCmd)
-
-	// Pass the double-quoted command string to RunCommand
+	// Pass the single-quoted command string to RunCommand
 	rc, stdout, stderr, err := closure.HostContext.RunCommand(commandForShell, runAs)
 	output := ShellOutput{
 		Stdout:  stdout,

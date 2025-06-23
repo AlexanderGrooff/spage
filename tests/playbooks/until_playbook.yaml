@@ -1,0 +1,52 @@
+---
+- name: Test until, retries, and delay
+  hosts: all
+  tasks:
+    - name: Create tmp directory for test
+      file:
+        path: /tmp/spage
+        state: directory
+
+    - name: Remove counter file before starting
+      file:
+        path: /tmp/spage/until_counter.txt
+        state: absent
+
+    - name: Remove success file before starting
+      file:
+        path: /tmp/spage/until_succeeded.txt
+        state: absent
+
+    - name: Task that should succeed on the third try
+      shell: |
+        COUNTER_FILE=/tmp/spage/until_counter.txt
+        if [ ! -f "$COUNTER_FILE" ]; then
+            echo 1 > "$COUNTER_FILE"
+            echo "Attempt 1: fail"
+            exit 1
+        fi
+
+        count=$(cat "$COUNTER_FILE")
+        if [ "$count" -lt 2 ]; then
+            new_count=$((count + 1))
+            echo $new_count > "$COUNTER_FILE"
+            echo "Attempt $new_count: fail"
+            exit 1
+        else
+            new_count=$((count + 1))
+            echo $new_count > "$COUNTER_FILE"
+            echo "Attempt $new_count: succeed"
+            touch /tmp/spage/until_succeeded.txt
+            exit 0
+        fi
+      register: my_task
+      until: my_task.rc == 0
+      retries: 5
+      delay: 0
+
+    - name: Verify the results
+      assert:
+        that:
+          - my_task.rc == 0
+          - my_task.attempts == 3
+          - "'succeed' in my_task.stdout" 

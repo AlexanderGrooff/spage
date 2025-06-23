@@ -110,6 +110,9 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"delegate_to",
 		"run_once",
 		"no_log",
+		"until",
+		"retries",
+		"delay",
 	}
 
 	var tasks []GraphNode
@@ -125,6 +128,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			Register:   getStringFromMap(block, "register"),
 			RunAs:      getStringFromMap(block, "run_as"),
 			DelegateTo: getStringFromMap(block, "delegate_to"),
+			Until:      getStringFromMap(block, "until"),
 			// Booleans (that might be strings like 'yes') are handled below
 		}
 
@@ -214,6 +218,24 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			if runOnceFound {
 				task.RunOnce = runOnceVal
 			} // else task.RunOnce keeps its default zero value (false)
+		}
+
+		if retriesVal, ok := block["retries"]; ok {
+			if v, ok := retriesVal.(int); ok {
+				task.Retries = v
+			} else {
+				errors = append(errors, fmt.Errorf("invalid type (%T) for 'retries' key in task %q, expected integer", retriesVal, task.Name))
+				errored = true
+			}
+		}
+
+		if delayVal, ok := block["delay"]; ok {
+			if v, ok := delayVal.(int); ok {
+				task.Delay = v
+			} else {
+				errors = append(errors, fmt.Errorf("invalid type (%T) for 'delay' key in task %q, expected integer", delayVal, task.Name))
+				errored = true
+			}
 		}
 
 		// Handle 'failed_when' using the helper function
