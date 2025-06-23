@@ -141,6 +141,9 @@ func (e *LocalGraphExecutor) Execute(hostContexts map[string]*pkg.HostContext, o
 		}
 
 		if levelErrored {
+			if !cfg.Revert {
+				return fmt.Errorf("run failed on level %d, revert is disabled by config", executionLevel)
+			}
 			if cfg.Logging.Format == "plain" {
 				fmt.Printf("\nREVERTING TASKS **********************************************\n")
 			} else {

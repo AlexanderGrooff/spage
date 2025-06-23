@@ -919,14 +919,9 @@ func (e *TemporalGraphExecutor) Execute(
 			cfg, numExpectedResultsOnLevel,
 		)
 		if errProcessingResults != nil {
-			return errProcessingResults
-		}
-
-		if len(processedResultsThisLevel) > 0 {
-			executionTaskResults[executionLevel] = processedResultsThisLevel
-		}
-
-		if errProcessingResults != nil {
+			if !cfg.Revert {
+				return fmt.Errorf("error during graph execution on level %d: %w. Revert disabled", executionLevel, errProcessingResults)
+			}
 			// If processLevelResults itself returns an error (e.g., premature channel close), attempt revert
 			logger.Error("Error processing results, attempting revert", "level", executionLevel, "error", errProcessingResults)
 			if revertErr := e.revertWorkflow(workflowCtx, executionTaskResults, hostContexts, workflowHostFacts, cfg, executionLevel); revertErr != nil {
@@ -935,7 +930,14 @@ func (e *TemporalGraphExecutor) Execute(
 			return fmt.Errorf("error during graph execution on level %d: %w, tasks reverted", executionLevel, errProcessingResults)
 		}
 
+		if len(processedResultsThisLevel) > 0 {
+			executionTaskResults[executionLevel] = processedResultsThisLevel
+		}
+
 		if levelErrored {
+			if !cfg.Revert {
+				return fmt.Errorf("run failed on level %d, revert is disabled", executionLevel)
+			}
 			logger.Info("Run failed, task reversion required", map[string]interface{}{"level": executionLevel})
 			if revertErr := e.revertWorkflow(workflowCtx, executionTaskResults, hostContexts, workflowHostFacts, cfg, executionLevel); revertErr != nil {
 				return fmt.Errorf("run failed on level %d and also failed during revert: %w", executionLevel, revertErr)

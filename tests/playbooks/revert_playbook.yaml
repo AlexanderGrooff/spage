@@ -1,12 +1,13 @@
 ---
 # This playbook tests revert functionality by making changes and then failing,
 # which should trigger the revert mechanism. Only the 2nd task should be reverted.
-- name: Create content
-  shell:
-    execute: "echo initial content > /tmp/spage/revert_test.txt"
+- name: Revert test playbook
+  hosts: all
+  tasks:
+    - name: Create content
+      shell: echo "not reverted" > /tmp/spage/revert_test.txt
 
-- name: Fail intentionally to trigger revert
-  shell:
-    execute: "exit 1" 
-    revert: "echo reverted > /tmp/spage/revert_test.txt"
-  after: Create content
+    - name: Fail intentionally to trigger revert
+      shell:
+        execute: exit 1
+        revert: echo "reverted" > /tmp/spage/revert_test.txt

@@ -1,0 +1,7 @@
+logging:
+  level: debug
+  format: plain
+  timestamps: false
+execution_mode: "parallel"
+executor: "local"
+revert: false 

@@ -14,6 +14,7 @@ type Config struct {
 	ExecutionMode string         `mapstructure:"execution_mode"`
 	Executor      string         `mapstructure:"executor"` // "local" or "temporal"
 	Temporal      TemporalConfig `mapstructure:"temporal"`
+	Revert        bool           `mapstructure:"revert"`
 }
 
 // LoggingConfig holds logging-related configuration
@@ -94,6 +95,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("execution_mode", "parallel")
 	v.SetDefault("executor", "local")
 	v.SetDefault("logging.timestamps", true)
+	v.SetDefault("revert", true)
 
 	// Temporal defaults
 	v.SetDefault("temporal.address", "") // Default to empty, SDK will use localhost:7233 or TEMPORAL_GRPC_ENDPOINT

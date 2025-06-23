@@ -231,6 +231,31 @@ if ! check_target "[ -f /tmp/spage/revert_test.txt ] && grep -q 'reverted' /tmp/
     exit 1
 fi
 
+# Test 6.1: No Revert functionality test
+echo "Running NO REVERT functionality test..."
+
+# Run revert test playbook with no_revert config
+go run main.go generate -p $TESTS_DIR/playbooks/revert_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+
+# Temporarily disable exit on error for the failing command
+set +e
+./generated_tasks $INVENTORY_ARG -config tests/configs/no_revert.yaml
+NO_REVERT_EXIT_CODE=$?
+set -e
+
+# Check if the exit code indicates failure (should be 1 for intentional failure)
+if [ $NO_REVERT_EXIT_CODE -ne 1 ]; then
+    echo "No Revert test failed: playbook should have failed with exit code 1, got $NO_REVERT_EXIT_CODE"
+    exit 1
+fi
+
+# Verify file was NOT reverted on the target
+if ! check_target "[ -f /tmp/spage/revert_test.txt ] && grep -q 'not reverted' /tmp/spage/revert_test.txt"; then
+    echo "No Revert test failed: file /tmp/spage/revert_test.txt should not have been reverted"
+    exit 1
+fi
+
 # Test 7: Execution Mode Test
 echo "Running execution mode test..."
 go run main.go generate -p $TESTS_DIR/playbooks/execution_mode_playbook.yaml -o generated_tasks.go
