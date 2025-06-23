@@ -69,7 +69,7 @@ func (o YayOutput) Changed() bool {
 }
 
 func IsPackageInstalled(packageName string, c *pkg.HostContext, runAs string) bool {
-	_, _, err := c.RunCommand(fmt.Sprintf("yay -Qi %s", packageName), runAs)
+	_, _, _, err := c.RunCommand(fmt.Sprintf("yay -Qi %s", packageName), runAs)
 	return err == nil
 }
 
@@ -81,7 +81,7 @@ func (m YayModule) InstallPackages(packages []string, c *pkg.HostContext, runAs 
 		}
 	}
 	if len(missingPackages) > 0 {
-		stdout, stderr, err := c.RunCommand(fmt.Sprintf("yay -S --noconfirm %s", strings.Join(missingPackages, " ")), runAs)
+		_, stdout, stderr, err := c.RunCommand(fmt.Sprintf("yay -S --noconfirm %s", strings.Join(missingPackages, " ")), runAs)
 		if err != nil {
 			return YayOutput{
 				Stdout: stdout,
@@ -107,7 +107,7 @@ func (m YayModule) RemovePackages(packages []string, c *pkg.HostContext, runAs s
 		}
 	}
 	if len(presentPackages) > 0 {
-		stdout, stderr, err := c.RunCommand(fmt.Sprintf("yay -Rns --noconfirm %s", strings.Join(presentPackages, " ")), runAs)
+		_, stdout, stderr, err := c.RunCommand(fmt.Sprintf("yay -Rns --noconfirm %s", strings.Join(presentPackages, " ")), runAs)
 		if err != nil {
 			return YayOutput{
 				Stdout: stdout,

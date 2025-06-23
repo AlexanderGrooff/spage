@@ -69,7 +69,7 @@ func (o PacmanOutput) Changed() bool {
 }
 
 func (m PacmanModule) IsPackageInstalled(packageName string, c *pkg.HostContext, runAs string) bool {
-	_, _, err := c.RunCommand(fmt.Sprintf("pacman -Qi %s", packageName), runAs)
+	_, _, _, err := c.RunCommand(fmt.Sprintf("pacman -Qi %s", packageName), runAs)
 	return err == nil
 }
 
@@ -81,7 +81,7 @@ func (m PacmanModule) InstallPackages(packages []string, c *pkg.HostContext, run
 		}
 	}
 	if len(missingPackages) > 0 {
-		stdout, stderr, err := c.RunCommand(fmt.Sprintf("pacman -S --noconfirm %s", strings.Join(missingPackages, " ")), runAs)
+		_, stdout, stderr, err := c.RunCommand(fmt.Sprintf("pacman -S --noconfirm %s", strings.Join(missingPackages, " ")), runAs)
 		if err != nil {
 			return PacmanOutput{
 				Stdout: stdout,
@@ -107,7 +107,7 @@ func (m PacmanModule) RemovePackages(packages []string, c *pkg.HostContext, runA
 		}
 	}
 	if len(presentPackages) > 0 {
-		stdout, stderr, err := c.RunCommand(fmt.Sprintf("pacman -Rns --noconfirm %s", strings.Join(presentPackages, " ")), runAs)
+		_, stdout, stderr, err := c.RunCommand(fmt.Sprintf("pacman -Rns --noconfirm %s", strings.Join(presentPackages, " ")), runAs)
 		if err != nil {
 			return PacmanOutput{
 				Stdout: stdout,

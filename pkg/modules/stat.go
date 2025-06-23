@@ -243,7 +243,7 @@ func (m StatModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg
 		}
 
 		common.DebugOutput("Running checksum: %s", checksumCmd)
-		chkStdout, chkStderr, chkErr := closure.HostContext.RunCommand(checksumCmd, runAs)
+		_, chkStdout, chkStderr, chkErr := closure.HostContext.RunCommand(checksumCmd, runAs)
 		if chkErr != nil {
 			common.DebugOutput("WARNING: Failed to calculate checksum for %s: %v, stderr: %s", statParams.Path, chkErr, chkStderr)
 		} else {
@@ -260,15 +260,9 @@ func (m StatModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg
 
 	// Get Mime Type
 	if statParams.GetMime {
-		mimeCmd := "file --brief"
-		if statParams.Follow {
-			mimeCmd += " -L" // Follow symlinks
-		}
-		// Quote path using Sprintf %q
-		mimeCmd += fmt.Sprintf(" --mime-type %s", fmt.Sprintf("%q", statParams.Path))
-
-		common.DebugOutput("Running mime-type: %s", mimeCmd)
-		mimeStdout, mimeStderr, mimeErr := closure.HostContext.RunCommand(mimeCmd, runAs)
+		mimeCmd := fmt.Sprintf("file --brief --mime-type %s", fmt.Sprintf("%q", statParams.Path))
+		common.DebugOutput("Running mime type check: %s", mimeCmd)
+		_, mimeStdout, mimeStderr, mimeErr := closure.HostContext.RunCommand(mimeCmd, runAs)
 		if mimeErr != nil {
 			common.DebugOutput("WARNING: Failed to get mime type for %s: %v, stderr: %s", statParams.Path, mimeErr, mimeStderr)
 		} else {
@@ -276,19 +270,16 @@ func (m StatModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg
 		}
 	}
 
-	// Get Attributes (Linux specific using lsattr)
+	// Get File Attributes (Linux specific example with 'lsattr')
 	if statParams.GetAttributes {
-		// Quote path using Sprintf %q
+		// This is highly OS-specific. Example for Linux:
 		attrCmd := fmt.Sprintf("lsattr -d %s", fmt.Sprintf("%q", statParams.Path))
-		common.DebugOutput("Running lsattr: %s", attrCmd)
-		attrStdout, attrStderr, attrErr := closure.HostContext.RunCommand(attrCmd, runAs)
+		common.DebugOutput("Running attribute check: %s", attrCmd)
+		_, attrStdout, attrStderr, attrErr := closure.HostContext.RunCommand(attrCmd, runAs)
 		if attrErr != nil {
-			if strings.Contains(attrStderr, "command not found") || strings.Contains(attrStderr, "not found") {
-				common.DebugOutput("lsattr command not found on host, cannot get attributes for %s", statParams.Path)
-			} else {
-				common.DebugOutput("WARNING: Failed to get attributes for %s: %v, stderr: %s", statParams.Path, attrErr, attrStderr)
-			}
+			common.DebugOutput("WARNING: Failed to get attributes for %s: %v, stderr: %s", statParams.Path, attrErr, attrStderr)
 		} else {
+			// lsattr output is like "----i---------e---- /path/to/file"
 			parts := strings.Fields(attrStdout)
 			if len(parts) > 0 {
 				out.Stat.Attributes = parts[0]

@@ -382,15 +382,10 @@ func (lm LineinfileModule) Revert(params pkg.ConcreteModuleInputProvider, closur
 	// OriginalFileExists in prevOutput tells us if the file was there *before* the Execute ran.
 	if !prevOutput.OriginalFileExists {
 		common.DebugOutput("Lineinfile Revert: File %s was created by Execute. Reverting by deleting.", input.Path)
-		_, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -f %s", input.Path), runAs)
-		if err != nil {
-			return nil, fmt.Errorf("failed to revert by deleting created file %s: %w", input.Path, err)
+		if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -f %s", fmt.Sprintf("%q", input.Path)), runAs); err != nil {
+			return nil, fmt.Errorf("revert failed: could not remove created file %s: %w", input.Path, err)
 		}
-		return LineinfileOutput{
-			Msg:                fmt.Sprintf("file %s deleted during revert", input.Path),
-			Diff:               pkg.RevertableChange[string]{Before: prevOutput.Diff.After, After: ""}, // Content is now empty
-			OriginalFileExists: false,                                                                  // It did not exist before Execute, and now it's gone again.
-		}, nil
+		return LineinfileOutput{Msg: "reverted file creation"}, nil
 	}
 
 	// File existed before, revert its content (and potentially mode if we tracked it)

@@ -32,6 +32,7 @@ type CommandOutput struct {
 	Stdout  string `yaml:"stdout"`
 	Stderr  string `yaml:"stderr"`
 	Command string `yaml:"command"` // The actual command executed after templating.
+	Rc      int    `yaml:"rc"`
 	pkg.ModuleOutput
 }
 
@@ -84,6 +85,7 @@ func (o CommandOutput) AsFacts() map[string]interface{} {
 		"stderr":  o.Stderr,
 		"command": o.Command,
 		"changed": o.Changed(),
+		"rc":      o.Rc,
 	}
 }
 
@@ -104,11 +106,12 @@ func (m CommandModule) templateAndExecute(command string, closure *pkg.Closure, 
 	// Execute the command directly without shell interpolation.
 	// RunCommand needs to handle this case appropriately (e.g., using exec.Command directly).
 	// We pass the raw templated command.
-	stdout, stderr, err := closure.HostContext.RunCommand(templatedCmd, runAs) // <= NO shell wrapper
+	rc, stdout, stderr, err := closure.HostContext.RunCommand(templatedCmd, runAs) // <= NO shell wrapper
 	output := CommandOutput{
 		Stdout:  stdout,
 		Stderr:  stderr,
 		Command: templatedCmd, // Store the templated command that was executed
+		Rc:      rc,
 	}
 
 	if err != nil {

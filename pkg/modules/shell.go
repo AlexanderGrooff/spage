@@ -29,6 +29,8 @@ type ShellOutput struct {
 	Stderr  string `yaml:"stderr"`
 	Command string `yaml:"command"`
 	pkg.ModuleOutput
+	WasChanged bool `json:"changed"`
+	Rc         int  `json:"rc"`
 }
 
 func (i ShellInput) ToCode() string {
@@ -54,7 +56,7 @@ func (o ShellOutput) String() string {
 }
 
 func (o ShellOutput) Changed() bool {
-	return true
+	return o.WasChanged
 }
 
 // AsFacts implements the pkg.FactProvider interface.
@@ -62,10 +64,11 @@ func (o ShellOutput) Changed() bool {
 // using lowercase keys for Ansible compatibility.
 func (o ShellOutput) AsFacts() map[string]interface{} {
 	return map[string]interface{}{
-		"stdout":  o.Stdout,
-		"stderr":  o.Stderr,
-		"command": o.Command,
-		"changed": o.Changed(),
+		"stdout":       o.Stdout,
+		"stderr":       o.Stderr,
+		"rc":           o.Rc,
+		"changed":      o.WasChanged,
+		"stdout_lines": strings.Split(o.Stdout, "\n"),
 	}
 }
 
@@ -91,11 +94,12 @@ func (m ShellModule) templateAndExecute(command string, closure *pkg.Closure, pr
 	commandForShell := fmt.Sprintf("sh -c \"%s\"", escapedCmd)
 
 	// Pass the double-quoted command string to RunCommand
-	stdout, stderr, err := closure.HostContext.RunCommand(commandForShell, runAs)
+	rc, stdout, stderr, err := closure.HostContext.RunCommand(commandForShell, runAs)
 	output := ShellOutput{
 		Stdout:  stdout,
 		Stderr:  stderr,
 		Command: commandForShell, // Store the command passed to RunCommand
+		Rc:      rc,
 	}
 
 	// Don't wrap the error from RunCommand if it's nil

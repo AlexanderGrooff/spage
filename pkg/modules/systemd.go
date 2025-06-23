@@ -83,7 +83,7 @@ func (o SystemdOutput) Changed() bool {
 }
 
 func (m SystemdModule) getCurrentState(name string, c *pkg.HostContext, runAs string) (SystemdState, error) {
-	stdout, _, err := c.RunCommand(fmt.Sprintf("systemctl is-enabled %s", name), runAs)
+	_, stdout, _, err := c.RunCommand(fmt.Sprintf("systemctl is-enabled %s", name), runAs)
 	if err != nil {
 		return SystemdState{Enabled: false}, nil
 	}
@@ -91,27 +91,27 @@ func (m SystemdModule) getCurrentState(name string, c *pkg.HostContext, runAs st
 }
 
 func (m SystemdModule) Enable(name string, c *pkg.HostContext, runAs string) error {
-	_, _, err := c.RunCommand(fmt.Sprintf("systemctl enable %s", name), runAs)
+	_, _, _, err := c.RunCommand(fmt.Sprintf("systemctl enable %s", name), runAs)
 	return err
 }
 
 func (m SystemdModule) Start(name string, c *pkg.HostContext, runAs string) error {
-	_, _, err := c.RunCommand(fmt.Sprintf("systemctl start %s", name), runAs)
+	_, _, _, err := c.RunCommand(fmt.Sprintf("systemctl start %s", name), runAs)
 	return err
 }
 
 func (m SystemdModule) Stop(name string, c *pkg.HostContext, runAs string) error {
-	_, _, err := c.RunCommand(fmt.Sprintf("systemctl stop %s", name), runAs)
+	_, _, _, err := c.RunCommand(fmt.Sprintf("systemctl stop %s", name), runAs)
 	return err
 }
 
 func (m SystemdModule) Disable(name string, c *pkg.HostContext, runAs string) error {
-	_, _, err := c.RunCommand(fmt.Sprintf("systemctl disable %s", name), runAs)
+	_, _, _, err := c.RunCommand(fmt.Sprintf("systemctl disable %s", name), runAs)
 	return err
 }
 
 func (m SystemdModule) DaemonReload(c *pkg.HostContext, runAs string) error {
-	_, _, err := c.RunCommand("systemctl daemon-reload", runAs)
+	_, _, _, err := c.RunCommand("systemctl daemon-reload", runAs)
 	return err
 }
 

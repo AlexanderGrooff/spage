@@ -238,7 +238,7 @@ func runAptCommand(c *pkg.HostContext, runAsUser string, args ...string) (string
 	cmdString := strings.Join(fullCmd, " ")
 
 	// Use the provided runAsUser parameter
-	stdout, stderr, err := c.RunCommand(cmdString, runAsUser)
+	_, stdout, stderr, err := c.RunCommand(cmdString, runAsUser)
 
 	if err != nil {
 		return stdout, stderr, false, fmt.Errorf("apt command failed: %w\nStderr: %s", err, stderr)
@@ -258,14 +258,14 @@ func runAptCommand(c *pkg.HostContext, runAsUser string, args ...string) (string
 
 // isPackageInstalled checks if a package is installed using dpkg-query.
 func isPackageInstalled(c *pkg.HostContext, pkgName string) (bool, error) {
-	// dpkg-query exits with 0 if installed, non-zero otherwise.
-	// Use RunCommand without assuming root initially, as dpkg-query might not need it.
-	// Need double backslash for the single quote in Go string literal
+	// dpkg-query is a reliable way to check package status.
 	cmdString := fmt.Sprintf("dpkg-query -W -f='${Status}' %s", pkgName)
-	stdout, stderr, err := c.RunCommand(cmdString, "") // Run as default user first
+	// No specific user needed for dpkg-query in this context
+	_, stdout, stderr, err := c.RunCommand(cmdString, "")
 
 	if err != nil {
-		// If error contains "no packages found matching", it means not installed.
+		// Dpkg returns exit code 1 if package is not found, which is not an "error" for our check.
+		// We can check the stderr for the "no packages found matching" message.
 		if strings.Contains(stderr, "no packages found matching") || strings.Contains(stdout, "no packages found matching") {
 			return false, nil
 		} else if strings.Contains(err.Error(), "exit status 1") {

@@ -22,3 +22,26 @@
     echo "Short form with block" > /tmp/spage/spage_test/testfile.txt
     echo "Short form with block" > /tmp/spage/spage_test/testfile2.txt
   after: Create test file in directory
+
+- name: Test successful command and check rc
+  shell: "exit 0"
+  register: success_task
+  after: "Short form shell with block"
+
+- name: Assert successful command rc
+  assert:
+    that:
+      - "success_task.rc == 0"
+  after: "Test successful command and check rc"
+
+- name: Test failing command and check rc
+  shell: "exit 1"
+  register: fail_task
+  ignore_errors: true
+  after: "Assert successful command rc"
+
+- name: Assert failing command rc
+  assert:
+    that:
+      - "fail_task.rc == 1"
+  after: "Test failing command and check rc"

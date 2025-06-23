@@ -156,7 +156,7 @@ func getOriginalState(path string, c *pkg.HostContext) (exists bool, state, mode
 		// Find the intended runAs user from the task parameters if available (TODO: Requires plumbing runAs to getOriginalState somehow or handling it in Execute)
 		tempRunAs := ""                                                    // Placeholder - How to get the correct runAs for the readlink command?
 		readlinkCmd := fmt.Sprintf("readlink %s", fmt.Sprintf("%q", path)) // Quote path
-		targetStdout, targetStderr, targetErr := c.RunCommand(readlinkCmd, tempRunAs)
+		_, targetStdout, targetStderr, targetErr := c.RunCommand(readlinkCmd, tempRunAs)
 		if targetErr != nil {
 			common.DebugOutput("WARNING: Failed to read link target for %s: %v, stderr: %s", path, targetErr, targetStderr)
 			linkTarget = "" // Treat as broken link or unknown target
@@ -240,7 +240,7 @@ func (m FileModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg
 		actionTaken = true
 		// If target state is different from absent, ensure path is clear first unless creating a directory
 		if originalExists && desiredState != originalState && desiredState != "absent" && desiredState != "directory" {
-			if _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
+			if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
 				return nil, fmt.Errorf("failed to remove existing path %s before changing state: %v", templatedPath, err)
 			}
 		}
@@ -248,49 +248,38 @@ func (m FileModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg
 		switch desiredState {
 		case "file":
 			// Ensure path exists as a file (touch)
-			if err := closure.HostContext.WriteFile(templatedPath, "", runAs); err != nil {
+			if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("touch %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
 				return nil, fmt.Errorf("failed to touch file %s: %v", templatedPath, err)
 			}
-			newState = "file"
-			newIsLnk = false
-			newLinkTarget = ""
 			newExists = true
+			newState = "file"
 		case "directory":
-			// Ensure path exists as a directory
-			if _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("mkdir -p %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
+			if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("mkdir -p %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
 				return nil, fmt.Errorf("failed to create directory %s: %v", templatedPath, err)
 			}
-			newState = "directory"
-			newIsLnk = false
-			newLinkTarget = ""
 			newExists = true
+			newState = "directory"
 		case "absent":
-			// Ensure path does not exist
 			if originalExists {
-				if _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
+				if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
 					return nil, fmt.Errorf("failed to remove %s: %v", templatedPath, err)
 				}
 			}
-			newState = "absent"
-			newIsLnk = false
-			newLinkTarget = ""
 			newExists = false
+			newState = "absent"
 		case "link":
-			// Ensure path exists as a link pointing to Src
-			// Remove existing path first to ensure correct link creation
-			if originalExists {
-				if _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
-					return nil, fmt.Errorf("failed to remove existing path %s before creating link: %v", templatedPath, err)
+			// Remove existing path if it's not already the link we want to create/update
+			if originalExists && (originalState != "link" || (originalState == "link" && originalLinkTarget != templatedSrc)) {
+				if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -f %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
+					return nil, fmt.Errorf("failed to remove existing file before creating link %s: %v", templatedPath, err)
 				}
 			}
-			linkCmd := fmt.Sprintf("ln -sf %s %s", fmt.Sprintf("%q", templatedSrc), fmt.Sprintf("%q", templatedPath)) // Quote src and path
-			if _, _, err := closure.HostContext.RunCommand(linkCmd, runAs); err != nil {
-				return nil, fmt.Errorf("failed to create link %s -> %s: %v", templatedPath, templatedSrc, err)
+			// Create the symlink
+			if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("ln -sfn %s %s", fmt.Sprintf("%q", templatedSrc), fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
+				return nil, fmt.Errorf("failed to create symlink from %s to %s: %v", templatedSrc, templatedPath, err)
 			}
-			newState = "link"
-			newIsLnk = true
-			newLinkTarget = templatedSrc
 			newExists = true
+			newState = "link"
 		}
 	} else if desiredState == "link" && originalLinkTarget != templatedSrc {
 		// Special case: State is already 'link', but the target needs updating
@@ -298,7 +287,7 @@ func (m FileModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg
 		actionTaken = true
 		// Recreate the link with the new target
 		linkCmd := fmt.Sprintf("ln -sf %s %s", fmt.Sprintf("%q", templatedSrc), fmt.Sprintf("%q", templatedPath)) // Quote src and path
-		if _, _, err := closure.HostContext.RunCommand(linkCmd, runAs); err != nil {
+		if _, _, _, err := closure.HostContext.RunCommand(linkCmd, runAs); err != nil {
 			return nil, fmt.Errorf("failed to update link %s -> %s: %v", templatedPath, templatedSrc, err)
 		}
 		newLinkTarget = templatedSrc // Only target changes
@@ -387,26 +376,26 @@ func (m FileModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.
 	if !prev.Exists.Before {
 		// Original state was absent, so remove whatever is there now
 		common.DebugOutput("Reverting to absent: removing %s", templatedPath)
-		if _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
+		if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
 			return nil, fmt.Errorf("revert failed: could not remove %s: %v", templatedPath, err)
 		}
 	} else {
 		// Original state existed, ensure it exists now in the correct state
 		// Remove current path first to handle state changes (e.g., dir -> file)
 		common.DebugOutput("Removing current path %s before reverting to original state %s", templatedPath, prev.State.Before)
-		if _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
+		if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
 			common.DebugOutput("Warning during revert: failed to remove existing path %s (might be ok if state didn't change drastically): %v", templatedPath, err)
 		}
 
 		switch prev.State.Before {
 		case "file":
 			common.DebugOutput("Reverting to file: touching %s", templatedPath)
-			if err := closure.HostContext.WriteFile(templatedPath, "", runAs); err != nil {
+			if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("touch %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
 				return nil, fmt.Errorf("revert failed: could not touch file %s: %v", templatedPath, err)
 			}
 		case "directory":
 			common.DebugOutput("Reverting to directory: mkdir -p %s", templatedPath)
-			if _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("mkdir -p %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
+			if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("mkdir -p %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
 				return nil, fmt.Errorf("revert failed: could not create directory %s: %v", templatedPath, err)
 			}
 		case "link":
@@ -415,7 +404,7 @@ func (m FileModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.
 			}
 			common.DebugOutput("Reverting to link: ln -sf %s %s", prev.LinkTarget.Before, templatedPath)
 			linkCmd := fmt.Sprintf("ln -sf %s %s", fmt.Sprintf("%q", prev.LinkTarget.Before), fmt.Sprintf("%q", templatedPath)) // Quote paths
-			if _, _, err := closure.HostContext.RunCommand(linkCmd, runAs); err != nil {
+			if _, _, _, err := closure.HostContext.RunCommand(linkCmd, runAs); err != nil {
 				return nil, fmt.Errorf("revert failed: could not create link %s -> %s: %v", templatedPath, prev.LinkTarget.Before, err)
 			}
 		case "absent":

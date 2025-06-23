@@ -72,7 +72,7 @@ func (o GitOutput) Changed() bool {
 }
 
 func (m GitModule) GetCurrentRev(dest string, c *pkg.HostContext, runAs string) (string, error) {
-	stdout, _, err := c.RunCommand(fmt.Sprintf("git -C %s rev-parse HEAD", dest), runAs)
+	_, stdout, _, err := c.RunCommand(fmt.Sprintf("git -C %s rev-parse HEAD", dest), runAs)
 	if err != nil {
 		return "", err
 	}
@@ -80,7 +80,7 @@ func (m GitModule) GetCurrentRev(dest string, c *pkg.HostContext, runAs string) 
 }
 
 func (m GitModule) CloneRepo(repo, dest string, c *pkg.HostContext, runAs string) error {
-	_, _, err := c.RunCommand(fmt.Sprintf("git clone %s %s", repo, dest), runAs)
+	_, _, _, err := c.RunCommand(fmt.Sprintf("git clone %s %s", repo, dest), runAs)
 	if err != nil {
 		return fmt.Errorf("failed to clone repo %s to %s: %w", repo, dest, err)
 	}
@@ -88,7 +88,7 @@ func (m GitModule) CloneRepo(repo, dest string, c *pkg.HostContext, runAs string
 }
 
 func (m GitModule) CheckoutVersion(dest, version string, c *pkg.HostContext, runAs string) (string, error) {
-	_, stderr, err := c.RunCommand(fmt.Sprintf("git -C %s checkout %s", dest, version), runAs)
+	_, _, stderr, err := c.RunCommand(fmt.Sprintf("git -C %s checkout %s", dest, version), runAs)
 	if err != nil {
 		return "", fmt.Errorf("failed to checkout version %s in repo %s: %w\nstderr: %s", version, dest, err, stderr)
 	}

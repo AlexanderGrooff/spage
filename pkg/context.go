@@ -169,12 +169,12 @@ func (c *HostContext) Stat(path string, follow bool) (os.FileInfo, error) {
 	return runtime.StatRemote(c.sshClient, path)
 }
 
-func (c *HostContext) RunCommand(command, username string) (string, string, error) {
+func (c *HostContext) RunCommand(command, username string) (int, string, string, error) {
 	// TODO: why was this necessary?
 	//if username == "" {
 	//	user, err := user.Current()
 	//	if err != nil {
-	//		return "", "", fmt.Errorf("failed to get current user: %v", err)
+	//		return -1, "", "", fmt.Errorf("failed to get current user: %v", err)
 	//	}
 	//	username = user.Username
 	//}
@@ -183,7 +183,7 @@ func (c *HostContext) RunCommand(command, username string) (string, string, erro
 	}
 	// Ensure SSH client exists for remote commands
 	if c.sshClient == nil {
-		return "", "", fmt.Errorf("ssh client not initialized for remote host %s", c.Host.Host)
+		return -1, "", "", fmt.Errorf("ssh client not initialized for remote host %s", c.Host.Host)
 	}
 	return runtime.RunRemoteCommand(c.sshClient, command, username)
 }

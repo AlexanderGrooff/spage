@@ -100,7 +100,7 @@ func (m CopyModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg
 	// Get mode using ls command if file exists
 	if originalContents != "" {
 		// TODO: get mode with Golang if local
-		stdout, _, err := closure.HostContext.RunCommand(fmt.Sprintf("ls -l %s | cut -d ' ' -f 1", copyParams.Dst), runAs)
+		_, stdout, _, err := closure.HostContext.RunCommand(fmt.Sprintf("ls -l %s | cut -d ' ' -f 1", copyParams.Dst), runAs)
 		if err == nil {
 			originalMode = stdout[1:4] // Extract numeric mode from ls output
 		}
