@@ -5,11 +5,31 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/AlexanderGrooff/spage/pkg"
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/config"
 )
+
+// GenericOutput is a flexible map-based implementation of ModuleOutput.
+type GenericOutput map[string]interface{}
+
+// Facts returns the output map itself, so all keys become facts.
+func (g GenericOutput) Facts() map[string]interface{} {
+	return g
+}
+
+// Changed checks for a "changed" key in the map.
+func (g GenericOutput) Changed() bool {
+	changed, ok := g["changed"].(bool)
+	return ok && changed
+}
+
+// String provides a simple string representation of the map.
+func (g GenericOutput) String() string {
+	return fmt.Sprintf("%v", map[string]interface{}(g))
+}
 
 // LocalTaskRunner implements the TaskRunner interface for local execution.
 // It directly calls the task's ExecuteModule method.
@@ -266,7 +286,6 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 
 		// Handle run_once tasks separately
 		if task.RunOnce {
-			// Get the first available host
 			firstHostCtx, firstHostName := GetFirstAvailableHost(hostContexts)
 			if firstHostCtx == nil {
 				errMsg := fmt.Errorf("no hosts available for run_once task '%s'", task.Name)
@@ -275,10 +294,9 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				case errCh <- errMsg:
 				case <-ctx.Done():
 				}
-				return
+				return // No hosts, so we can't proceed.
 			}
 
-			// Execute only on the first host
 			closures, err := GetTaskClosures(task, firstHostCtx)
 			if err != nil {
 				errMsg := fmt.Errorf("critical error: failed to get task closures for run_once task '%s' on host '%s': %w", task.Name, firstHostName, err)
@@ -290,10 +308,94 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				return
 			}
 
-			for _, individualClosure := range closures {
-				closure := individualClosure
+			if len(closures) == 0 {
+				// Empty loop, do nothing and continue to the next task.
+				continue
+			}
 
-				// Resolve delegate_to if specified
+			if len(closures) > 1 {
+				// Looped run_once: execute all loop items on the first host and aggregate results.
+				var itemResults []pkg.TaskResult
+				var finalError error
+				changed := false
+				var totalDuration time.Duration
+
+				common.LogInfo("Executing run_once task with loop", map[string]interface{}{
+					"task":           task.Name,
+					"execution_host": firstHostName,
+					"item_count":     len(closures),
+				})
+
+				for _, closure := range closures {
+					// Note: delegate_to inside a run_once loop has complex behavior.
+					// This implementation executes on the `firstHostCtx`'s designated runner.
+					// A more advanced version might need to resolve delegation for each item.
+					result := e.Runner.ExecuteTask(ctx, task, closure, cfg)
+					itemResults = append(itemResults, result)
+					totalDuration += result.Duration
+					if result.Status == pkg.TaskStatusChanged {
+						changed = true
+					}
+					if result.Error != nil {
+						finalError = result.Error // Capture the first error and stop.
+						break
+					}
+				}
+
+				var itemOutputs []pkg.ModuleOutput
+				for _, res := range itemResults {
+					itemOutputs = append(itemOutputs, res.Output)
+				}
+
+				finalOutput := GenericOutput{
+					"results": itemOutputs,
+					"changed": changed,
+				}
+				finalStatus := pkg.TaskStatusOk
+				if changed {
+					finalStatus = pkg.TaskStatusChanged
+				}
+				if finalError != nil {
+					finalStatus = pkg.TaskStatusFailed
+				}
+
+				finalClosure := pkg.ConstructClosure(firstHostCtx, task)
+				aggregatedResult := pkg.TaskResult{
+					Task:     task,
+					Closure:  finalClosure,
+					Error:    finalError,
+					Status:   finalStatus,
+					Failed:   finalError != nil,
+					Output:   finalOutput,
+					Duration: totalDuration,
+				}
+
+				// Propagate the aggregated facts to all hosts
+				if task.Register != "" && aggregatedResult.Output != nil {
+					if facts, ok := aggregatedResult.Output.(interface{ Facts() map[string]interface{} }); ok {
+						factsToRegister := facts.Facts()
+						common.LogDebug("Propagating run_once facts to all hosts", map[string]interface{}{
+							"task":     task.Name,
+							"variable": task.Register,
+						})
+						for _, hc := range hostContexts {
+							hc.Facts.Store(task.Register, factsToRegister)
+						}
+					}
+				}
+
+				allResults := CreateRunOnceResultsForAllHosts(aggregatedResult, hostContexts, firstHostName)
+				for _, result := range allResults {
+					select {
+					case resultsCh <- result:
+					case <-ctx.Done():
+						return
+					}
+				}
+			} else {
+				// Single run_once (no loop or loop with one item)
+				closure := closures[0]
+
 				if task.DelegateTo != "" {
 					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure)
 					if err != nil {
@@ -306,35 +408,17 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 						return
 					}
 					if delegatedHostContext != nil {
-						// Update the closure to use the delegated host context
 						closure.HostContext = delegatedHostContext
 					}
 				}
 
-				select {
-				case <-ctx.Done():
-					common.LogWarn("Context cancelled, stopping run_once task dispatch", map[string]interface{}{"task": task.Name, "host": firstHostName})
-					select {
-					case errCh <- fmt.Errorf("run_once task dispatch cancelled for task '%s' on host '%s': %w", task.Name, firstHostName, ctx.Err()):
-					default:
-					}
-					return
-				default:
-				}
-
 				common.LogInfo("Executing run_once task", map[string]interface{}{
 					"task":           task.Name,
-					"execution_host": firstHostName,
-					"total_hosts":    len(hostContexts),
+					"execution_host": closure.HostContext.Host.Name,
 				})
 
-				// Execute the task on the first host
 				originalResult := e.Runner.ExecuteTask(ctx, task, closure, cfg)
-
-				// Create results for all hosts based on the original execution
 				allResults := CreateRunOnceResultsForAllHosts(originalResult, hostContexts, firstHostName)
-
-				// Send results for all hosts
 				for _, result := range allResults {
 					select {
 					case resultsCh <- result:
@@ -344,7 +428,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				}
 			}
 
-			// Continue to next task since run_once is handled
+			// Continue to the next task definition in the level
 			continue
 		}
 

@@ -3,6 +3,7 @@ package executor
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/AlexanderGrooff/spage/pkg"
@@ -17,60 +18,83 @@ func InitializeRecapStats(hostContexts map[string]*pkg.HostContext) map[string]m
 	return recapStats
 }
 
+func CalculateExpectedResults(
+	tasksInLevel []pkg.Task,
+	hostContexts map[string]*pkg.HostContext,
+) (int, error) {
+	numExpectedResultsOnLevel := 0
+	for _, task := range tasksInLevel {
+		// Special handling for run_once, as it executes on one host but produces results for all.
+		if task.RunOnce {
+			if len(hostContexts) > 0 {
+				// One execution (or one aggregated execution for loops) produces a result for every host.
+				numExpectedResultsOnLevel += len(hostContexts)
+			}
+			continue
+		}
+
+		// For regular tasks, count executions across all hosts.
+		for _, hc := range hostContexts {
+			// Create a temporary closure for delegate_to resolution.
+			// The actual host context used for closure calculation depends on delegate_to.
+			resolutionClosure := pkg.ConstructClosure(hc, task)
+			effectiveHostCtx, err := GetDelegatedHostContext(task, hostContexts, resolutionClosure)
+			if err != nil {
+				return 0, fmt.Errorf("failed to resolve delegate_to for count on task '%s', host '%s': %w", task.Name, hc.Host.Name, err)
+			}
+			if effectiveHostCtx == nil {
+				effectiveHostCtx = hc // No delegation, use original host context.
+			}
+
+			closures, err := GetTaskClosures(task, effectiveHostCtx)
+			if err != nil {
+				return 0, fmt.Errorf("failed to get task closures for count on task '%s', host '%s': %w", task.Name, effectiveHostCtx.Host.Name, err)
+			}
+			numExpectedResultsOnLevel += len(closures)
+		}
+	}
+	return numExpectedResultsOnLevel, nil
+}
+
 func PrepareLevelHistoryAndGetCount(
 	tasksInLevel []pkg.Task,
 	hostContexts map[string]*pkg.HostContext,
 	executionLevel int,
 ) (map[string]chan pkg.Task, int, error) {
 	levelHistoryForRevert := make(map[string]chan pkg.Task)
-	numExpectedResultsOnLevel := 0
-
-	for hostname, hc := range hostContexts {
-		numTasksForHostOnLevel := 0
-		for _, task := range tasksInLevel {
-			// Create a temporary closure for delegate_to resolution
-			tempClosure := pkg.ConstructClosure(hc, task)
-			delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, tempClosure)
-			if err != nil {
-				return nil, 0, fmt.Errorf("failed to get host for task: %w", err)
-			}
-			if delegatedHostContext != nil {
-				hc = delegatedHostContext
-			}
-
-			// For run_once tasks, we still need to count them for each host
-			// because we'll send results to all hosts, but we only execute once
-			if task.RunOnce {
-				// For run_once tasks, count them as 1 per host (for result propagation)
-				// but we'll only execute on the first host
-				closures, err := GetTaskClosures(task, hc)
-				if err != nil {
-					return nil, 0, fmt.Errorf("failed to get task closures for count: %w", err)
-				}
-				numTasksForHostOnLevel += len(closures)
-			} else {
-				// Normal task counting
-				closures, err := GetTaskClosures(task, hc)
-				if err != nil {
-					return nil, 0, fmt.Errorf("failed to get task closures for count: %w", err)
-				}
-				numTasksForHostOnLevel += len(closures)
-			}
-		}
-		levelHistoryForRevert[hostname] = make(chan pkg.Task, numTasksForHostOnLevel)
-		numExpectedResultsOnLevel += numTasksForHostOnLevel
-		common.DebugOutput("Expecting %d task instances for host '%s' on level %d", numTasksForHostOnLevel, hostname, executionLevel)
+	for hostname := range hostContexts {
+		// Buffer size can be a best-effort guess; it doesn't need to be perfect for local execution.
+		// A safer approach might be to calculate per-host task count, but total count is simpler.
+		levelHistoryForRevert[hostname] = make(chan pkg.Task, len(tasksInLevel)*2) // Simple heuristic
 	}
+
+	numExpectedResultsOnLevel, err := CalculateExpectedResults(tasksInLevel, hostContexts)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	common.DebugOutput("Expecting %d total task instances on level %d", numExpectedResultsOnLevel, executionLevel)
 	return levelHistoryForRevert, numExpectedResultsOnLevel, nil
 }
 
 // GetFirstAvailableHost returns the first host from the hostContexts map
-// Used for run_once tasks to select the execution host
+// Used for run_once tasks to select the execution host. It sorts the hosts
+// by name to ensure deterministic execution.
 func GetFirstAvailableHost(hostContexts map[string]*pkg.HostContext) (*pkg.HostContext, string) {
-	for hostName, hostCtx := range hostContexts {
-		return hostCtx, hostName
+	if len(hostContexts) == 0 {
+		return nil, ""
 	}
-	return nil, ""
+
+	// Get host names and sort them to ensure consistent ordering
+	hostNames := make([]string, 0, len(hostContexts))
+	for hostName := range hostContexts {
+		hostNames = append(hostNames, hostName)
+	}
+	sort.Strings(hostNames)
+
+	// Return the first host context based on sorted order
+	firstName := hostNames[0]
+	return hostContexts[firstName], firstName
 }
 
 // GetTaskClosures generates one or more Closures for a task, handling loops.

@@ -38,6 +38,46 @@ check_target() {
   return $exit_code
 }
 
+# Function to execute a check command on a specific host, for tests like run_once
+check_target_host() {
+  local host="$1"
+  local cmd_string="$2"
+  local exit_code=0
+
+  if [ -n "$SPAGE_INVENTORY" ]; then
+    # In the test setup, 'alpha' is an inventory host that refers to the local machine.
+    if [ "$host" = "alpha" ]; then
+      echo "Running local check for host 'alpha': $cmd_string" >&2
+      if bash -c "$cmd_string"; then
+        exit_code=0
+      else
+        exit_code=$?
+        echo "Local check for host 'alpha' failed with exit code $exit_code" >&2
+      fi
+      return $exit_code
+    fi
+
+    # For other hosts, attempt SSH.
+    echo "Running remote check on $host: $cmd_string" >&2
+    if ssh "$host" -- "$cmd_string"; then
+      exit_code=0
+    else
+      exit_code=$?
+      echo "Remote check on $host failed with exit code $exit_code" >&2
+    fi
+  else
+    # For local runs (no inventory), it's always a local check.
+    echo "Running local check: $cmd_string" >&2
+    if bash -c "$cmd_string"; then
+       exit_code=0
+    else
+      exit_code=$?
+      echo "Local check failed with exit code $exit_code" >&2
+    fi
+  fi
+  return $exit_code
+}
+
 # Determine inventory argument based on environment variable
 if [ -n "$SPAGE_INVENTORY" ]; then
   if [ ! -f "$SPAGE_INVENTORY" ]; then
@@ -883,9 +923,12 @@ if [ $RUN_ONCE_EXIT_CODE -ne 0 ]; then
     exit 1
 fi
 
+# With alphabetical sorting, 'alpha' should be the host where run_once tasks execute.
+RUN_ONCE_HOST="alpha"
+
 # Check that the run_once file was created on the target
-if ! check_target "[ -f /tmp/spage/run_once_test.txt ]"; then
-    echo "Run_once test failed: run_once file /tmp/spage/run_once_test.txt was not found on target"
+if ! check_target_host "$RUN_ONCE_HOST" "[ -f /tmp/spage/run_once_test.txt ]"; then
+    echo "Run_once test failed: run_once file /tmp/spage/run_once_test.txt was not found on target host $RUN_ONCE_HOST"
     exit 1
 fi
 
@@ -896,30 +939,30 @@ if ! check_target "[ -f /tmp/spage/normal_task.txt ]"; then
 fi
 
 # Check that the run_once loop file was created and has the expected content
-if ! check_target "[ -f /tmp/spage/run_once_loop.txt ]"; then
-    echo "Run_once test failed: run_once loop file /tmp/spage/run_once_loop.txt was not found on target"
+if ! check_target_host "$RUN_ONCE_HOST" "[ -f /tmp/spage/run_once_loop.txt ]"; then
+    echo "Run_once test failed: run_once loop file /tmp/spage/run_once_loop.txt was not found on target host $RUN_ONCE_HOST"
     exit 1
 fi
 
 # Verify the loop file has all three entries (first, second, third)
-if ! check_target "grep -q 'loop_item_first' /tmp/spage/run_once_loop.txt"; then
-    echo "Run_once test failed: loop file missing 'first' entry on target"
+if ! check_target_host "$RUN_ONCE_HOST" "grep -q 'loop_item_first' /tmp/spage/run_once_loop.txt"; then
+    echo "Run_once test failed: loop file missing 'first' entry on target host $RUN_ONCE_HOST"
     exit 1
 fi
-if ! check_target "grep -q 'loop_item_second' /tmp/spage/run_once_loop.txt"; then
-    echo "Run_once test failed: loop file missing 'second' entry on target"
+if ! check_target_host "$RUN_ONCE_HOST" "grep -q 'loop_item_second' /tmp/spage/run_once_loop.txt"; then
+    echo "Run_once test failed: loop file missing 'second' entry on target host $RUN_ONCE_HOST"
     exit 1
 fi
-if ! check_target "grep -q 'loop_item_third' /tmp/spage/run_once_loop.txt"; then
-    echo "Run_once test failed: loop file missing 'third' entry on target"
+if ! check_target_host "$RUN_ONCE_HOST" "grep -q 'loop_item_third' /tmp/spage/run_once_loop.txt"; then
+    echo "Run_once test failed: loop file missing 'third' entry on target host $RUN_ONCE_HOST"
     exit 1
 fi
 
 # Verify the loop file has exactly 3 lines (no duplicates from multiple host execution)
-loop_line_count=$(check_target "wc -l < /tmp/spage/run_once_loop.txt")
+loop_line_count=$(check_target_host "$RUN_ONCE_HOST" "wc -l < /tmp/spage/run_once_loop.txt")
 if [ "$loop_line_count" -ne 3 ]; then
-    echo "Run_once test failed: loop file has $loop_line_count lines, expected 3 on target"
-    check_target "cat /tmp/spage/run_once_loop.txt" # Print content for debugging
+    echo "Run_once test failed: loop file has $loop_line_count lines, expected 3 on target host $RUN_ONCE_HOST"
+    check_target_host "$RUN_ONCE_HOST" "cat /tmp/spage/run_once_loop.txt" # Print content for debugging
     exit 1
 fi
 

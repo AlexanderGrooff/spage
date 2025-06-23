@@ -555,8 +555,7 @@ func NewTemporalGraphExecutor(runner TemporalTaskRunner) *TemporalGraphExecutor 
 func (e *TemporalGraphExecutor) loadLevelTasks(
 	workflowCtx workflow.Context,
 	tasksInLevel []pkg.Task,
-	inventoryHosts map[string]*pkg.Host,
-	workflowHostFacts map[string]map[string]interface{},
+	hostContexts map[string]*pkg.HostContext,
 	resultsCh workflow.Channel,
 	errCh workflow.Channel,
 	cfg *config.Config,
@@ -574,48 +573,14 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 	actualDispatchedTasks := 0 // Renamed from numDispatchedTasks to avoid confusion in the pre-calculation loop
 
 	if isParallelDispatch {
-		countForBuffer := 0
-		for _, taskDefinitionForCount := range tasksInLevel {
-			if taskDefinitionForCount.RunOnce {
-				// For run_once tasks, we count them once per host (for result propagation)
-				// but we only execute on the first host
-				for _, hostDefForCount := range inventoryHosts {
-					tempHostCtxForCount := &pkg.HostContext{
-						Host:  hostDefForCount,
-						Facts: &sync.Map{},
-					}
-					closures, err := GetTaskClosures(taskDefinitionForCount, tempHostCtxForCount)
-					if err != nil {
-						errMsg := fmt.Errorf("critical error during pre-count for run_once task closures: task '%s': %w", taskDefinitionForCount.Name, err)
-						common.LogError("Dispatch error in loadLevelTasks (pre-count)", map[string]interface{}{"error": errMsg})
-						errCh.SendAsync(errMsg)
-						return // Abort if counting fails
-					}
-					countForBuffer += len(closures)
-				}
-			} else {
-				// Normal task counting
-				for hostNameForCount, hostDefForCount := range inventoryHosts {
-					tempHostCtxForCount := &pkg.HostContext{
-						Host:  hostDefForCount,
-						Facts: &sync.Map{},
-					}
-					if facts, ok := workflowHostFacts[hostNameForCount]; ok {
-						for k, v := range facts {
-							tempHostCtxForCount.Facts.Store(k, v)
-						}
-					}
-					closures, err := GetTaskClosures(taskDefinitionForCount, tempHostCtxForCount)
-					if err != nil {
-						errMsg := fmt.Errorf("critical error during pre-count for task closures: task '%s' on host '%s': %w", taskDefinitionForCount.Name, hostNameForCount, err)
-						common.LogError("Dispatch error in loadLevelTasks (pre-count)", map[string]interface{}{"error": errMsg})
-						errCh.SendAsync(errMsg)
-						return // Abort if counting fails
-					}
-					countForBuffer += len(closures)
-				}
-			}
+		countForBuffer, err := CalculateExpectedResults(tasksInLevel, hostContexts)
+		if err != nil {
+			errMsg := fmt.Errorf("critical error during pre-count for task closures: %w", err)
+			common.LogError("Dispatch error in loadLevelTasks (pre-count)", map[string]interface{}{"error": errMsg})
+			errCh.SendAsync(errMsg)
+			return // Abort if counting fails
 		}
+
 		if countForBuffer > 0 {
 			completionCh = workflow.NewBufferedChannel(workflowCtx, countForBuffer)
 			logger.Debug("Parallel dispatch mode: completionCh created with buffer.", "capacity", countForBuffer)
@@ -631,15 +596,9 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 		// Handle run_once tasks separately
 		if task.RunOnce {
 			// Get the first available host
-			var firstHostDef *pkg.Host
-			var firstHostName string
-			for hostName, hostDef := range inventoryHosts {
-				firstHostDef = hostDef
-				firstHostName = hostName
-				break
-			}
+			firstHostCtx, firstHostName := GetFirstAvailableHost(hostContexts)
 
-			if firstHostDef == nil {
+			if firstHostCtx == nil {
 				errMsg := fmt.Errorf("no hosts available for run_once task '%s'", task.Name)
 				common.LogError("No hosts available for run_once task", map[string]interface{}{"error": errMsg})
 				errCh.SendAsync(errMsg)
@@ -647,17 +606,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 			}
 
 			// Execute only on the first host
-			tempHostCtx := &pkg.HostContext{
-				Host:  firstHostDef,
-				Facts: &sync.Map{},
-			}
-			if facts, ok := workflowHostFacts[firstHostName]; ok {
-				for k, v := range facts {
-					tempHostCtx.Facts.Store(k, v)
-				}
-			}
-
-			closures, err := GetTaskClosures(task, tempHostCtx)
+			closures, err := GetTaskClosures(task, firstHostCtx)
 			if err != nil {
 				errMsg := fmt.Errorf("critical error: failed to get task closures for run_once task '%s' on host '%s': %w", task.Name, firstHostName, err)
 				common.LogError("Dispatch error for run_once task", map[string]interface{}{"error": errMsg})
@@ -668,7 +617,22 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 			for _, individualClosure := range closures {
 				closure := individualClosure
 
-				logger.Info("Executing run_once task", "task", task.Name, "execution_host", firstHostName, "total_hosts", len(inventoryHosts))
+				// Resolve delegate_to if specified
+				if task.DelegateTo != "" {
+					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure)
+					if err != nil {
+						errMsg := fmt.Errorf("failed to resolve delegate_to for run_once task '%s': %w", task.Name, err)
+						common.LogError("Delegate resolution error for run_once task", map[string]interface{}{"error": errMsg})
+						errCh.SendAsync(errMsg)
+						return
+					}
+					if delegatedHostContext != nil {
+						// Update the closure to use the delegated host context
+						closure.HostContext = delegatedHostContext
+					}
+				}
+
+				logger.Info("Executing run_once task", "task", task.Name, "execution_host", firstHostName, "total_hosts", len(hostContexts))
 
 				if isParallelDispatch {
 					actualDispatchedTasks++ // We'll dispatch one execution but generate results for all hosts
@@ -676,23 +640,8 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 						logger.Debug("Run_once task coroutine started", "task", task.Name, "host", firstHostName)
 						originalResult := e.Runner.ExecuteTask(childTaskCtx, task, closure, cfg)
 
-						// Create host contexts map for run_once result propagation
-						hostContextsMap := make(map[string]*pkg.HostContext)
-						for hostName, hostDef := range inventoryHosts {
-							hostCtx := &pkg.HostContext{
-								Host:  hostDef,
-								Facts: &sync.Map{},
-							}
-							if facts, ok := workflowHostFacts[hostName]; ok {
-								for k, v := range facts {
-									hostCtx.Facts.Store(k, v)
-								}
-							}
-							hostContextsMap[hostName] = hostCtx
-						}
-
 						// Create results for all hosts based on the original execution
-						allResults := CreateRunOnceResultsForAllHosts(originalResult, hostContextsMap, firstHostName)
+						allResults := CreateRunOnceResultsForAllHosts(originalResult, hostContexts, firstHostName)
 
 						// Send results for all hosts
 						for _, result := range allResults {
@@ -708,23 +657,8 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 					logger.Debug("Executing sequential run_once task", "task", task.Name, "host", firstHostName)
 					originalResult := e.Runner.ExecuteTask(workflowCtx, task, closure, cfg)
 
-					// Create host contexts map for run_once result propagation
-					hostContextsMap := make(map[string]*pkg.HostContext)
-					for hostName, hostDef := range inventoryHosts {
-						hostCtx := &pkg.HostContext{
-							Host:  hostDef,
-							Facts: &sync.Map{},
-						}
-						if facts, ok := workflowHostFacts[hostName]; ok {
-							for k, v := range facts {
-								hostCtx.Facts.Store(k, v)
-							}
-						}
-						hostContextsMap[hostName] = hostCtx
-					}
-
 					// Create results for all hosts based on the original execution
-					allResults := CreateRunOnceResultsForAllHosts(originalResult, hostContextsMap, firstHostName)
+					allResults := CreateRunOnceResultsForAllHosts(originalResult, hostContexts, firstHostName)
 
 					// Send results for all hosts
 					for _, result := range allResults {
@@ -739,18 +673,8 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 		}
 
 		// Normal task execution for non-run_once tasks
-		for hostName, hostDef := range inventoryHosts {
-			tempHostCtx := &pkg.HostContext{
-				Host:  hostDef,
-				Facts: &sync.Map{},
-			}
-			if facts, ok := workflowHostFacts[hostName]; ok {
-				for k, v := range facts {
-					tempHostCtx.Facts.Store(k, v)
-				}
-			}
-
-			closures, err := GetTaskClosures(task, tempHostCtx)
+		for hostName, hostCtx := range hostContexts {
+			closures, err := GetTaskClosures(task, hostCtx)
 			if err != nil {
 				errMsg := fmt.Errorf("critical error: failed to get task closures for task '%s' on host '%s': %w. Aborting level", task.Name, hostName, err)
 				common.LogError("Dispatch error in loadLevelTasks", map[string]interface{}{"error": errMsg})
@@ -760,6 +684,19 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 
 			for _, individualClosure := range closures {
 				closure := individualClosure
+
+				if task.DelegateTo != "" {
+					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure)
+					if err != nil {
+						errMsg := fmt.Errorf("failed to resolve delegate_to for task '%s': %w", task.Name, err)
+						common.LogError("Delegate resolution error in loadLevelTasks", map[string]interface{}{"error": errMsg})
+						errCh.SendAsync(errMsg)
+						return
+					}
+					if delegatedHostContext != nil {
+						closure.HostContext = delegatedHostContext
+					}
+				}
 
 				if isParallelDispatch {
 					actualDispatchedTasks++ // Increment the counter for actual dispatches
@@ -923,14 +860,11 @@ func (e *TemporalGraphExecutor) Execute(
 	orderedGraph [][]pkg.Task,
 	cfg *config.Config,
 ) error {
-	// Convert hostContexts to the format needed by temporal executor
-	inventoryHosts := make(map[string]*pkg.Host)
+	// For Temporal, we need to manage facts in a workflow-safe map.
+	// We extract initial facts, and then this map becomes the source of truth.
+	// The HostContext objects passed to utility functions will be updated from this map.
 	workflowHostFacts := make(map[string]map[string]interface{})
-
 	for hostName, hostCtx := range hostContexts {
-		inventoryHosts[hostName] = hostCtx.Host
-
-		// Extract facts from HostContext
 		hostFacts := make(map[string]interface{})
 		hostCtx.Facts.Range(func(key, value interface{}) bool {
 			if kStr, ok := key.(string); ok {
@@ -949,51 +883,23 @@ func (e *TemporalGraphExecutor) Execute(
 	executionTaskResults := make(map[int][]pkg.TaskResult) // Store all successful/processed task results per level
 
 	for executionLevel, tasksInLevel := range orderedGraph {
-		// Simplified numExpectedResultsOnLevel calculation for now:
-		var numExpectedResultsOnLevel int
-		for _, task := range tasksInLevel {
-			if task.RunOnce {
-				// For run_once tasks, we count them once per host (for result propagation)
-				// but we only execute on the first host
-				for _, hostDef := range inventoryHosts {
-					tempHostCtxForCount := &pkg.HostContext{
-						Host:  hostDef,
-						Facts: &sync.Map{},
-					}
-					if facts, ok := workflowHostFacts[hostDef.Name]; ok {
-						for k, v := range facts {
-							tempHostCtxForCount.Facts.Store(k, v)
-						}
-					}
-
-					closures, err := GetTaskClosures(task, tempHostCtxForCount)
-					if err != nil {
-						return fmt.Errorf("failed to get task closures for count on level %d, run_once task %s, host %s: %w", executionLevel, task.Name, hostDef.Name, err)
-					}
-					numExpectedResultsOnLevel += len(closures)
-				}
-			} else {
-				// Normal task counting
-				for _, hostDef := range inventoryHosts {
-					// Construct a temporary, lightweight HostContext for GetTaskClosures
-					tempHostCtxForCount := &pkg.HostContext{
-						Host:  hostDef,
-						Facts: &sync.Map{},
-					}
-					if facts, ok := workflowHostFacts[hostDef.Name]; ok {
-						for k, v := range facts {
-							tempHostCtxForCount.Facts.Store(k, v)
-						}
-					}
-
-					closures, err := GetTaskClosures(task, tempHostCtxForCount)
-					if err != nil {
-						return fmt.Errorf("failed to get task closures for count on level %d, task %s, host %s: %w", executionLevel, task.Name, hostDef.Name, err)
-					}
-					numExpectedResultsOnLevel += len(closures)
+		// Before each level, ensure the hostContexts have the latest facts from the workflow state.
+		// This is crucial for when/loop/delegate_to conditions in utility functions.
+		for _, hostCtx := range hostContexts {
+			// Clear existing facts (they are stale from the previous level or initial state)
+			hostCtx.Facts = &sync.Map{}
+			if facts, ok := workflowHostFacts[hostCtx.Host.Name]; ok {
+				for k, v := range facts {
+					hostCtx.Facts.Store(k, v)
 				}
 			}
 		}
+
+		numExpectedResultsOnLevel, err := CalculateExpectedResults(tasksInLevel, hostContexts)
+		if err != nil {
+			return fmt.Errorf("failed to calculate expected results for level %d: %w", executionLevel, err)
+		}
+
 		if numExpectedResultsOnLevel == 0 && len(tasksInLevel) > 0 {
 			workflow.GetLogger(e.Runner.WorkflowCtx).Info("No task instances to execute for level, skipping.", "level", executionLevel)
 			continue
@@ -1003,7 +909,7 @@ func (e *TemporalGraphExecutor) Execute(
 		errCh := workflow.NewChannel(e.Runner.WorkflowCtx)
 
 		workflow.Go(e.Runner.WorkflowCtx, func(ctx workflow.Context) {
-			e.loadLevelTasks(ctx, tasksInLevel, inventoryHosts, workflowHostFacts, resultsCh, errCh, cfg)
+			e.loadLevelTasks(ctx, tasksInLevel, hostContexts, resultsCh, errCh, cfg)
 		})
 
 		levelErrored, processedResultsThisLevel, errProcessingResults := e.processLevelResults(
@@ -1023,7 +929,7 @@ func (e *TemporalGraphExecutor) Execute(
 		if errProcessingResults != nil {
 			// If processLevelResults itself returns an error (e.g., premature channel close), attempt revert
 			logger.Error("Error processing results, attempting revert", "level", executionLevel, "error", errProcessingResults)
-			if revertErr := e.revertWorkflow(workflowCtx, executionTaskResults, inventoryHosts, workflowHostFacts, cfg, executionLevel); revertErr != nil {
+			if revertErr := e.revertWorkflow(workflowCtx, executionTaskResults, hostContexts, workflowHostFacts, cfg, executionLevel); revertErr != nil {
 				return fmt.Errorf("error during graph execution on level %d (%v) and also during revert: %w", executionLevel, errProcessingResults, revertErr)
 			}
 			return fmt.Errorf("error during graph execution on level %d: %w, tasks reverted", executionLevel, errProcessingResults)
@@ -1031,7 +937,7 @@ func (e *TemporalGraphExecutor) Execute(
 
 		if levelErrored {
 			logger.Info("Run failed, task reversion required", map[string]interface{}{"level": executionLevel})
-			if revertErr := e.revertWorkflow(workflowCtx, executionTaskResults, inventoryHosts, workflowHostFacts, cfg, executionLevel); revertErr != nil {
+			if revertErr := e.revertWorkflow(workflowCtx, executionTaskResults, hostContexts, workflowHostFacts, cfg, executionLevel); revertErr != nil {
 				return fmt.Errorf("run failed on level %d and also failed during revert: %w", executionLevel, revertErr)
 			}
 			return fmt.Errorf("run failed on level %d and tasks reverted", executionLevel)
@@ -1061,7 +967,7 @@ func (e *TemporalGraphExecutor) Revert(
 func (e *TemporalGraphExecutor) revertWorkflow(
 	workflowCtx workflow.Context, // Main workflow context
 	executedTasks map[int][]pkg.TaskResult, // History of tasks processed per level
-	inventoryHosts map[string]*pkg.Host,
+	hostContexts map[string]*pkg.HostContext,
 	workflowHostFacts map[string]map[string]interface{},
 	cfg *config.Config,
 	failingLevel int, // The level at or before which failure occurred
@@ -1308,9 +1214,9 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 		}
 
 		common.LogDebug("Executing workflow with graph, inventory, and config.", map[string]interface{}{
-			"graph_tasks_count":     len(opts.Graph.Tasks),
-			"inventory_path":        opts.InventoryPath,
-			"config_mode":           spageAppConfig.ExecutionMode,
+			"graph_tasks_count": len(opts.Graph.Tasks),
+			"inventory_path":    opts.InventoryPath,
+			"config_mode":       spageAppConfig.ExecutionMode,
 		})
 
 		we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, SpageTemporalWorkflow, opts.Graph, opts.InventoryPath, spageAppConfig)
