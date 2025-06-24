@@ -292,10 +292,33 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 					moduleParams = v
 				} else {
 					// Handle unknown modules with Python fallback
-					pythonModule, pythonParams := GetPythonFallbackForCompilation(k, v)
 					task.Module = "ansible_python" // Use the Python fallback module name
-					module = pythonModule
-					moduleParams = pythonParams
+					if pythonModule, ok := GetModule("ansible_python"); ok {
+						module = pythonModule
+
+						// Convert rawParams to map[string]interface{}
+						var paramsMap map[string]interface{}
+						if v != nil {
+							if pm, ok := v.(map[string]interface{}); ok {
+								paramsMap = pm
+							} else {
+								// Try to convert other types to a simple parameter
+								paramsMap = map[string]interface{}{"value": v}
+							}
+						} else {
+							paramsMap = make(map[string]interface{})
+						}
+
+						// Create the AnsiblePythonInput structure
+						moduleParams = map[string]interface{}{
+							"module_name": k,
+							"args":        paramsMap,
+						}
+					} else {
+						errors = append(errors, fmt.Errorf("ansible_python module not registered for unknown module %s", k))
+						errored = true
+						break
+					}
 				}
 			}
 		}

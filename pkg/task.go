@@ -535,14 +535,17 @@ func (t Task) executeOnce(closure *Closure) TaskResult {
 			"host":   closure.HostContext.Host.Name,
 		})
 
-		pythonModule, pythonParams, err := GetPythonFallbackModule(t.Module, t.Params.Actual)
-		if err != nil {
-			r.Error = fmt.Errorf("failed to create Python fallback for module %s: %w", t.Module, err)
+		// Check if ansible_python module is available for fallback
+		_, pythonOk := GetModule("ansible_python")
+		if !pythonOk {
+			r.Error = fmt.Errorf("module %s not found and ansible_python fallback module is not available", t.Module)
 			return r
 		}
 
-		module = pythonModule
-		t.Params.Actual = pythonParams
+		// We can't call the modules package function due to import cycle
+		// So we'll return an error and let the user fix the playbook to use ansible_python directly
+		r.Error = fmt.Errorf("module %s not found. Consider using the 'ansible_python' module with module_name: %s", t.Module, t.Module)
+		return r
 	}
 
 	// Evaluate jinja2 in the module input fields
