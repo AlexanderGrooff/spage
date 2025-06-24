@@ -87,6 +87,7 @@ type Task struct {
 	DelegateTo   string      `yaml:"delegate_to,omitempty" json:"delegate_to,omitempty"`
 	RunOnce      bool        `yaml:"run_once,omitempty" json:"run_once,omitempty"`
 	NoLog        bool        `yaml:"no_log,omitempty" json:"no_log,omitempty"`
+	Tags         []string    `yaml:"tags,omitempty" json:"tags,omitempty"`
 
 	Until   string `yaml:"until,omitempty" json:"until,omitempty"`
 	Retries int    `yaml:"retries,omitempty" json:"retries,omitempty"`
@@ -335,6 +336,16 @@ func (t Task) ToCode() string {
 	}
 	if t.Delay > 0 {
 		sb.WriteString(fmt.Sprintf(", Delay: %d", t.Delay))
+	}
+	if len(t.Tags) > 0 {
+		sb.WriteString(", Tags: []string{")
+		for i, tag := range t.Tags {
+			sb.WriteString(fmt.Sprintf("%q", tag))
+			if i < len(t.Tags)-1 {
+				sb.WriteString(", ")
+			}
+		}
+		sb.WriteString("}")
 	}
 	// Handle Loop field in ToCode: generate code for string or slice.
 	switch v := t.Loop.(type) {

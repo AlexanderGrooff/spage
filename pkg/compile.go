@@ -113,6 +113,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"until",
 		"retries",
 		"delay",
+		"tags",
 	}
 
 	var tasks []GraphNode
@@ -234,6 +235,27 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 				task.Delay = v
 			} else {
 				errors = append(errors, fmt.Errorf("invalid type (%T) for 'delay' key in task %q, expected integer", delayVal, task.Name))
+				errored = true
+			}
+		}
+
+		// Handle 'tags' field - can be a string or list of strings
+		if tagsVal, ok := block["tags"]; ok {
+			switch v := tagsVal.(type) {
+			case string:
+				task.Tags = []string{v}
+			case []interface{}:
+				for i, tagVal := range v {
+					if tagStr, ok := tagVal.(string); ok {
+						task.Tags = append(task.Tags, tagStr)
+					} else {
+						errors = append(errors, fmt.Errorf("invalid type (%T) for item %d in 'tags' list in task %q, expected string", tagVal, i, task.Name))
+						errored = true
+						break
+					}
+				}
+			default:
+				errors = append(errors, fmt.Errorf("invalid type (%T) for 'tags' key in task %q, expected string or list of strings", tagsVal, task.Name))
 				errored = true
 			}
 		}

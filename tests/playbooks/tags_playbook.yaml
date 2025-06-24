@@ -1,0 +1,47 @@
+---
+- name: Test tags functionality
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Task with no tags
+      debug:
+        msg: "This task has no tags"
+
+    - name: Task with single tag
+      debug:
+        msg: "This task has a single tag 'config'"
+      tags: config
+
+    - name: Task with multiple tags
+      debug:
+        msg: "This task has tags 'database' and 'setup'"
+      tags:
+        - database
+        - setup
+
+    - name: Task with always tag
+      debug:
+        msg: "This task has 'always' tag and should always run"
+      tags: always
+
+    - name: Task with never tag
+      debug:
+        msg: "This task has 'never' tag and should not run by default"
+      tags: never
+
+    - name: Task with deploy tag
+      debug:
+        msg: "This task has 'deploy' tag"
+      tags: deploy
+
+    - name: Task with both config and deploy tags
+      debug:
+        msg: "This task has both 'config' and 'deploy' tags"
+      tags:
+        - config
+        - deploy
+
+    - name: Task with skip tag
+      debug:
+        msg: "This task has 'skip' tag and might be skipped"
+      tags: skip 

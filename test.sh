@@ -1013,5 +1013,205 @@ fi
 
 echo "Until loop test succeeded."
 
+# Test 32: Tags functionality test
+echo "Running tags functionality test..."
+
+# Test 32.1: Run only tasks with 'config' tag
+echo "Running tags test: --tags config"
+go run main.go generate -p tests/playbooks/tags_playbook.yaml --tags config -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+
+# Capture output to check which tasks ran
+set +e
+CONFIG_TAGS_OUTPUT=$(./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml 2>&1)
+CONFIG_TAGS_EXIT_CODE=$?
+set -e
+
+if [ $CONFIG_TAGS_EXIT_CODE -ne 0 ]; then
+    echo "Tags test (config) failed: Playbook execution failed unexpectedly (Exit Code: $CONFIG_TAGS_EXIT_CODE)."
+    echo "Output was:"
+    echo "$CONFIG_TAGS_OUTPUT"
+    exit 1
+fi
+
+# Check that config-tagged tasks ran
+if ! echo "$CONFIG_TAGS_OUTPUT" | grep -q "This task has a single tag 'config'"; then
+    echo "Tags test (config) failed: Single config task did not run."
+    echo "Output was:"
+    echo "$CONFIG_TAGS_OUTPUT"
+    exit 1
+fi
+if ! echo "$CONFIG_TAGS_OUTPUT" | grep -q "This task has both 'config' and 'deploy' tags"; then
+    echo "Tags test (config) failed: Multi-tag task with config did not run."
+    echo "Output was:"
+    echo "$CONFIG_TAGS_OUTPUT"
+    exit 1
+fi
+if ! echo "$CONFIG_TAGS_OUTPUT" | grep -q "This task has 'always' tag and should always run"; then
+    echo "Tags test (config) failed: Always task did not run."
+    echo "Output was:"
+    echo "$CONFIG_TAGS_OUTPUT"
+    exit 1
+fi
+
+# Check that non-config tasks did NOT run
+if echo "$CONFIG_TAGS_OUTPUT" | grep -q "This task has no tags"; then
+    echo "Tags test (config) failed: Untagged task ran when it shouldn't."
+    echo "Output was:"
+    echo "$CONFIG_TAGS_OUTPUT"
+    exit 1
+fi
+if echo "$CONFIG_TAGS_OUTPUT" | grep -q "This task has tags 'database' and 'setup'"; then
+    echo "Tags test (config) failed: Database/setup task ran when it shouldn't."
+    echo "Output was:"
+    echo "$CONFIG_TAGS_OUTPUT"
+    exit 1
+fi
+if echo "$CONFIG_TAGS_OUTPUT" | grep -q "This task has 'deploy' tag" && ! echo "$CONFIG_TAGS_OUTPUT" | grep -q "both 'config' and 'deploy'"; then
+    echo "Tags test (config) failed: Deploy-only task ran when it shouldn't."
+    echo "Output was:"
+    echo "$CONFIG_TAGS_OUTPUT"
+    exit 1
+fi
+
+echo "Tags test (config) succeeded."
+
+# Test 32.2: Run with --skip-tags to skip certain tasks
+echo "Running tags test: --skip-tags skip"
+go run main.go generate -p tests/playbooks/tags_playbook.yaml --skip-tags skip -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+
+set +e
+SKIP_TAGS_OUTPUT=$(./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml 2>&1)
+SKIP_TAGS_EXIT_CODE=$?
+set -e
+
+if [ $SKIP_TAGS_EXIT_CODE -ne 0 ]; then
+    echo "Tags test (skip-tags) failed: Playbook execution failed unexpectedly (Exit Code: $SKIP_TAGS_EXIT_CODE)."
+    echo "Output was:"
+    echo "$SKIP_TAGS_OUTPUT"
+    exit 1
+fi
+
+# Check that non-skip tasks ran
+if ! echo "$SKIP_TAGS_OUTPUT" | grep -q "This task has no tags"; then
+    echo "Tags test (skip-tags) failed: Untagged task did not run."
+    echo "Output was:"
+    echo "$SKIP_TAGS_OUTPUT"
+    exit 1
+fi
+if ! echo "$SKIP_TAGS_OUTPUT" | grep -q "This task has a single tag 'config'"; then
+    echo "Tags test (skip-tags) failed: Config task did not run."
+    echo "Output was:"
+    echo "$SKIP_TAGS_OUTPUT"
+    exit 1
+fi
+if ! echo "$SKIP_TAGS_OUTPUT" | grep -q "This task has 'always' tag and should always run"; then
+    echo "Tags test (skip-tags) failed: Always task did not run."
+    echo "Output was:"
+    echo "$SKIP_TAGS_OUTPUT"
+    exit 1
+fi
+
+# Check that skip-tagged task did NOT run
+if echo "$SKIP_TAGS_OUTPUT" | grep -q "This task has 'skip' tag and might be skipped"; then
+    echo "Tags test (skip-tags) failed: Skip task ran when it should have been skipped."
+    echo "Output was:"
+    echo "$SKIP_TAGS_OUTPUT"
+    exit 1
+fi
+
+echo "Tags test (skip-tags) succeeded."
+
+# Test 32.3: Test default behavior (no tag filtering)
+echo "Running tags test: no tag filtering"
+go run main.go generate -p tests/playbooks/tags_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+
+set +e
+NO_FILTER_OUTPUT=$(./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml 2>&1)
+NO_FILTER_EXIT_CODE=$?
+set -e
+
+if [ $NO_FILTER_EXIT_CODE -ne 0 ]; then
+    echo "Tags test (no filter) failed: Playbook execution failed unexpectedly (Exit Code: $NO_FILTER_EXIT_CODE)."
+    echo "Output was:"
+    echo "$NO_FILTER_OUTPUT"
+    exit 1
+fi
+
+# Check that most tasks ran (except never)
+if ! echo "$NO_FILTER_OUTPUT" | grep -q "This task has no tags"; then
+    echo "Tags test (no filter) failed: Untagged task did not run."
+    echo "Output was:"
+    echo "$NO_FILTER_OUTPUT"
+    exit 1
+fi
+if ! echo "$NO_FILTER_OUTPUT" | grep -q "This task has a single tag 'config'"; then
+    echo "Tags test (no filter) failed: Config task did not run."
+    echo "Output was:"
+    echo "$NO_FILTER_OUTPUT"
+    exit 1
+fi
+if ! echo "$NO_FILTER_OUTPUT" | grep -q "This task has 'always' tag and should always run"; then
+    echo "Tags test (no filter) failed: Always task did not run."
+    echo "Output was:"
+    echo "$NO_FILTER_OUTPUT"
+    exit 1
+fi
+
+# Check that never-tagged task did NOT run (by default)
+if echo "$NO_FILTER_OUTPUT" | grep -q "This task has 'never' tag and should not run by default"; then
+    echo "Tags test (no filter) failed: Never task ran when it shouldn't by default."
+    echo "Output was:"
+    echo "$NO_FILTER_OUTPUT"
+    exit 1
+fi
+
+echo "Tags test (no filter) succeeded."
+
+# Test 32.4: Test specifically requesting 'never' tag
+echo "Running tags test: --tags never"
+go run main.go generate -p tests/playbooks/tags_playbook.yaml --tags never -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+
+set +e
+NEVER_TAGS_OUTPUT=$(./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml 2>&1)
+NEVER_TAGS_EXIT_CODE=$?
+set -e
+
+if [ $NEVER_TAGS_EXIT_CODE -ne 0 ]; then
+    echo "Tags test (never) failed: Playbook execution failed unexpectedly (Exit Code: $NEVER_TAGS_EXIT_CODE)."
+    echo "Output was:"
+    echo "$NEVER_TAGS_OUTPUT"
+    exit 1
+fi
+
+# Check that never-tagged task ran when explicitly requested
+if ! echo "$NEVER_TAGS_OUTPUT" | grep -q "This task has 'never' tag and should not run by default"; then
+    echo "Tags test (never) failed: Never task did not run when explicitly requested."
+    echo "Output was:"
+    echo "$NEVER_TAGS_OUTPUT"
+    exit 1
+fi
+if ! echo "$NEVER_TAGS_OUTPUT" | grep -q "This task has 'always' tag and should always run"; then
+    echo "Tags test (never) failed: Always task did not run."
+    echo "Output was:"
+    echo "$NEVER_TAGS_OUTPUT"
+    exit 1
+fi
+
+# Check that other tasks did NOT run
+if echo "$NEVER_TAGS_OUTPUT" | grep -q "This task has no tags"; then
+    echo "Tags test (never) failed: Untagged task ran when only never was requested."
+    echo "Output was:"
+    echo "$NEVER_TAGS_OUTPUT"
+    exit 1
+fi
+
+echo "Tags test (never) succeeded."
+
+echo "Tags functionality test completed successfully!"
+
 echo "All tests completed successfully!"
 

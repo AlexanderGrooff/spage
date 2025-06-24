@@ -15,6 +15,7 @@ type Config struct {
 	Executor      string         `mapstructure:"executor"` // "local" or "temporal"
 	Temporal      TemporalConfig `mapstructure:"temporal"`
 	Revert        bool           `mapstructure:"revert"`
+	Tags          TagsConfig     `mapstructure:"tags"`
 }
 
 // LoggingConfig holds logging-related configuration
@@ -31,6 +32,12 @@ type TemporalConfig struct {
 	TaskQueue        string `mapstructure:"task_queue"`
 	WorkflowIDPrefix string `mapstructure:"workflow_id_prefix"`
 	Trigger          bool   `mapstructure:"trigger"`
+}
+
+// TagsConfig holds tag filtering configuration
+type TagsConfig struct {
+	Tags     []string `mapstructure:"tags"`      // Only run tasks with these tags
+	SkipTags []string `mapstructure:"skip_tags"` // Skip tasks with these tags
 }
 
 // ValidOutputFormats contains the list of supported output formats
@@ -102,6 +109,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("temporal.task_queue", "SPAGE_DEFAULT_TASK_QUEUE")
 	v.SetDefault("temporal.workflow_id_prefix", "spage-workflow")
 	v.SetDefault("temporal.trigger", false) // Default to false
+
+	// Tags defaults
+	v.SetDefault("tags.tags", []string{})      // Default to empty (run all tasks)
+	v.SetDefault("tags.skip_tags", []string{}) // Default to empty (skip no tasks)
 }
 
 // isValidOutputFormat checks if the given format is supported
