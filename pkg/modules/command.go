@@ -152,48 +152,11 @@ func (cm CommandModule) Revert(params pkg.ConcreteModuleInputProvider, closure *
 
 	var prev CommandOutput
 	if previous != nil {
-		// First try direct type assertion to CommandOutput
-		if prevAsserted, ok := previous.(CommandOutput); ok {
-			prev = prevAsserted
-		} else if genericOutput, ok := previous.(pkg.GenericMapOutput); ok {
-			// Handle the case where the output was serialized/deserialized as a generic map
-			// Convert GenericMapOutput back to CommandOutput
-			prev = CommandOutput{
-				Stdout:  getStringFromMap(genericOutput, "stdout"),
-				Stderr:  getStringFromMap(genericOutput, "stderr"),
-				Command: getStringFromMap(genericOutput, "command"),
-				Rc:      getIntFromMap(genericOutput, "rc"),
-			}
-		} else {
-			return nil, fmt.Errorf("internal error: unexpected previous output type %T for command module revert", previous)
-		}
+		prev = previous.(CommandOutput)
 	} else {
 		prev = CommandOutput{}
 	}
 	return cm.templateAndExecute(commandParams.Revert, closure, prev, runAs)
-}
-
-// Helper functions to safely extract values from map[string]interface{}
-func getStringFromMap(m map[string]interface{}, key string) string {
-	if value, ok := m[key]; ok {
-		if str, ok := value.(string); ok {
-			return str
-		}
-	}
-	return ""
-}
-
-func getIntFromMap(m map[string]interface{}, key string) int {
-	if value, ok := m[key]; ok {
-		if intVal, ok := value.(int); ok {
-			return intVal
-		}
-		// Handle the case where the value might be stored as float64 (common in JSON)
-		if floatVal, ok := value.(float64); ok {
-			return int(floatVal)
-		}
-	}
-	return 0
 }
 
 // UnmarshalYAML allows the command module value to be either a string (shorthand)

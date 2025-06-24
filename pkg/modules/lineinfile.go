@@ -10,16 +10,6 @@ import (
 	"github.com/AlexanderGrooff/spage/pkg/common"
 )
 
-// Helper function for converting from GenericMapOutput
-func getBoolFromMap(m map[string]interface{}, key string) bool {
-	if value, ok := m[key]; ok {
-		if boolVal, ok := value.(bool); ok {
-			return boolVal
-		}
-	}
-	return false
-}
-
 type LineinfileModule struct{}
 
 func (lm LineinfileModule) InputType() reflect.Type {
@@ -375,26 +365,7 @@ func (lm LineinfileModule) Revert(params pkg.ConcreteModuleInputProvider, closur
 
 	var prevOutput LineinfileOutput
 	if previousOutput != nil {
-		// Try to assert as LineinfileOutput first
-		if lo, ok := previousOutput.(LineinfileOutput); ok {
-			prevOutput = lo
-		} else if gmo, ok := previousOutput.(pkg.GenericMapOutput); ok {
-			// Convert from GenericMapOutput back to LineinfileOutput
-			prevOutput = LineinfileOutput{
-				Msg:                getStringFromMap(gmo, "msg"),
-				OriginalFileExists: getBoolFromMap(gmo, "originalfileexists"),
-				OriginalMode:       getStringFromMap(gmo, "originalmode"),
-			}
-			// Handle the diff field
-			if diffMap, ok := gmo["diff"].(map[string]interface{}); ok {
-				prevOutput.Diff = pkg.RevertableChange[string]{
-					Before: getStringFromMap(diffMap, "before"),
-					After:  getStringFromMap(diffMap, "after"),
-				}
-			}
-		} else {
-			return nil, fmt.Errorf("Revert: incorrect previous output type: expected LineinfileOutput, got %T. Value: %+v", previousOutput, previousOutput)
-		}
+		prevOutput = previousOutput.(LineinfileOutput)
 	} else {
 		prevOutput = LineinfileOutput{}
 	}

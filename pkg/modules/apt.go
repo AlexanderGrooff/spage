@@ -146,6 +146,16 @@ func (i *AptInput) parseAndValidatePackages() error {
 				return fmt.Errorf("invalid type for package name at index %d: expected string, got %T", idx, item)
 			}
 		}
+	case []string:
+		if len(v) == 0 && !i.UpdateCache {
+			return fmt.Errorf("apt module requires non-empty 'name' list or 'update_cache=true'")
+		}
+		for idx, nameStr := range v {
+			if nameStr == "" {
+				return fmt.Errorf("package name at index %d cannot be empty", idx)
+			}
+			i.PkgNames = append(i.PkgNames, nameStr)
+		}
 	default:
 		return fmt.Errorf("invalid type for 'name' parameter: expected string or list of strings, got %T", i.Name)
 	}

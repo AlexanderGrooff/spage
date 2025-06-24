@@ -52,6 +52,23 @@ type SpageActivityResult struct {
 	ModuleOutputMap   map[string]interface{}
 }
 
+// SpageRunOnceLoopActivityInput defines the input for run_once tasks with loops.
+type SpageRunOnceLoopActivityInput struct {
+	TaskDefinition   pkg.Task
+	TargetHost       pkg.Host
+	LoopItems        []interface{} // All loop items to execute
+	CurrentHostFacts map[string]interface{}
+	SpageCoreConfig  *config.Config
+}
+
+// SpageRunOnceLoopActivityResult defines the output from run_once loop activity.
+type SpageRunOnceLoopActivityResult struct {
+	HostName          string
+	TaskName          string
+	LoopResults       []SpageActivityResult // Results for each loop iteration
+	HostFactsSnapshot map[string]interface{}
+}
+
 // ExecuteSpageTaskActivity is the generic activity that runs a Spage task.
 func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*SpageActivityResult, error) {
 	logger := activity.GetLogger(ctx)
@@ -180,6 +197,148 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 	})
 
 	return result, nil
+}
+
+// ExecuteSpageRunOnceLoopActivity executes a run_once task with all its loop iterations
+// within a single activity to maintain Temporal determinism
+func ExecuteSpageRunOnceLoopActivity(ctx context.Context, input SpageRunOnceLoopActivityInput) (*SpageRunOnceLoopActivityResult, error) {
+	logger := activity.GetLogger(ctx)
+
+	logger.Debug("ExecuteSpageRunOnceLoopActivity started", "task", input.TaskDefinition.Name, "host", input.TargetHost.Name, "loop_items", len(input.LoopItems))
+	activity.RecordHeartbeat(ctx, fmt.Sprintf("Starting run_once loop task %s on host %s with %d iterations", input.TaskDefinition.Name, input.TargetHost.Name, len(input.LoopItems)))
+
+	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost)
+	if err != nil {
+		logger.Error("Failed to initialize host context for run_once loop", "host", input.TargetHost.Name, "task", input.TaskDefinition.Name, "error", err)
+		return &SpageRunOnceLoopActivityResult{
+			HostName: input.TargetHost.Name,
+			TaskName: input.TaskDefinition.Name,
+			LoopResults: []SpageActivityResult{{
+				HostName: input.TargetHost.Name,
+				TaskName: input.TaskDefinition.Name,
+				Error:    fmt.Sprintf("failed to initialize host context for run_once loop task %s: %v", input.TaskDefinition.Name, err),
+			}},
+		}, nil
+	}
+	defer hostCtx.Close()
+
+	// Load facts from workflow
+	if input.CurrentHostFacts != nil {
+		for k, v := range input.CurrentHostFacts {
+			hostCtx.Facts.Store(k, v)
+		}
+	}
+
+	var loopResults []SpageActivityResult
+
+	// Execute each loop iteration
+	for i, loopItem := range input.LoopItems {
+		closure := pkg.ConstructClosure(hostCtx, input.TaskDefinition)
+
+		if loopItem != nil {
+			loopVarName := "item"
+			closure.ExtraFacts[loopVarName] = loopItem
+			logger.Debug("Loop item added to closure facts", "loopVar", loopVarName, "value", loopItem, "iteration", i)
+		}
+
+		taskResult := input.TaskDefinition.ExecuteModule(closure)
+		activity.RecordHeartbeat(ctx, fmt.Sprintf("Finished loop iteration %d for task %s on host %s", i+1, input.TaskDefinition.Name, input.TargetHost.Name))
+
+		result := SpageActivityResult{
+			HostName:       input.TargetHost.Name,
+			TaskName:       input.TaskDefinition.Name,
+			RegisteredVars: make(map[string]interface{}),
+		}
+
+		var ignoredError *pkg.IgnoredTaskError
+		if errors.As(taskResult.Error, &ignoredError) {
+			result.Ignored = true
+			originalErr := ignoredError.Unwrap()
+			result.Error = originalErr.Error()
+			logger.Warn("Loop iteration failed but error was ignored", "task", input.TaskDefinition.Name, "iteration", i, "originalError", originalErr)
+			failureMap := map[string]interface{}{
+				"failed":  true,
+				"changed": false,
+				"msg":     originalErr.Error(),
+				"ignored": true,
+			}
+			if taskResult.Output != nil {
+				if factProvider, ok := taskResult.Output.(pkg.FactProvider); ok {
+					outputFacts := factProvider.AsFacts()
+					for k, v := range outputFacts {
+						failureMap[k] = v
+					}
+				}
+			}
+			if input.TaskDefinition.Register != "" {
+				result.RegisteredVars[input.TaskDefinition.Register] = failureMap
+			}
+		} else if taskResult.Error != nil {
+			result.Error = taskResult.Error.Error()
+			logger.Error("Loop iteration execution failed", "task", input.TaskDefinition.Name, "iteration", i, "error", taskResult.Error)
+			failureMap := map[string]interface{}{
+				"failed":  true,
+				"changed": false,
+				"msg":     taskResult.Error.Error(),
+			}
+			if taskResult.Output != nil {
+				if factProvider, ok := taskResult.Output.(pkg.FactProvider); ok {
+					outputFacts := factProvider.AsFacts()
+					for k, v := range outputFacts {
+						failureMap[k] = v
+					}
+				}
+			}
+			if input.TaskDefinition.Register != "" {
+				result.RegisteredVars[input.TaskDefinition.Register] = failureMap
+			}
+		} else {
+			if taskResult.Output != nil {
+				result.Output = taskResult.Output.String()
+				result.Changed = taskResult.Output.Changed()
+				logger.Debug("Loop iteration executed successfully", "task", input.TaskDefinition.Name, "iteration", i, "changed", result.Changed)
+				if converted, ok := pkg.ConvertOutputToFactsMap(taskResult.Output).(map[string]interface{}); ok {
+					result.ModuleOutputMap = converted
+				}
+				if input.TaskDefinition.Register != "" {
+					valueToStore := pkg.ConvertOutputToFactsMap(taskResult.Output)
+					result.RegisteredVars[input.TaskDefinition.Register] = valueToStore
+					logger.Debug("Variable registered for loop iteration", "task", input.TaskDefinition.Name, "iteration", i, "variable", input.TaskDefinition.Register)
+				}
+			} else {
+				result.Skipped = true
+				logger.Debug("Loop iteration executed, no output (potentially skipped)", "task", input.TaskDefinition.Name, "iteration", i)
+				if input.TaskDefinition.Register != "" {
+					result.RegisteredVars[input.TaskDefinition.Register] = map[string]interface{}{
+						"failed":  false,
+						"changed": false,
+						"skipped": true,
+						"ignored": false,
+					}
+				}
+			}
+		}
+
+		loopResults = append(loopResults, result)
+	}
+
+	// Capture all facts from the activity's HostContext after all loop iterations
+	hostFactsSnapshot := make(map[string]interface{})
+	hostCtx.Facts.Range(func(key, value interface{}) bool {
+		if kStr, ok := key.(string); ok {
+			hostFactsSnapshot[kStr] = value
+		} else {
+			logger.Debug("Non-string key found in HostContext facts during loop snapshot", "key_type", fmt.Sprintf("%T", key), "key_value", key)
+		}
+		return true
+	})
+
+	return &SpageRunOnceLoopActivityResult{
+		HostName:          input.TargetHost.Name,
+		TaskName:          input.TaskDefinition.Name,
+		LoopResults:       loopResults,
+		HostFactsSnapshot: hostFactsSnapshot,
+	}, nil
 }
 
 // processActivityResultAndRegisterFacts handles the common logic for processing an activity's result,
@@ -585,6 +744,141 @@ func NewTemporalGraphExecutor(runner TemporalTaskRunner) *TemporalGraphExecutor 
 	return &TemporalGraphExecutor{Runner: runner}
 }
 
+// executeRunOnceWithAllLoops executes a run_once task with all its loop iterations
+// as a single deterministic activity, then replicates the results to all hosts
+func (e *TemporalGraphExecutor) executeRunOnceWithAllLoops(
+	ctx workflow.Context,
+	task pkg.Task,
+	closures []*pkg.Closure,
+	hostContexts map[string]*pkg.HostContext,
+	cfg *config.Config,
+) []pkg.TaskResult {
+	logger := workflow.GetLogger(ctx)
+
+	// Prepare loop items for the activity
+	var loopItems []interface{}
+	for _, closure := range closures {
+		if item, exists := closure.ExtraFacts["item"]; exists {
+			loopItems = append(loopItems, item)
+		} else {
+			loopItems = append(loopItems, nil) // Non-loop task
+		}
+	}
+
+	// Get the first closure for context, handle delegate_to
+	firstClosure := closures[0]
+	if task.DelegateTo != "" {
+		delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, firstClosure)
+		if err != nil {
+			logger.Error("Failed to resolve delegate_to for run_once task", "task", task.Name, "error", err)
+			// Create an error result and replicate it
+			errorResult := pkg.TaskResult{
+				Task:     task,
+				Closure:  firstClosure,
+				Error:    fmt.Errorf("failed to resolve delegate_to: %w", err),
+				Status:   pkg.TaskStatusFailed,
+				Failed:   true,
+				Duration: 0,
+			}
+			return CreateRunOnceResultsForAllHosts(errorResult, hostContexts, firstClosure.HostContext.Host.Name)
+		}
+		if delegatedHostContext != nil {
+			firstClosure.HostContext = delegatedHostContext
+		}
+	}
+
+	// Create a single activity that will execute all loop iterations
+	activityInput := SpageRunOnceLoopActivityInput{
+		TaskDefinition:   task,
+		TargetHost:       *firstClosure.HostContext.Host,
+		LoopItems:        loopItems,
+		CurrentHostFacts: firstClosure.GetFacts(),
+		SpageCoreConfig:  cfg,
+	}
+
+	var activityResult SpageRunOnceLoopActivityResult
+
+	// Construct a unique and descriptive ActivityID
+	activityID := fmt.Sprintf("run-once-loop-%s-%s-%s", task.Name, firstClosure.HostContext.Host.Name, uuid.New().String())
+
+	ao := workflow.ActivityOptions{
+		ActivityID:          activityID,
+		StartToCloseTimeout: 30 * time.Minute,
+		HeartbeatTimeout:    2 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    time.Second,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    time.Minute,
+			MaximumAttempts:    3,
+		},
+	}
+
+	temporalAwareCtx := workflow.WithActivityOptions(ctx, ao)
+	startTime := workflow.Now(ctx)
+	future := workflow.ExecuteActivity(temporalAwareCtx, ExecuteSpageRunOnceLoopActivity, activityInput)
+	errOnGet := future.Get(ctx, &activityResult)
+	endTime := workflow.Now(ctx)
+	duration := endTime.Sub(startTime)
+
+	if errOnGet != nil {
+		logger.Error("Run-once loop activity failed", "task", task.Name, "host", firstClosure.HostContext.Host.Name, "error", errOnGet)
+		errorResult := pkg.TaskResult{
+			Task:     task,
+			Closure:  firstClosure,
+			Error:    fmt.Errorf("run-once loop activity failed: %w", errOnGet),
+			Status:   pkg.TaskStatusFailed,
+			Failed:   true,
+			Duration: duration,
+		}
+		return CreateRunOnceResultsForAllHosts(errorResult, hostContexts, firstClosure.HostContext.Host.Name)
+	}
+
+	// Convert activity results to TaskResults and replicate to all hosts
+	var allResults []pkg.TaskResult
+	for i, loopResult := range activityResult.LoopResults {
+		// Create a closure for this loop iteration
+		closure := closures[i]
+
+		var finalError error
+		if loopResult.Error != "" {
+			if loopResult.Ignored {
+				finalError = &pkg.IgnoredTaskError{OriginalErr: errors.New(loopResult.Error)}
+			} else {
+				finalError = errors.New(loopResult.Error)
+			}
+		}
+
+		finalStatus := pkg.TaskStatusOk
+		if loopResult.Skipped {
+			finalStatus = pkg.TaskStatusSkipped
+		} else if finalError != nil {
+			if !loopResult.Ignored {
+				finalStatus = pkg.TaskStatusFailed
+			}
+		} else if loopResult.Changed {
+			finalStatus = pkg.TaskStatusChanged
+		}
+
+		loopTaskResult := pkg.TaskResult{
+			Task:                    task,
+			Closure:                 closure,
+			Error:                   finalError,
+			Status:                  finalStatus,
+			Failed:                  (finalError != nil && !loopResult.Ignored),
+			Changed:                 loopResult.Changed,
+			Duration:                duration / time.Duration(len(loopItems)), // Approximate duration per loop
+			ExecutionSpecificOutput: loopResult,
+			Output:                  GenericOutput(loopResult.ModuleOutputMap),
+		}
+
+		// Create results for all hosts based on this loop iteration
+		loopResults := CreateRunOnceResultsForAllHosts(loopTaskResult, hostContexts, firstClosure.HostContext.Host.Name)
+		allResults = append(allResults, loopResults...)
+	}
+
+	return allResults
+}
+
 func (e *TemporalGraphExecutor) loadLevelTasks(
 	workflowCtx workflow.Context,
 	tasksInLevel []pkg.Task,
@@ -653,69 +947,48 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 				return
 			}
 
-			for _, individualClosure := range closures {
-				closure := individualClosure
+			logger.Info("Executing run_once task", "task", task.Name, "execution_host", firstHostName, "total_hosts", len(hostContexts), "loop_iterations", len(closures))
 
-				// Resolve delegate_to if specified
-				if task.DelegateTo != "" {
-					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure)
-					if err != nil {
-						errMsg := fmt.Errorf("failed to resolve delegate_to for run_once task '%s': %w", task.Name, err)
-						common.LogError("Delegate resolution error for run_once task", map[string]interface{}{"error": errMsg})
-						errCh.SendAsync(errMsg)
-						return
-					}
-					if delegatedHostContext != nil {
-						// Update the closure to use the delegated host context
-						closure.HostContext = delegatedHostContext
-					}
-				}
-
-				logger.Info("Executing run_once task", "task", task.Name, "execution_host", firstHostName, "total_hosts", len(hostContexts))
-
-				if isParallelDispatch {
-					actualDispatchedTasks++ // We'll dispatch one execution but generate results for all hosts
-					workflow.Go(workflowCtx, func(childTaskCtx workflow.Context) {
-						if debugEnabled {
-							logger.Debug("Run_once task coroutine started", "task", task.Name, "host", firstHostName)
-						}
-						originalResult := e.Runner.ExecuteTask(childTaskCtx, task, closure, cfg)
-
-						// Create results for all hosts based on the original execution
-						allResults := CreateRunOnceResultsForAllHosts(originalResult, hostContexts, firstHostName)
-
-						// Send results for all hosts
-						for _, result := range allResults {
-							if debugEnabled {
-								logger.Debug("Sending run_once result to resultsCh", "task", task.Name, "target_host", result.Closure.HostContext.Host.Name)
-							}
-							resultsCh.SendAsync(result)
-						}
-
-						if debugEnabled {
-							logger.Debug("Attempting to send to completionCh for run_once", "task", task.Name, "host", firstHostName)
-						}
-						completionCh.SendAsync(true)
-						if debugEnabled {
-							logger.Debug("Successfully sent to completionCh for run_once", "task", task.Name, "host", firstHostName)
-						}
-					})
-				} else {
+			if isParallelDispatch {
+				actualDispatchedTasks++ // We'll dispatch one execution but generate results for all hosts
+				workflow.Go(workflowCtx, func(childTaskCtx workflow.Context) {
 					if debugEnabled {
-						logger.Debug("Executing sequential run_once task", "task", task.Name, "host", firstHostName)
+						logger.Debug("Run_once task coroutine started", "task", task.Name, "host", firstHostName, "total_closures", len(closures))
 					}
-					originalResult := e.Runner.ExecuteTask(workflowCtx, task, closure, cfg)
 
-					// Create results for all hosts based on the original execution
-					allResults := CreateRunOnceResultsForAllHosts(originalResult, hostContexts, firstHostName)
+					// Execute all loop iterations on the first host and collect results
+					allLoopResults := e.executeRunOnceWithAllLoops(childTaskCtx, task, closures, hostContexts, cfg)
 
 					// Send results for all hosts
-					for _, result := range allResults {
+					for _, result := range allLoopResults {
 						if debugEnabled {
-							logger.Debug("Sending sequential run_once result to resultsCh", "task", task.Name, "target_host", result.Closure.HostContext.Host.Name)
+							logger.Debug("Sending run_once result to resultsCh", "task", task.Name, "target_host", result.Closure.HostContext.Host.Name)
 						}
 						resultsCh.SendAsync(result)
 					}
+
+					if debugEnabled {
+						logger.Debug("Attempting to send to completionCh for run_once", "task", task.Name, "host", firstHostName)
+					}
+					completionCh.SendAsync(true)
+					if debugEnabled {
+						logger.Debug("Successfully sent to completionCh for run_once", "task", task.Name, "host", firstHostName)
+					}
+				})
+			} else {
+				if debugEnabled {
+					logger.Debug("Executing sequential run_once task", "task", task.Name, "host", firstHostName, "total_closures", len(closures))
+				}
+
+				// Execute all loop iterations on the first host and collect results
+				allLoopResults := e.executeRunOnceWithAllLoops(workflowCtx, task, closures, hostContexts, cfg)
+
+				// Send results for all hosts
+				for _, result := range allLoopResults {
+					if debugEnabled {
+						logger.Debug("Sending sequential run_once result to resultsCh", "task", task.Name, "target_host", result.Closure.HostContext.Host.Name)
+					}
+					resultsCh.SendAsync(result)
 				}
 			}
 
@@ -1342,7 +1615,8 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 
 	myWorker.RegisterWorkflow(SpageTemporalWorkflow)
 	myWorker.RegisterActivity(ExecuteSpageTaskActivity)
-	myWorker.RegisterActivity(RevertSpageTaskActivity) // Register the new activity
+	myWorker.RegisterActivity(RevertSpageTaskActivity)         // Register the new activity
+	myWorker.RegisterActivity(ExecuteSpageRunOnceLoopActivity) // Register the run_once loop activity
 
 	log.Printf("Starting Temporal worker on task queue '%s'...", taskQueue)
 	if err := myWorker.Start(); err != nil {

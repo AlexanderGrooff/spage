@@ -608,9 +608,17 @@ func (t Task) RevertModule(closure *Closure) TaskResult {
 		t.Params.Actual = templatedActualProvider // This could be nil if original was nil and TemplateModuleInputFields returns nil
 	}
 
+	// Convert GenericMapOutput back to the expected concrete type if needed
+	convertedPreviousOutput, err := convertGenericOutputToConcrete(previousOutput, module)
+	if err != nil {
+		r.Error = fmt.Errorf("failed to convert previous output for revert: %w", err)
+		r.Duration = time.Since(startTime)
+		return r
+	}
+
 	// Pass t.Params.Actual to module.Revert
 	// Similar nil check considerations as in ExecuteModule for t.Params.Actual
-	r.Output, r.Error = module.Revert(t.Params.Actual, closure, previousOutput, t.RunAs) // Pass potentially nil previousOutput
+	r.Output, r.Error = module.Revert(t.Params.Actual, closure, convertedPreviousOutput, t.RunAs) // Pass potentially nil previousOutput
 	duration := time.Since(startTime)
 	r.Duration = duration
 
@@ -843,6 +851,188 @@ func setTaskStatus(result TaskResult, task Task, c *Closure) {
 		}
 	}
 	c.HostContext.Facts.Store(task.Register, facts)
+}
+
+// convertGenericOutputToConcrete converts GenericMapOutput back to the expected concrete output type
+// for a given module. This is used in the Revert method to handle cases where output was serialized/deserialized.
+func convertGenericOutputToConcrete(output ModuleOutput, module Module) (ModuleOutput, error) {
+	if output == nil {
+		return nil, nil
+	}
+
+	// If it's already the correct concrete type, return as-is
+	if _, ok := output.(GenericMapOutput); !ok {
+		return output, nil
+	}
+
+	// Convert from GenericMapOutput to the expected concrete type
+	genericOutput, ok := output.(GenericMapOutput)
+	if !ok {
+		return output, nil // This shouldn't happen based on the check above, but be safe
+	}
+
+	// Get the expected output type from the module
+	expectedType := module.OutputType()
+
+	// Create a new instance of the expected type
+	concreteOutputPtr := reflect.New(expectedType)
+	concreteOutputValue := concreteOutputPtr.Elem()
+
+	// Populate fields from the generic map using reflection
+	err := populateStructFromMap(concreteOutputValue, genericOutput)
+	if err != nil {
+		return nil, fmt.Errorf("failed to populate %s from GenericMapOutput: %w", expectedType.Name(), err)
+	}
+
+	// Return the concrete instance
+	concreteOutput := concreteOutputValue.Interface()
+	if moduleOutput, ok := concreteOutput.(ModuleOutput); ok {
+		return moduleOutput, nil
+	}
+
+	return nil, fmt.Errorf("converted type %T does not implement ModuleOutput interface", concreteOutput)
+}
+
+// populateStructFromMap uses reflection to populate struct fields from a map[string]interface{}
+func populateStructFromMap(structValue reflect.Value, data map[string]interface{}) error {
+	structType := structValue.Type()
+
+	for i := 0; i < structValue.NumField(); i++ {
+		fieldValue := structValue.Field(i)
+		fieldType := structType.Field(i)
+
+		// Skip unexported fields
+		if !fieldValue.CanSet() {
+			continue
+		}
+
+		// Skip embedded ModuleOutput interface
+		if fieldType.Type.String() == "pkg.ModuleOutput" {
+			continue
+		}
+
+		// Get the map key (use lowercase field name)
+		mapKey := strings.ToLower(fieldType.Name)
+		mapValue, exists := data[mapKey]
+		if !exists {
+			continue
+		}
+
+		err := setFieldValue(fieldValue, mapValue)
+		if err != nil {
+			return fmt.Errorf("failed to set field %s: %w", fieldType.Name, err)
+		}
+	}
+
+	return nil
+}
+
+// setFieldValue sets a reflect.Value from an interface{} value, handling type conversions
+func setFieldValue(fieldValue reflect.Value, mapValue interface{}) error {
+	if mapValue == nil {
+		return nil
+	}
+
+	fieldType := fieldValue.Type()
+	mapValueType := reflect.TypeOf(mapValue)
+
+	// Handle RevertableChange[T] types specially
+	if fieldType.Name() != "" && strings.HasPrefix(fieldType.String(), "pkg.RevertableChange[") {
+		return setRevertableChangeField(fieldValue, mapValue)
+	}
+
+	// Direct assignment if types match
+	if mapValueType.AssignableTo(fieldType) {
+		fieldValue.Set(reflect.ValueOf(mapValue))
+		return nil
+	}
+
+	// Handle type conversions
+	mapValueReflect := reflect.ValueOf(mapValue)
+	if mapValueReflect.Type().ConvertibleTo(fieldType) {
+		fieldValue.Set(mapValueReflect.Convert(fieldType))
+		return nil
+	}
+
+	// Handle slice conversions (e.g., []interface{} to []string)
+	if mapValueReflect.Kind() == reflect.Slice && fieldType.Kind() == reflect.Slice {
+		return convertSlice(fieldValue, mapValueReflect, fieldType)
+	}
+
+	// Handle string to other basic types
+	if mapValueReflect.Kind() == reflect.String && fieldType.Kind() != reflect.String {
+		// For simplicity, only handle basic string conversion cases
+		// More complex cases could be added as needed
+		return fmt.Errorf("cannot convert string %q to %s", mapValue, fieldType)
+	}
+
+	return fmt.Errorf("cannot assign %T to %s", mapValue, fieldType)
+}
+
+// convertSlice converts between slice types, e.g., []interface{} to []string
+func convertSlice(fieldValue reflect.Value, sourceSlice reflect.Value, targetType reflect.Type) error {
+	sourceLen := sourceSlice.Len()
+	targetElementType := targetType.Elem()
+
+	// Create a new slice of the target type
+	newSlice := reflect.MakeSlice(targetType, sourceLen, sourceLen)
+
+	for i := 0; i < sourceLen; i++ {
+		sourceElement := sourceSlice.Index(i)
+		targetElement := newSlice.Index(i)
+
+		// Try to convert each element
+		sourceElementValue := sourceElement.Interface()
+		sourceElementReflect := reflect.ValueOf(sourceElementValue)
+
+		// Direct assignment if types match
+		if sourceElementReflect.Type().AssignableTo(targetElementType) {
+			targetElement.Set(sourceElementReflect)
+		} else if sourceElementReflect.Type().ConvertibleTo(targetElementType) {
+			targetElement.Set(sourceElementReflect.Convert(targetElementType))
+		} else {
+			return fmt.Errorf("cannot convert slice element %T to %s", sourceElementValue, targetElementType)
+		}
+	}
+
+	fieldValue.Set(newSlice)
+	return nil
+}
+
+// setRevertableChangeField specifically handles RevertableChange[T] field population
+func setRevertableChangeField(fieldValue reflect.Value, mapValue interface{}) error {
+	changeMap, ok := mapValue.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("expected map[string]interface{} for RevertableChange, got %T", mapValue)
+	}
+
+	// Create a new RevertableChange instance
+	changeValue := reflect.New(fieldValue.Type()).Elem()
+
+	// Set Before field
+	if beforeVal, exists := changeMap["before"]; exists {
+		beforeField := changeValue.FieldByName("Before")
+		if beforeField.IsValid() && beforeField.CanSet() {
+			err := setFieldValue(beforeField, beforeVal)
+			if err != nil {
+				return fmt.Errorf("failed to set Before field: %w", err)
+			}
+		}
+	}
+
+	// Set After field
+	if afterVal, exists := changeMap["after"]; exists {
+		afterField := changeValue.FieldByName("After")
+		if afterField.IsValid() && afterField.CanSet() {
+			err := setFieldValue(afterField, afterVal)
+			if err != nil {
+				return fmt.Errorf("failed to set After field: %w", err)
+			}
+		}
+	}
+
+	fieldValue.Set(changeValue)
+	return nil
 }
 
 // GenericMapOutput provides a generic, map-based implementation of ModuleOutput.
