@@ -1227,10 +1227,7 @@ go run main.go generate -p tests/playbooks/python_fallback_module.yaml -o genera
 go build -o generated_tasks generated_tasks.go
 
 # Run the Python fallback test and capture output
-set +e
 PYTHON_FALLBACK_OUTPUT=$(./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml 2>&1)
-PYTHON_FALLBACK_EXIT_CODE=$?
-set -e
 
 echo "Python fallback test output (Exit Code: $PYTHON_FALLBACK_EXIT_CODE):"
 echo "$PYTHON_FALLBACK_OUTPUT"
