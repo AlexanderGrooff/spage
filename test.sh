@@ -182,7 +182,15 @@ go build -o generated_tasks generated_tasks.go
 
 # Test 4: Error handling test
 echo "Running error handling test..."
-if go run main.go generate -p $TESTS_DIR/playbooks/invalid_playbook.yaml -o generated_tasks.go; then
+go run main.go generate -p $TESTS_DIR/playbooks/invalid_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+set +e
+./generated_tasks $INVENTORY_ARG -config tests/configs/default.yaml
+INVALID_PLAYBOOK_EXIT_CODE=$?
+set -e
+
+# Check if the error handling test failed
+if [ $INVALID_PLAYBOOK_EXIT_CODE -ne 1 ]; then
     echo "Error handling test failed: should have errored on invalid playbook"
     exit 1
 fi
@@ -1212,6 +1220,33 @@ fi
 echo "Tags test (never) succeeded."
 
 echo "Tags functionality test completed successfully!"
+
+# Test 33: Python fallback functionality test
+echo "Running Python fallback functionality test..."
+go run main.go generate -p tests/playbooks/python_fallback_module.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+
+# Run the Python fallback test and capture output
+set +e
+PYTHON_FALLBACK_OUTPUT=$(./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml 2>&1)
+PYTHON_FALLBACK_EXIT_CODE=$?
+set -e
+
+# The test may fail if ansible-playbook is not available or modules don't exist,
+# but we should at least see that the fallback mechanism was triggered
+echo "Python fallback test output (Exit Code: $PYTHON_FALLBACK_EXIT_CODE):"
+echo "$PYTHON_FALLBACK_OUTPUT"
+
+# Check that fallback attempts were logged
+if ! echo "$PYTHON_FALLBACK_OUTPUT" | grep -q "Attempting Python fallback"; then
+    echo "Python fallback test failed: No fallback attempts were logged."
+    echo "Output was:"
+    echo "$PYTHON_FALLBACK_OUTPUT"
+    exit 1
+fi
+
+# If we get here, the fallback mechanism was at least triggered
+echo "Python fallback functionality test succeeded (fallback mechanism was triggered)."
 
 echo "All tests completed successfully!"
 

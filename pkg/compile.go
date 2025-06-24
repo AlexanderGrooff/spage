@@ -291,9 +291,11 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 					module = m
 					moduleParams = v
 				} else {
-					errors = append(errors, fmt.Errorf("unknown module or key %q in task %q", k, task.Name))
-					errored = true
-					break
+					// Handle unknown modules with Python fallback
+					pythonModule, pythonParams := GetPythonFallbackForCompilation(k, v)
+					task.Module = "ansible_python" // Use the Python fallback module name
+					module = pythonModule
+					moduleParams = pythonParams
 				}
 			}
 		}

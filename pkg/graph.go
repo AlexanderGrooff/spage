@@ -131,37 +131,15 @@ func (g Graph) SaveToFile(path string) error {
 	fmt.Fprintln(f, "package main")
 	fmt.Fprintln(f)
 	fmt.Fprintln(f, "import (")
-	fmt.Fprintln(f, `    "os"`)
-	fmt.Fprintln(f, `    "fmt"`)
-	fmt.Fprintln(f, `    "flag"`)
 	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/cmd"`)
 	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/pkg"`)
-	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/pkg/executor"`)
 	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/pkg/modules"`)
 	fmt.Fprintln(f, ")")
 	fmt.Fprintln(f)
 	fmt.Fprint(f, g.ToCode())
 	fmt.Fprintln(f)
 	fmt.Fprintln(f, "func main() {")
-	fmt.Fprintln(f, "    configFile := flag.String(\"config\", \"\", \"Config file path (default: ./spage.yaml)\")")
-	fmt.Fprintln(f, "    inventoryFile := flag.String(\"inventory\", \"\", \"Inventory file path\")")
-	fmt.Fprintln(f, "    flag.Parse()")
-	fmt.Fprintln(f)
-	fmt.Fprintln(f, "    // Load configuration and apply logging settings")
-	fmt.Fprintln(f, "    err := cmd.LoadConfig(*configFile)")
-	fmt.Fprintln(f, "    if err != nil {")
-	fmt.Fprintf(f, "        fmt.Printf(\"Error loading config: %%v\\n\", err)\n")
-	fmt.Fprintln(f, "        os.Exit(1)")
-	fmt.Fprintln(f, "    }")
-	fmt.Fprintln(f)
-	fmt.Fprintln(f, "    // Execute the graph using the loaded configuration")
-	fmt.Fprintln(f, "    cfg := cmd.GetConfig() // Function to get the loaded config from cmd package")
-	fmt.Fprintln(f, "    exec := executor.NewLocalGraphExecutor(&executor.LocalTaskRunner{})")
-	fmt.Fprintln(f, "    err = pkg.ExecuteGraph(exec, GeneratedGraph, *inventoryFile, cfg)")
-	fmt.Fprintln(f, "    if err != nil {")
-	fmt.Fprintf(f, "        fmt.Printf(\"Execution failed: %%v\\n\", err)\n")
-	fmt.Fprintln(f, "        os.Exit(1)")
-	fmt.Fprintln(f, "    }")
+	fmt.Fprintln(f, "    cmd.StartLocalExecutor(GeneratedGraph)")
 	fmt.Fprintln(f, "}")
 	return nil
 }
@@ -515,13 +493,8 @@ func (g Graph) SaveToTemporalWorkflowFile(path string) error {
 	content.WriteString(`package main
 
 import (
-	"flag"
-	"log"
-	"os"
-
 	"github.com/AlexanderGrooff/spage/cmd"
 	"github.com/AlexanderGrooff/spage/pkg"
-	"github.com/AlexanderGrooff/spage/pkg/executor"
 	"github.com/AlexanderGrooff/spage/pkg/modules"
 )
 
@@ -532,52 +505,8 @@ import (
 	content.WriteString(graphCode) // graphCode produces "var GeneratedGraph = pkg.Graph{...}"
 	content.WriteString("\n")      // Ensure a newline after graph code
 
-	content.WriteString(`// Helper to get environment variable or default
-func getEnv(key, fallback string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
-	}
-	return fallback
-}
-
-func main() {
-	log.Println("Starting Spage Temporal runner...")
-
-	// Define flags with environment variable fallbacks
-	configFile := flag.String("config", getEnv("SPAGE_CONFIG_FILE", ""), "Spage configuration file path. If empty, 'spage.yaml' is tried, then defaults.")
-	inventoryFile := flag.String("inventory", getEnv("SPAGE_INVENTORY_FILE", ""), "Spage inventory file path. If empty, a default localhost inventory is used.")
-
-	flag.Parse()
-
-	// Load Spage config
-	spageConfigPath := *configFile
-	if spageConfigPath == "" {
-		spageConfigPath = "spage.yaml" // Default to spage.yaml if config flag is empty
-		log.Printf("Config file flag is empty, attempting to load default: %s", spageConfigPath)
-	}
-
-	if err := cmd.LoadConfig(spageConfigPath); err != nil {
-		// Only log a warning if a specific file was intended but failed, or if the default spage.yaml was tried and failed.
-		if *configFile != "" || (*configFile == "" && spageConfigPath == "spage.yaml") {
-			log.Printf("Warning: Failed to load Spage config file '%s': %v. Using internal defaults.", spageConfigPath, err)
-		}
-	} else {
-		log.Printf("Spage config loaded from '%s'.", spageConfigPath)
-	}
-	spageAppConfig := cmd.GetConfig() // GetConfig() provides defaults if loading failed or no file specified
-
-	log.Printf("Preparing to run Temporal worker. Workflow trigger from config: %t", spageAppConfig.Temporal.Trigger)
-
-	// Prepare options for the Temporal worker runner
-	options := executor.RunSpageTemporalWorkerAndWorkflowOptions{
-		Graph:            &GeneratedGraph, // This is the graph code injected above
-		InventoryPath:    *inventoryFile,
-		LoadedConfig:     spageAppConfig, // spageAppConfig now contains Temporal settings from config file, env, or defaults
-		WorkflowIDPrefix: spageAppConfig.Temporal.WorkflowIDPrefix,
-	}
-
-	// Run the worker and potentially the workflow
-	executor.RunSpageTemporalWorkerAndWorkflow(options)
+	content.WriteString(`func main() {
+	cmd.StartTemporalExecutor(GeneratedGraph)
 }
 `)
 

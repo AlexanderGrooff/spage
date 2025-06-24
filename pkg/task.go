@@ -529,8 +529,20 @@ func (t Task) executeOnce(closure *Closure) TaskResult {
 
 	module, ok := GetModule(t.Module)
 	if !ok {
-		r.Error = fmt.Errorf("module %s not found", t.Module)
-		return r
+		// Try to use the Python fallback module for unknown modules
+		common.LogInfo("Module not found in Spage, attempting Python fallback", map[string]interface{}{
+			"module": t.Module,
+			"host":   closure.HostContext.Host.Name,
+		})
+
+		pythonModule, pythonParams, err := GetPythonFallbackModule(t.Module, t.Params.Actual)
+		if err != nil {
+			r.Error = fmt.Errorf("failed to create Python fallback for module %s: %w", t.Module, err)
+			return r
+		}
+
+		module = pythonModule
+		t.Params.Actual = pythonParams
 	}
 
 	// Evaluate jinja2 in the module input fields
