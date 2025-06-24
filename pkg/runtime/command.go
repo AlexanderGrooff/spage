@@ -11,6 +11,9 @@ import (
 )
 
 func RunLocalCommand(command, username string) (int, string, string, error) {
+	if command == "" {
+		return 0, "", "", nil
+	}
 	var stdout, stderr bytes.Buffer
 	var err error
 	var cmd *exec.Cmd

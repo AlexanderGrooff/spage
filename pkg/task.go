@@ -551,6 +551,16 @@ func (t Task) RevertModule(closure *Closure) TaskResult {
 		})
 		return r
 	}
+
+	// Check if the task's parameters define a revert action.
+	if t.Params.Actual == nil || !t.Params.Actual.HasRevert() {
+		common.LogDebug("Task has no revert action defined, skipping revert.", map[string]interface{}{
+			"task": t.Name,
+			"host": closure.HostContext.Host.Name,
+		})
+		return r
+	}
+
 	module, ok := GetModule(t.Module)
 	if !ok {
 		r.Error = fmt.Errorf("module %s not found", t.Module)
@@ -572,6 +582,15 @@ func (t Task) RevertModule(closure *Closure) TaskResult {
 	if previousOutputRaw != nil {
 		var assertOk bool
 		previousOutput, assertOk = previousOutputRaw.(ModuleOutput)
+		if !assertOk {
+			// If the assertion fails, it might be because the type information was lost during serialization (e.g., in Temporal).
+			// We can check if the raw type is a map and wrap it in a generic output type.
+			if asMap, ok := previousOutputRaw.(map[string]interface{}); ok {
+				previousOutput = GenericMapOutput(asMap)
+				assertOk = true
+			}
+		}
+
 		if !assertOk {
 			r.Error = fmt.Errorf("failed to assert previous history type (%T) to ModuleOutput for task %s", previousOutputRaw, t.Name)
 			r.Duration = time.Since(startTime)
@@ -824,6 +843,23 @@ func setTaskStatus(result TaskResult, task Task, c *Closure) {
 		}
 	}
 	c.HostContext.Facts.Store(task.Register, facts)
+}
+
+// GenericMapOutput provides a generic, map-based implementation of ModuleOutput.
+// This is useful for reconstructing ModuleOutput from history where type information may have been lost.
+type GenericMapOutput map[string]interface{}
+
+// Changed checks for a "changed" key in the map.
+func (g GenericMapOutput) Changed() bool {
+	if changed, ok := g["changed"].(bool); ok {
+		return changed
+	}
+	return false
+}
+
+// String provides a simple string representation of the map.
+func (g GenericMapOutput) String() string {
+	return fmt.Sprintf("%v", map[string]interface{}(g))
 }
 
 var moduleOutputType = reflect.TypeOf((*ModuleOutput)(nil)).Elem()

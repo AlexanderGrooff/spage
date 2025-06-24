@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +23,11 @@ import (
 	"github.com/google/uuid"
 )
 
+// isDebugLoggingEnabled checks if debug logging is enabled based on config
+func isDebugLoggingEnabled(cfg *config.Config) bool {
+	return cfg != nil && strings.ToLower(cfg.Logging.Level) == "debug"
+}
+
 // SpageActivityInput defines the input for our generic Spage task activity.
 type SpageActivityInput struct {
 	TaskDefinition   pkg.Task
@@ -29,6 +35,7 @@ type SpageActivityInput struct {
 	LoopItem         interface{} // nil if not a loop task or for the main item
 	CurrentHostFacts map[string]interface{}
 	SpageCoreConfig  *config.Config // Pass necessary config parts
+	TaskHistory      map[string]interface{}
 }
 
 // SpageActivityResult defines the output from our generic Spage task activity.
@@ -42,12 +49,14 @@ type SpageActivityResult struct {
 	Ignored           bool
 	RegisteredVars    map[string]interface{}
 	HostFactsSnapshot map[string]interface{}
+	ModuleOutputMap   map[string]interface{}
 }
 
 // ExecuteSpageTaskActivity is the generic activity that runs a Spage task.
 func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*SpageActivityResult, error) {
 	logger := activity.GetLogger(ctx)
-	logger.Info("ExecuteSpageTaskActivity started", "task", input.TaskDefinition.Name, "host", input.TargetHost.Name)
+
+	logger.Debug("ExecuteSpageTaskActivity started", "task", input.TaskDefinition.Name, "host", input.TargetHost.Name)
 	activity.RecordHeartbeat(ctx, fmt.Sprintf("Starting task %s on host %s", input.TaskDefinition.Name, input.TargetHost.Name))
 
 	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost)
@@ -135,15 +144,18 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 		if taskResult.Output != nil {
 			result.Output = taskResult.Output.String()
 			result.Changed = taskResult.Output.Changed()
-			logger.Info("Task executed successfully", "task", input.TaskDefinition.Name, "changed", result.Changed)
+			logger.Debug("Task executed successfully", "task", input.TaskDefinition.Name, "changed", result.Changed)
+			if converted, ok := pkg.ConvertOutputToFactsMap(taskResult.Output).(map[string]interface{}); ok {
+				result.ModuleOutputMap = converted
+			}
 			if input.TaskDefinition.Register != "" {
 				valueToStore := pkg.ConvertOutputToFactsMap(taskResult.Output) // Assumes ConvertOutputToFactsMap is in package pkg
 				result.RegisteredVars[input.TaskDefinition.Register] = valueToStore
-				logger.Info("Variable registered", "task", input.TaskDefinition.Name, "variable", input.TaskDefinition.Register)
+				logger.Debug("Variable registered", "task", input.TaskDefinition.Name, "variable", input.TaskDefinition.Register)
 			}
 		} else {
 			result.Skipped = true
-			logger.Info("Task executed, no output (potentially skipped)", "task", input.TaskDefinition.Name)
+			logger.Debug("Task executed, no output (potentially skipped)", "task", input.TaskDefinition.Name)
 			if input.TaskDefinition.Register != "" {
 				result.RegisteredVars[input.TaskDefinition.Register] = map[string]interface{}{
 					"failed":  false,
@@ -162,7 +174,7 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 			result.HostFactsSnapshot[kStr] = value
 		} else {
 			// Log or handle non-string keys if necessary, though sync.Map keys are typically strings here.
-			logger.Warn("Non-string key found in HostContext facts during snapshot", "key_type", fmt.Sprintf("%T", key), "key_value", key)
+			logger.Debug("Non-string key found in HostContext facts during snapshot", "key_type", fmt.Sprintf("%T", key), "key_value", key)
 		}
 		return true
 	})
@@ -210,7 +222,8 @@ func processActivityResultAndRegisterFacts(
 	if activityResult.HostFactsSnapshot != nil {
 		for key, value := range activityResult.HostFactsSnapshot {
 			hostFacts[activityResult.HostName][key] = value
-			logger.Debug("Fact updated/set from activity snapshot", "host", activityResult.HostName, "variable", key)
+			// Only log fact updates in debug mode to reduce verbosity
+			// logger.Debug("Fact updated/set from activity snapshot", "host", activityResult.HostName, "variable", key)
 		}
 	}
 
@@ -219,7 +232,8 @@ func processActivityResultAndRegisterFacts(
 	if len(activityResult.RegisteredVars) > 0 {
 		for key, value := range activityResult.RegisteredVars {
 			hostFacts[activityResult.HostName][key] = value
-			logger.Info("Fact registered by workflow from activity result (register keyword)", "host", activityResult.HostName, "variable", key)
+			// Only log in debug mode to reduce verbosity
+			// logger.Info("Fact registered by workflow from activity result (register keyword)", "host", activityResult.HostName, "variable", key)
 		}
 	}
 	return nil
@@ -330,7 +344,7 @@ func (r *TemporalTaskRunner) ExecuteTask(execCtx workflow.Context, task pkg.Task
 		Changed:                 activityOutput.Changed,
 		Duration:                duration,
 		ExecutionSpecificOutput: activityOutput, // Store the full SpageActivityResult
-		// Output: nil, // ModuleOutput remains nil for now
+		Output:                  GenericOutput(activityOutput.ModuleOutputMap),
 	}
 }
 
@@ -341,12 +355,23 @@ func (r *TemporalTaskRunner) RevertTask(execCtx workflow.Context, task pkg.Task,
 	currentHostFacts := closure.GetFacts()
 	loopItem, _ := closure.ExtraFacts["item"]
 
+	taskHistory := make(map[string]interface{})
+	if closure.HostContext != nil && closure.HostContext.History != nil {
+		closure.HostContext.History.Range(func(key, value interface{}) bool {
+			if kStr, ok := key.(string); ok {
+				taskHistory[kStr] = value
+			}
+			return true
+		})
+	}
+
 	activityInput := SpageActivityInput{
 		TaskDefinition:   task,
 		TargetHost:       *closure.HostContext.Host,
 		LoopItem:         loopItem,
 		CurrentHostFacts: currentHostFacts,
 		SpageCoreConfig:  cfg,
+		TaskHistory:      taskHistory,
 	}
 
 	var activityOutput SpageActivityResult // Use a distinct name from the input
@@ -421,14 +446,15 @@ func (r *TemporalTaskRunner) RevertTask(execCtx workflow.Context, task pkg.Task,
 		Changed:                 activityOutput.Changed,
 		Duration:                duration,
 		ExecutionSpecificOutput: activityOutput, // Store the full SpageActivityResult
-		// Output: nil, // ModuleOutput remains nil for now
+		Output:                  GenericOutput(activityOutput.ModuleOutputMap),
 	}
 }
 
 // RevertSpageTaskActivity is the generic activity that runs a Spage task's revert action.
 func RevertSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*SpageActivityResult, error) {
 	logger := activity.GetLogger(ctx)
-	logger.Info("RevertSpageTaskActivity started", "task", input.TaskDefinition.Name, "host", input.TargetHost.Name)
+
+	logger.Debug("RevertSpageTaskActivity started", "task", input.TaskDefinition.Name, "host", input.TargetHost.Name)
 	activity.RecordHeartbeat(ctx, fmt.Sprintf("Starting revert for task %s on host %s", input.TaskDefinition.Name, input.TargetHost.Name))
 
 	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost)
@@ -445,6 +471,12 @@ func RevertSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*Sp
 	if input.CurrentHostFacts != nil {
 		for k, v := range input.CurrentHostFacts {
 			hostCtx.Facts.Store(k, v)
+		}
+	}
+
+	if input.TaskHistory != nil {
+		for k, v := range input.TaskHistory {
+			hostCtx.History.Store(k, v)
 		}
 	}
 
@@ -511,15 +543,16 @@ func RevertSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*Sp
 		if taskResult.Output != nil {
 			result.Output = taskResult.Output.String()
 			result.Changed = taskResult.Output.Changed()
-			logger.Info("Revert task executed successfully", "task", input.TaskDefinition.Name, "changed", result.Changed)
+			result.ModuleOutputMap = pkg.ConvertOutputToFactsMap(taskResult.Output).(map[string]interface{})
+			logger.Debug("Revert task executed successfully", "task", input.TaskDefinition.Name, "changed", result.Changed)
 			if input.TaskDefinition.Register != "" {
 				valueToStore := pkg.ConvertOutputToFactsMap(taskResult.Output)
 				result.RegisteredVars[input.TaskDefinition.Register] = valueToStore
-				logger.Info("Variable registered during revert", "task", input.TaskDefinition.Name, "variable", input.TaskDefinition.Register)
+				logger.Debug("Variable registered during revert", "task", input.TaskDefinition.Name, "variable", input.TaskDefinition.Register)
 			}
 		} else {
 			result.Skipped = true // A revert might be skipped if not applicable
-			logger.Info("Revert task executed, no output (potentially skipped)", "task", input.TaskDefinition.Name)
+			logger.Debug("Revert task executed, no output (potentially skipped)", "task", input.TaskDefinition.Name)
 			if input.TaskDefinition.Register != "" {
 				result.RegisteredVars[input.TaskDefinition.Register] = map[string]interface{}{
 					"failed":  false,
@@ -536,7 +569,7 @@ func RevertSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*Sp
 		if kStr, ok := key.(string); ok {
 			result.HostFactsSnapshot[kStr] = value
 		} else {
-			logger.Warn("Non-string key found in HostContext facts during revert snapshot", "key_type", fmt.Sprintf("%T", key), "key_value", key)
+			logger.Debug("Non-string key found in HostContext facts during revert snapshot", "key_type", fmt.Sprintf("%T", key), "key_value", key)
 		}
 		return true
 	})
@@ -561,12 +594,14 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 	cfg *config.Config,
 ) {
 	logger := workflow.GetLogger(workflowCtx)
-	logger.Info("loadLevelTasks started")
-	defer logger.Info("loadLevelTasks finished")
+
+	logger.Debug("loadLevelTasks started")
+	defer logger.Debug("loadLevelTasks finished")
 
 	defer resultsCh.Close()
 	defer errCh.Close()
 
+	debugEnabled := isDebugLoggingEnabled(cfg)
 	isParallelDispatch := cfg.ExecutionMode == "parallel"
 	var completionCh workflow.Channel
 	// Pre-calculate numDispatchedTasks for buffered channel capacity if in parallel mode
@@ -583,10 +618,14 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 
 		if countForBuffer > 0 {
 			completionCh = workflow.NewBufferedChannel(workflowCtx, countForBuffer)
-			logger.Debug("Parallel dispatch mode: completionCh created with buffer.", "capacity", countForBuffer)
+			if debugEnabled {
+				logger.Debug("Parallel dispatch mode: completionCh created with buffer.", "capacity", countForBuffer)
+			}
 		} else {
 			// No tasks to dispatch in parallel, no need for completionCh
-			logger.Debug("Parallel dispatch mode: No tasks to dispatch, completionCh not created.")
+			if debugEnabled {
+				logger.Debug("Parallel dispatch mode: No tasks to dispatch, completionCh not created.")
+			}
 		}
 	}
 
@@ -637,7 +676,9 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 				if isParallelDispatch {
 					actualDispatchedTasks++ // We'll dispatch one execution but generate results for all hosts
 					workflow.Go(workflowCtx, func(childTaskCtx workflow.Context) {
-						logger.Debug("Run_once task coroutine started", "task", task.Name, "host", firstHostName)
+						if debugEnabled {
+							logger.Debug("Run_once task coroutine started", "task", task.Name, "host", firstHostName)
+						}
 						originalResult := e.Runner.ExecuteTask(childTaskCtx, task, closure, cfg)
 
 						// Create results for all hosts based on the original execution
@@ -645,16 +686,24 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 
 						// Send results for all hosts
 						for _, result := range allResults {
-							logger.Debug("Sending run_once result to resultsCh", "task", task.Name, "target_host", result.Closure.HostContext.Host.Name)
+							if debugEnabled {
+								logger.Debug("Sending run_once result to resultsCh", "task", task.Name, "target_host", result.Closure.HostContext.Host.Name)
+							}
 							resultsCh.SendAsync(result)
 						}
 
-						logger.Debug("Attempting to send to completionCh for run_once", "task", task.Name, "host", firstHostName)
+						if debugEnabled {
+							logger.Debug("Attempting to send to completionCh for run_once", "task", task.Name, "host", firstHostName)
+						}
 						completionCh.SendAsync(true)
-						logger.Debug("Successfully sent to completionCh for run_once", "task", task.Name, "host", firstHostName)
+						if debugEnabled {
+							logger.Debug("Successfully sent to completionCh for run_once", "task", task.Name, "host", firstHostName)
+						}
 					})
 				} else {
-					logger.Debug("Executing sequential run_once task", "task", task.Name, "host", firstHostName)
+					if debugEnabled {
+						logger.Debug("Executing sequential run_once task", "task", task.Name, "host", firstHostName)
+					}
 					originalResult := e.Runner.ExecuteTask(workflowCtx, task, closure, cfg)
 
 					// Create results for all hosts based on the original execution
@@ -662,7 +711,9 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 
 					// Send results for all hosts
 					for _, result := range allResults {
-						logger.Debug("Sending sequential run_once result to resultsCh", "task", task.Name, "target_host", result.Closure.HostContext.Host.Name)
+						if debugEnabled {
+							logger.Debug("Sending sequential run_once result to resultsCh", "task", task.Name, "target_host", result.Closure.HostContext.Host.Name)
+						}
 						resultsCh.SendAsync(result)
 					}
 				}
@@ -700,32 +751,50 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 
 				if isParallelDispatch {
 					actualDispatchedTasks++ // Increment the counter for actual dispatches
-					logger.Debug("Dispatching parallel task", "task", task.Name, "host", hostName, "closure_item", closure.ExtraFacts["item"])
+					if debugEnabled {
+						logger.Debug("Dispatching parallel task", "task", task.Name, "host", hostName, "closure_item", closure.ExtraFacts["item"])
+					}
 					workflow.Go(workflowCtx, func(childTaskCtx workflow.Context) {
-						logger.Debug("Parallel task coroutine started", "task", task.Name, "host", hostName)
+						if debugEnabled {
+							logger.Debug("Parallel task coroutine started", "task", task.Name, "host", hostName)
+						}
 						taskResult := e.Runner.ExecuteTask(childTaskCtx, task, closure, cfg)
-						logger.Debug("Parallel task executed, sending to resultsCh", "task", task.Name, "host", hostName)
+						if debugEnabled {
+							logger.Debug("Parallel task executed, sending to resultsCh", "task", task.Name, "host", hostName)
+						}
 						resultsCh.SendAsync(taskResult)
 
-						logger.Debug("Attempting to send to completionCh", "task", task.Name, "host", hostName)
+						if debugEnabled {
+							logger.Debug("Attempting to send to completionCh", "task", task.Name, "host", hostName)
+						}
 						completionCh.SendAsync(true)
-						logger.Debug("Successfully sent to completionCh", "task", task.Name, "host", hostName)
+						if debugEnabled {
+							logger.Debug("Successfully sent to completionCh", "task", task.Name, "host", hostName)
+						}
 					})
 				} else {
-					logger.Debug("Executing sequential task", "task", task.Name, "host", hostName, "closure_item", closure.ExtraFacts["item"])
+					if debugEnabled {
+						logger.Debug("Executing sequential task", "task", task.Name, "host", hostName, "closure_item", closure.ExtraFacts["item"])
+					}
 					taskResult := e.Runner.ExecuteTask(workflowCtx, task, closure, cfg)
-					logger.Debug("Sequential task executed, sending to resultsCh", "task", task.Name, "host", hostName)
+					if debugEnabled {
+						logger.Debug("Sequential task executed, sending to resultsCh", "task", task.Name, "host", hostName)
+						logger.Debug("Sequential task result sent to resultsCh", "task", task.Name, "host", hostName)
+					}
 					resultsCh.SendAsync(taskResult)
-					logger.Debug("Sequential task result sent to resultsCh", "task", task.Name, "host", hostName)
 				}
 			}
 		}
 	}
 
 	if isParallelDispatch && actualDispatchedTasks > 0 { // Use actualDispatchedTasks here
-		logger.Info("Waiting for parallel tasks to complete", "count", actualDispatchedTasks)
+		if debugEnabled {
+			logger.Info("Waiting for parallel tasks to complete", "count", actualDispatchedTasks)
+		}
 		for i := 0; i < actualDispatchedTasks; i++ { // Loop up to actualDispatchedTasks
-			logger.Debug("Attempting to receive from completionCh", "iteration", i+1, "total_expected_signals", actualDispatchedTasks, "current_completed_signals_in_loop", i)
+			if debugEnabled {
+				logger.Debug("Attempting to receive from completionCh", "iteration", i+1, "total_expected_signals", actualDispatchedTasks, "current_completed_signals_in_loop", i)
+			}
 			// Ensure completionCh is not nil (it wouldn't be if actualDispatchedTasks > 0)
 			if completionCh == nil {
 				logger.Error("completionCh is nil before Receive, this should not happen if actualDispatchedTasks > 0")
@@ -733,11 +802,17 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 				// For now, let it proceed, it will panic on nil channel receive.
 			}
 			completionCh.Receive(workflowCtx, nil)
-			logger.Debug("Successfully received from completionCh", "iteration", i+1, "completed_signals_in_loop", i+1)
+			if debugEnabled {
+				logger.Debug("Successfully received from completionCh", "iteration", i+1, "completed_signals_in_loop", i+1)
+			}
 		}
-		logger.Info("All parallel tasks completed for this level.")
+		if debugEnabled {
+			logger.Info("All parallel tasks completed for this level.")
+		}
 	}
-	logger.Debug("loadLevelTasks: all tasks dispatched for the level.", "num_dispatched_parallel", actualDispatchedTasks)
+	if debugEnabled {
+		logger.Debug("loadLevelTasks: all tasks dispatched for the level.", "num_dispatched_parallel", actualDispatchedTasks)
+	}
 }
 
 func (e *TemporalGraphExecutor) processLevelResults(
@@ -747,9 +822,11 @@ func (e *TemporalGraphExecutor) processLevelResults(
 	executionLevel int,
 	cfg *config.Config,
 	numExpectedResultsOnLevel int,
+	recapStats map[string]map[string]int,
 ) (bool, []pkg.TaskResult, error) {
 	ctx := e.Runner.WorkflowCtx
 	logger := workflow.GetLogger(ctx)
+	debugEnabled := isDebugLoggingEnabled(cfg)
 
 	var levelHardErrored bool
 	resultsReceived := 0
@@ -761,9 +838,13 @@ func (e *TemporalGraphExecutor) processLevelResults(
 	selector := workflow.NewSelector(ctx)
 
 	selector.AddReceive(errCh, func(c workflow.ReceiveChannel, more bool) {
-		logger.Debug("errCh handler invoked", "more", more, "current_dispatchError", dispatchError != nil)
+		if debugEnabled {
+			logger.Debug("errCh handler invoked", "more", more, "current_dispatchError", dispatchError != nil)
+		}
 		if !more {
-			logger.Info("errCh closed by sender.")
+			if debugEnabled {
+				logger.Info("errCh closed by sender.")
+			}
 			errChActive = false
 			return
 		}
@@ -777,9 +858,13 @@ func (e *TemporalGraphExecutor) processLevelResults(
 	})
 
 	selector.AddReceive(resultsCh, func(c workflow.ReceiveChannel, more bool) {
-		logger.Debug("resultsCh handler invoked", "more", more, "current_resultsReceived", resultsReceived, "expected", numExpectedResultsOnLevel)
+		if debugEnabled {
+			logger.Debug("resultsCh handler invoked", "more", more, "current_resultsReceived", resultsReceived, "expected", numExpectedResultsOnLevel)
+		}
 		if !more {
-			logger.Info("resultsCh closed by sender.", "level", executionLevel, "results_received_so_far", resultsReceived)
+			if debugEnabled {
+				logger.Info("resultsCh closed by sender.", "level", executionLevel, "results_received_so_far", resultsReceived)
+			}
 			resultsChActive = false
 			return
 		}
@@ -801,6 +886,10 @@ func (e *TemporalGraphExecutor) processLevelResults(
 		hostname := result.Closure.HostContext.Host.Name
 		taskName := result.Task.Name
 
+		if _, exists := recapStats[hostname]; !exists {
+			recapStats[hostname] = map[string]int{"ok": 0, "changed": 0, "failed": 0, "skipped": 0, "ignored": 0}
+		}
+
 		activitySpecificOutput, ok := result.ExecutionSpecificOutput.(SpageActivityResult)
 		if !ok {
 			logger.Error("TaskResult.ExecutionSpecificOutput is not of type SpageActivityResult", "task", taskName, "host", hostname)
@@ -818,20 +907,31 @@ func (e *TemporalGraphExecutor) processLevelResults(
 		if result.Error != nil && !isIgnoredError {
 			logger.Error("Task failed (from TaskResult)", "level", executionLevel, "task", taskName, "host", hostname, "error", result.Error)
 			levelHardErrored = true
+			recapStats[hostname]["failed"]++
 		} else if result.Error != nil && isIgnoredError {
 			logger.Warn("Task failed but was ignored (from TaskResult)", "level", executionLevel, "task", taskName, "host", hostname, "original_error", ignoredErrWrapper.Unwrap())
+			recapStats[hostname]["ignored"]++
 		} else {
 			logger.Info("Task completed successfully or skipped (from TaskResult)", "level", executionLevel, "task", taskName, "host", hostname, "status", result.Status.String(), "changed", result.Changed)
+			if result.Status == pkg.TaskStatusChanged {
+				recapStats[hostname]["changed"]++
+			} else if result.Status == pkg.TaskStatusSkipped {
+				recapStats[hostname]["skipped"]++
+			} else {
+				recapStats[hostname]["ok"]++
+			}
 		}
 	})
 
 	for (resultsChActive || errChActive) && resultsReceived < numExpectedResultsOnLevel && dispatchError == nil {
 		selector.Select(ctx)
-		logger.Debug("processLevelResults loop status",
-			"level", executionLevel,
-			"resultsChActive", resultsChActive, "errChActive", errChActive,
-			"resultsReceived", resultsReceived, "numExpectedResultsOnLevel", numExpectedResultsOnLevel,
-			"dispatchError", dispatchError != nil)
+		if debugEnabled {
+			logger.Debug("processLevelResults loop status",
+				"level", executionLevel,
+				"resultsChActive", resultsChActive, "errChActive", errChActive,
+				"resultsReceived", resultsReceived, "numExpectedResultsOnLevel", numExpectedResultsOnLevel,
+				"dispatchError", dispatchError != nil)
+		}
 	}
 
 	if dispatchError != nil {
@@ -881,6 +981,7 @@ func (e *TemporalGraphExecutor) Execute(
 	workflowCtx := e.Runner.WorkflowCtx                    // Get the root workflow context for Revert if needed
 	logger := workflow.GetLogger(workflowCtx)              // Define logger for Execute scope
 	executionTaskResults := make(map[int][]pkg.TaskResult) // Store all successful/processed task results per level
+	recapStats := make(map[string]map[string]int)          // Initialize recap stats
 
 	for executionLevel, tasksInLevel := range orderedGraph {
 		// Before each level, ensure the hostContexts have the latest facts from the workflow state.
@@ -917,6 +1018,7 @@ func (e *TemporalGraphExecutor) Execute(
 			workflowHostFacts,
 			executionLevel,
 			cfg, numExpectedResultsOnLevel,
+			recapStats,
 		)
 		if errProcessingResults != nil {
 			if !cfg.Revert {
@@ -924,7 +1026,7 @@ func (e *TemporalGraphExecutor) Execute(
 			}
 			// If processLevelResults itself returns an error (e.g., premature channel close), attempt revert
 			logger.Error("Error processing results, attempting revert", "level", executionLevel, "error", errProcessingResults)
-			if revertErr := e.revertWorkflow(workflowCtx, executionTaskResults, hostContexts, workflowHostFacts, cfg, executionLevel); revertErr != nil {
+			if revertErr := e.revertWorkflow(workflowCtx, executionTaskResults, hostContexts, workflowHostFacts, cfg, executionLevel, recapStats); revertErr != nil {
 				return fmt.Errorf("error during graph execution on level %d (%v) and also during revert: %w", executionLevel, errProcessingResults, revertErr)
 			}
 			return fmt.Errorf("error during graph execution on level %d: %w, tasks reverted", executionLevel, errProcessingResults)
@@ -939,12 +1041,13 @@ func (e *TemporalGraphExecutor) Execute(
 				return fmt.Errorf("run failed on level %d, revert is disabled", executionLevel)
 			}
 			logger.Info("Run failed, task reversion required", map[string]interface{}{"level": executionLevel})
-			if revertErr := e.revertWorkflow(workflowCtx, executionTaskResults, hostContexts, workflowHostFacts, cfg, executionLevel); revertErr != nil {
+			if revertErr := e.revertWorkflow(workflowCtx, executionTaskResults, hostContexts, workflowHostFacts, cfg, executionLevel, recapStats); revertErr != nil {
 				return fmt.Errorf("run failed on level %d and also failed during revert: %w", executionLevel, revertErr)
 			}
 			return fmt.Errorf("run failed on level %d and tasks reverted", executionLevel)
 		}
 	}
+	e.printPlayRecap(cfg, recapStats)
 	return nil
 }
 
@@ -973,10 +1076,32 @@ func (e *TemporalGraphExecutor) revertWorkflow(
 	workflowHostFacts map[string]map[string]interface{},
 	cfg *config.Config,
 	failingLevel int, // The level at or before which failure occurred
+	recapStats map[string]map[string]int,
 ) error {
 	logger := workflow.GetLogger(workflowCtx)
 	logger.Info("Starting revert process", "up_to_level", failingLevel)
 	var overallRevertError error
+	workflowTaskHistory := make(map[string]map[string]interface{})
+
+	// Build the complete history first from all tasks that were processed.
+	for i := 0; i <= failingLevel; i++ {
+		tasksOnLevel, exists := executedTasks[i]
+		if !exists {
+			continue
+		}
+		for _, taskResult := range tasksOnLevel {
+			if taskResult.Closure != nil && taskResult.Closure.HostContext != nil && taskResult.Closure.HostContext.Host != nil {
+				hostName := taskResult.Closure.HostContext.Host.Name
+				if _, ok := workflowTaskHistory[hostName]; !ok {
+					workflowTaskHistory[hostName] = make(map[string]interface{})
+				}
+				// We only store the output if the task was not skipped and had output.
+				if taskResult.Output != nil && taskResult.Status != pkg.TaskStatusSkipped {
+					workflowTaskHistory[hostName][taskResult.Task.Name] = taskResult.Output
+				}
+			}
+		}
+	}
 
 	// Revert from the failingLevel (or last successfully processed level part of it) down to 0
 	for level := failingLevel; level >= 0; level-- {
@@ -1022,8 +1147,9 @@ func (e *TemporalGraphExecutor) revertWorkflow(
 			// The original closure might have stale facts.
 			clonedRevertClosure := &pkg.Closure{
 				HostContext: &pkg.HostContext{
-					Host:  originalClosure.HostContext.Host, // Use original host definition
-					Facts: &sync.Map{},                      // Fresh facts map for this revert operation
+					Host:    originalClosure.HostContext.Host, // Use original host definition
+					Facts:   &sync.Map{},                      // Fresh facts map for this revert operation
+					History: &sync.Map{},
 					// SSHClient: nil, // Should not be needed or used in workflow activities
 				},
 				ExtraFacts: make(map[string]interface{}),
@@ -1039,6 +1165,11 @@ func (e *TemporalGraphExecutor) revertWorkflow(
 				}
 			} else {
 				logger.Warn("No current facts found for host during revert, revert task will use minimal facts", "host", hostName, "task", originalTask.Name)
+			}
+			if historyForHost, ok := workflowTaskHistory[hostName]; ok {
+				for taskName, output := range historyForHost {
+					clonedRevertClosure.HostContext.History.Store(taskName, output)
+				}
 			}
 
 			actualRevertsDispatched++
@@ -1119,6 +1250,23 @@ func (e *TemporalGraphExecutor) revertWorkflow(
 	return overallRevertError
 }
 
+func (e *TemporalGraphExecutor) printPlayRecap(cfg *config.Config, recapStats map[string]map[string]int) {
+	if cfg.Logging.Format == "plain" {
+		fmt.Printf("\nPLAY RECAP ****************************************************\n")
+		for hostname, stats := range recapStats {
+			okCount := stats["ok"]
+			changedCount := stats["changed"]
+			failedCount := stats["failed"]
+			skippedCount := stats["skipped"]
+			ignoredCount := stats["ignored"]
+			fmt.Printf("%s : ok=%d    changed=%d    failed=%d    skipped=%d    ignored=%d\n",
+				hostname, okCount, changedCount, failedCount, skippedCount, ignoredCount)
+		}
+	} else {
+		common.LogInfo("Play recap", map[string]interface{}{"stats": recapStats})
+	}
+}
+
 // SpageTemporalWorkflow defines the main workflow logic.
 func SpageTemporalWorkflow(ctx workflow.Context, graphInput *pkg.Graph, inventoryFile string, spageConfigInput *config.Config) error {
 	logger := workflow.GetLogger(ctx)
@@ -1157,6 +1305,7 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 		spageAppConfig = &config.Config{
 			ExecutionMode: "parallel",
 			Logging:       config.LoggingConfig{Format: "plain", Level: "info"},
+			Revert:        true,
 			Temporal: config.TemporalConfig{
 				Address:          "",
 				TaskQueue:        "SPAGE_DEFAULT_TASK_QUEUE",

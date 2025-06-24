@@ -10,6 +10,16 @@ import (
 	"github.com/AlexanderGrooff/spage/pkg/common"
 )
 
+// Helper function for converting from GenericMapOutput
+func getBoolFromMap(m map[string]interface{}, key string) bool {
+	if value, ok := m[key]; ok {
+		if boolVal, ok := value.(bool); ok {
+			return boolVal
+		}
+	}
+	return false
+}
+
 type LineinfileModule struct{}
 
 func (lm LineinfileModule) InputType() reflect.Type {
@@ -363,12 +373,30 @@ func (lm LineinfileModule) Revert(params pkg.ConcreteModuleInputProvider, closur
 		return nil, fmt.Errorf("Revert: incorrect parameter type: expected LineinfileInput, got %T", params)
 	}
 
-	prevOutput, ok := previousOutput.(LineinfileOutput)
-	if !ok {
-		// If previousOutput is nil (e.g. task failed before producing output), we might not have Diff.
-		// However, the task execution framework should provide a valid previousOutput if Revert is called.
-		// If it's not LineinfileOutput, that's a problem.
-		return nil, fmt.Errorf("Revert: incorrect previous output type: expected LineinfileOutput, got %T. Value: %+v", previousOutput, previousOutput)
+	var prevOutput LineinfileOutput
+	if previousOutput != nil {
+		// Try to assert as LineinfileOutput first
+		if lo, ok := previousOutput.(LineinfileOutput); ok {
+			prevOutput = lo
+		} else if gmo, ok := previousOutput.(pkg.GenericMapOutput); ok {
+			// Convert from GenericMapOutput back to LineinfileOutput
+			prevOutput = LineinfileOutput{
+				Msg:                getStringFromMap(gmo, "msg"),
+				OriginalFileExists: getBoolFromMap(gmo, "originalfileexists"),
+				OriginalMode:       getStringFromMap(gmo, "originalmode"),
+			}
+			// Handle the diff field
+			if diffMap, ok := gmo["diff"].(map[string]interface{}); ok {
+				prevOutput.Diff = pkg.RevertableChange[string]{
+					Before: getStringFromMap(diffMap, "before"),
+					After:  getStringFromMap(diffMap, "after"),
+				}
+			}
+		} else {
+			return nil, fmt.Errorf("Revert: incorrect previous output type: expected LineinfileOutput, got %T. Value: %+v", previousOutput, previousOutput)
+		}
+	} else {
+		prevOutput = LineinfileOutput{}
 	}
 
 	common.DebugOutput("Lineinfile Revert: Path: %s, OriginalFileExists: %t, DiffChanged: %t", input.Path, prevOutput.OriginalFileExists, prevOutput.Diff.Changed())

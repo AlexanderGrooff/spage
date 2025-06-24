@@ -5,3 +5,5 @@ logging:
 execution_mode: "parallel"
 executor: "local"
 revert: false 
+temporal:
+  trigger: true
