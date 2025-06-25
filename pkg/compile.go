@@ -114,6 +114,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"retries",
 		"delay",
 		"tags",
+		"check_mode",
 	}
 
 	var tasks []GraphNode
@@ -219,6 +220,17 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			if runOnceFound {
 				task.RunOnce = runOnceVal
 			} // else task.RunOnce keeps its default zero value (false)
+		}
+
+		// Handle 'check_mode' using the helper function
+		checkModeVal, checkModeFound, checkModeErr := parseBoolOrStringBoolValue(block, "check_mode", task.Name)
+		if checkModeErr != nil {
+			errors = append(errors, checkModeErr)
+			errored = true
+		} else {
+			if checkModeFound {
+				task.CheckMode = &checkModeVal
+			}
 		}
 
 		if retriesVal, ok := block["retries"]; ok {

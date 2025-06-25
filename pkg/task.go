@@ -92,6 +92,8 @@ type Task struct {
 	Until   string `yaml:"until,omitempty" json:"until,omitempty"`
 	Retries int    `yaml:"retries,omitempty" json:"retries,omitempty"`
 	Delay   int    `yaml:"delay,omitempty" json:"delay,omitempty"`
+
+	CheckMode *bool `yaml:"check_mode,omitempty" json:"check_mode,omitempty"`
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface for Task.
@@ -284,6 +286,10 @@ func (t Task) ToCode() string {
 	if t.IgnoreErrors {
 		sb.WriteString(fmt.Sprintf(", IgnoreErrors: %t", t.IgnoreErrors))
 	}
+	if t.CheckMode != nil {
+		// Create a pointer to a boolean for the generated code
+		sb.WriteString(fmt.Sprintf(", CheckMode: func() *bool { b := %t; return &b }()", *t.CheckMode))
+	}
 	if t.FailedWhen != nil {
 		switch v := t.FailedWhen.(type) {
 		case string:
@@ -406,7 +412,6 @@ func (t Task) ShouldExecute(closure *Closure) bool {
 func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	startTime := time.Now()
 
-	// Initial check on the 'when' condition. If false, we skip everything.
 	if !t.ShouldExecute(closure) {
 		common.LogDebug("Skipping execution of task due to 'when' condition", map[string]interface{}{
 			"task": t.Name,
@@ -415,9 +420,28 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 		return TaskResult{Task: t, Closure: closure, Status: TaskStatusSkipped}
 	}
 
+	// Determine check mode for this task execution
+	checkMode := false
+	if val, ok := closure.GetFact("ansible_check_mode"); ok {
+		if checkModeVal, ok := val.(bool); ok {
+			checkMode = checkModeVal
+		}
+	}
+	if t.CheckMode != nil {
+		checkMode = *t.CheckMode
+	}
+
+	// Create a new closure for this execution with the correct check_mode value.
+	// This prevents a task's check_mode from affecting subsequent tasks.
+	taskClosure := closure.Clone()
+	if taskClosure.ExtraFacts == nil {
+		taskClosure.ExtraFacts = make(map[string]interface{})
+	}
+	taskClosure.ExtraFacts["ansible_check_mode"] = checkMode
+
 	// If 'until' is not defined, execute once as normal.
 	if t.Until == "" {
-		return t.executeOnce(closure)
+		return t.executeOnce(taskClosure)
 	}
 
 	// 'until' is defined, so we enter the retry loop.
@@ -440,7 +464,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 			"retries": retries,
 		})
 
-		lastResult = t.executeOnce(closure)
+		lastResult = t.executeOnce(taskClosure)
 
 		if t.Register != "" {
 			if fact, ok := closure.GetFact(t.Register); ok {
@@ -456,7 +480,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 		// RegisterVariableIfNeeded(lastResult, t, closure)
 
 		// Now evaluate the 'until' condition.
-		conditionMet, err := evaluateConditions(t.Until, closure)
+		conditionMet, err := evaluateConditions(t.Until, taskClosure)
 		if err != nil {
 			common.LogWarn("Error evaluating until condition, considering it false", map[string]interface{}{
 				"task":      t.Name,

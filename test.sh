@@ -1234,5 +1234,35 @@ echo "$PYTHON_FALLBACK_OUTPUT"
 
 echo "Python fallback functionality test succeeded."
 
+# Test 34: Check mode functionality test
+echo "Running check mode functionality test..."
+
+# Test 34.1: Run with --check flag enabled
+echo "Running check mode test with --check flag and internal assertions..."
+go run main.go generate -p tests/playbooks/check_mode_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+./generated_tasks $INVENTORY_ARG --check -config tests/configs/sequential.yaml
+CHECK_MODE_EXIT_CODE=$?
+
+if [ $CHECK_MODE_EXIT_CODE -ne 0 ]; then
+    echo "Check mode test failed: Playbook execution failed unexpectedly (Exit Code: $CHECK_MODE_EXIT_CODE)."
+    exit 1
+fi
+echo "Check mode test with --check flag and internal assertions succeeded."
+
+# Test 34.2: Run without --check flag (normal mode)
+echo "Running check mode test without --check flag (normal mode) and internal assertions..."
+go run main.go generate -p tests/playbooks/check_mode_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml
+NORMAL_MODE_EXIT_CODE=$?
+
+if [ $NORMAL_MODE_EXIT_CODE -ne 0 ]; then
+    echo "Check mode test (normal) failed: Playbook execution failed unexpectedly (Exit Code: $NORMAL_MODE_EXIT_CODE)."
+    exit 1
+fi
+echo "Check mode test (normal mode) with internal assertions succeeded."
+echo "Check mode functionality test completed successfully!"
+
 echo "All tests completed successfully!"
 

@@ -51,7 +51,7 @@ func ExecuteGraph(executor GraphExecutor, graph Graph, inventoryFile string, cfg
 		return fmt.Errorf("failed to check inventory for required inputs: %w", err)
 	}
 
-	hostContexts, err := GetHostContexts(inventory)
+	hostContexts, err := GetHostContexts(inventory, cfg)
 	if err != nil {
 		return err
 	}
@@ -76,8 +76,8 @@ func ExecuteGraph(executor GraphExecutor, graph Graph, inventoryFile string, cfg
 }
 
 // Execute implements the main execution loop for a Spage graph.
-func GetHostContexts(inventory *Inventory) (map[string]*HostContext, error) {
-	contexts, err := inventory.GetContextForRun()
+func GetHostContexts(inventory *Inventory, cfg *config.Config) (map[string]*HostContext, error) {
+	contexts, err := inventory.GetContextForRun(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get host contexts for run: %w", err)
 	}

@@ -10,12 +10,13 @@ import (
 
 // Config holds all configuration settings
 type Config struct {
-	Logging       LoggingConfig  `mapstructure:"logging"`
-	ExecutionMode string         `mapstructure:"execution_mode"`
-	Executor      string         `mapstructure:"executor"` // "local" or "temporal"
-	Temporal      TemporalConfig `mapstructure:"temporal"`
-	Revert        bool           `mapstructure:"revert"`
-	Tags          TagsConfig     `mapstructure:"tags"`
+	Logging       LoggingConfig          `mapstructure:"logging"`
+	ExecutionMode string                 `mapstructure:"execution_mode"`
+	Executor      string                 `mapstructure:"executor"` // "local" or "temporal"
+	Temporal      TemporalConfig         `mapstructure:"temporal"`
+	Revert        bool                   `mapstructure:"revert"`
+	Tags          TagsConfig             `mapstructure:"tags"`
+	Facts         map[string]interface{} `mapstructure:"facts"`
 }
 
 // LoggingConfig holds logging-related configuration
@@ -113,6 +114,9 @@ func setDefaults(v *viper.Viper) {
 	// Tags defaults
 	v.SetDefault("tags.tags", []string{})      // Default to empty (run all tasks)
 	v.SetDefault("tags.skip_tags", []string{}) // Default to empty (skip no tasks)
+
+	// Facts default
+	v.SetDefault("facts", map[string]interface{}{})
 }
 
 // isValidOutputFormat checks if the given format is supported

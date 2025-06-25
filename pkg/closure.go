@@ -51,3 +51,14 @@ func (c *Closure) GetFact(key string) (interface{}, bool) {
 	}
 	return c.HostContext.Facts.Load(key)
 }
+
+func (c *Closure) Clone() *Closure {
+	newClosure := &Closure{
+		HostContext: c.HostContext,
+		ExtraFacts:  make(map[string]interface{}),
+	}
+	for k, v := range c.ExtraFacts {
+		newClosure.ExtraFacts[k] = v
+	}
+	return newClosure
+}

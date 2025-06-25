@@ -22,6 +22,7 @@ func StartTemporalExecutor(graph pkg.Graph) {
 	// Define flags with environment variable fallbacks
 	configFile := flag.String("config", getEnv("SPAGE_CONFIG_FILE", ""), "Spage configuration file path. If empty, 'spage.yaml' is tried, then defaults.")
 	inventoryFile := flag.String("inventory", getEnv("SPAGE_INVENTORY_FILE", ""), "Spage inventory file path. If empty, a default localhost inventory is used.")
+	checkMode := flag.Bool("check", false, "Enable check mode (dry run)")
 
 	flag.Parse()
 
@@ -41,6 +42,13 @@ func StartTemporalExecutor(graph pkg.Graph) {
 		log.Printf("Spage config loaded from '%s'.", spageConfigPath)
 	}
 	spageAppConfig := GetConfig() // GetConfig() provides defaults if loading failed or no file specified
+
+	if *checkMode {
+		if spageAppConfig.Facts == nil {
+			spageAppConfig.Facts = make(map[string]interface{})
+		}
+		spageAppConfig.Facts["ansible_check_mode"] = true
+	}
 
 	log.Printf("Preparing to run Temporal worker. Workflow trigger from config: %t", spageAppConfig.Temporal.Trigger)
 

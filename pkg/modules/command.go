@@ -130,6 +130,9 @@ func (m CommandModule) templateAndExecute(command string, closure *pkg.Closure, 
 
 // Execute runs the main command.
 func (cm CommandModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
+	if checkMode, ok := closure.GetFact("ansible_check_mode"); ok && checkMode.(bool) {
+		return CommandOutput{}, nil
+	}
 	commandParams, ok := params.(CommandInput)
 	if !ok {
 		if params == nil {
@@ -210,4 +213,8 @@ func (m CommandModule) ParameterAliases() map[string]string {
 	return map[string]string{
 		"cmd": "execute",
 	}
+}
+
+func (m CommandModule) SupportsCheckMode() bool {
+	return true
 }

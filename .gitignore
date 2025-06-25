@@ -7,7 +7,8 @@
 spage.db
 tmp
 spage.log
-spage.yaml
+/spage.yaml
+/spage_temporal.yaml
 generated_tasks.go
 generated_tasks
 test.conf

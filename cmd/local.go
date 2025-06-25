@@ -12,6 +12,7 @@ import (
 func StartLocalExecutor(graph pkg.Graph) {
 	configFile := flag.String("config", "", "Config file path (default: ./spage.yaml)")
 	inventoryFile := flag.String("inventory", "", "Inventory file path")
+	checkMode := flag.Bool("check", false, "Enable check mode (dry run)")
 	flag.Parse()
 
 	// Load configuration and apply logging settings
@@ -23,6 +24,13 @@ func StartLocalExecutor(graph pkg.Graph) {
 
 	// Execute the graph using the loaded configuration
 	cfg := GetConfig()
+	if *checkMode {
+		if cfg.Facts == nil {
+			cfg.Facts = make(map[string]interface{})
+		}
+		cfg.Facts["ansible_check_mode"] = true
+	}
+
 	exec := executor.NewLocalGraphExecutor(&executor.LocalTaskRunner{})
 	err = pkg.ExecuteGraph(exec, graph, *inventoryFile, cfg)
 	if err != nil {

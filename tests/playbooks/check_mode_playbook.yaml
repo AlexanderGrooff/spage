@@ -1,0 +1,53 @@
+---
+- name: Test Check Mode
+  hosts: all
+  tasks:
+    # --- Test 1: Normal task behavior ---
+    - name: A task that should be skipped in check mode
+      shell: echo "content" > /tmp/spage/check_mode_file1.txt
+
+    # --- Test 2: Task with check_mode: false ---
+    - name: A task that should always run and create a file
+      shell: echo "content" > /tmp/spage/check_mode_file2.txt
+      check_mode: false
+
+    # --- Test 3: Task with check_mode: true ---
+    - name: A task that should never create a file
+      shell: echo "content" > /tmp/spage/check_mode_file3.txt
+      check_mode: true
+
+    # --- Assertions ---
+    - name: Stat file1
+      stat:
+        path: /tmp/spage/check_mode_file1.txt
+      register: stat_file1
+
+    - name: Stat file2  
+      stat:
+        path: /tmp/spage/check_mode_file2.txt
+      register: stat_file2
+
+    - name: Stat file3
+      stat:
+        path: /tmp/spage/check_mode_file3.txt
+      register: stat_file3
+
+    - name: Assertions for check mode run
+      assert:
+        that:
+          - "not stat_file1.stat.exists" # file1 should not exist
+          - "stat_file2.stat.exists"     # file2 should exist
+          - "not stat_file3.stat.exists" # file3 should not exist
+      when: ansible_check_mode
+
+    - name: Assertions for normal run
+      assert:
+        that:
+          - "stat_file1.stat.exists"     # file1 should exist
+          - "stat_file2.stat.exists"     # file2 should exist
+          - "not stat_file3.stat.exists" # file3 should not exist
+      when: "not ansible_check_mode"
+
+    - name: Debug check mode fact
+      debug:
+        var: ansible_check_mode

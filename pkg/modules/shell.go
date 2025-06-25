@@ -29,8 +29,7 @@ type ShellOutput struct {
 	Stderr  string `yaml:"stderr"`
 	Command string `yaml:"command"`
 	pkg.ModuleOutput
-	WasChanged bool `json:"changed"`
-	Rc         int  `json:"rc"`
+	Rc int `json:"rc"`
 }
 
 func (i ShellInput) ToCode() string {
@@ -56,7 +55,7 @@ func (o ShellOutput) String() string {
 }
 
 func (o ShellOutput) Changed() bool {
-	return o.WasChanged
+	return true
 }
 
 // AsFacts implements the pkg.FactProvider interface.
@@ -67,7 +66,6 @@ func (o ShellOutput) AsFacts() map[string]interface{} {
 		"stdout":       o.Stdout,
 		"stderr":       o.Stderr,
 		"rc":           o.Rc,
-		"changed":      o.WasChanged,
 		"stdout_lines": strings.Split(o.Stdout, "\n"),
 	}
 }
@@ -107,21 +105,14 @@ func (m ShellModule) templateAndExecute(command string, closure *pkg.Closure, pr
 }
 
 func (m ShellModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
+	if checkMode, ok := closure.GetFact("ansible_check_mode"); ok && checkMode.(bool) {
+		return ShellOutput{}, nil
+	}
+
 	// Type assert params to ShellInput
 	shellParams, ok := params.(ShellInput)
 	if !ok {
-		// This could also happen if params is *ShellInput and ConcreteModuleInputProvider is implemented by *ShellInput
-		// However, given InputType returns ShellInput{}, the actual type should be ShellInput.
-		// If params is nil (e.g. no params provided in playbook), this assertion will fail.
-		// Modules should validate if they can accept nil/empty params.
-		// For ShellInput, Validate() checks for empty Execute and Revert.
 		if params == nil {
-			// If params is nil, and shell module requires params (which it does via Validate)
-			// we should probably use a zero value ShellInput to let its Validate() handle it.
-			// Or, the Validate() method should have been called by the task execution logic before Execute.
-			// For now, assume if params is nil, it implies empty params, so create a zero ShellInput.
-			// Task.ExecuteModule should ideally ensure params is a valid, non-nil ConcreteModuleInputProvider if required by module.
-			// The current Task unmarshal logic attempts to always create an instance.
 			return nil, fmt.Errorf("Execute: params is nil, expected ShellInput but got nil")
 		}
 		return nil, fmt.Errorf("Execute: incorrect parameter type: expected ShellInput, got %T", params)

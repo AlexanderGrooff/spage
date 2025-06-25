@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
+	"github.com/AlexanderGrooff/spage/pkg/config"
 
 	"gopkg.in/yaml.v3"
 )
@@ -142,7 +143,7 @@ func (i Inventory) GetContextForHost(host *Host) (*HostContext, error) {
 	return ctx, nil
 }
 
-func (i Inventory) GetContextForRun() (map[string]*HostContext, error) {
+func (i Inventory) GetContextForRun(cfg *config.Config) (map[string]*HostContext, error) {
 	var err error
 	contexts := make(map[string]*HostContext)
 	for _, host := range i.Hosts {
@@ -150,6 +151,13 @@ func (i Inventory) GetContextForRun() (map[string]*HostContext, error) {
 		contexts[host.Name], err = i.GetContextForHost(host)
 		if err != nil {
 			return nil, fmt.Errorf("could not get context for host '%s' (%s): %w", host.Name, host.Host, err)
+		}
+
+		// Add global facts from config to host context
+		if cfg != nil && cfg.Facts != nil {
+			for k, v := range cfg.Facts {
+				contexts[host.Name].Facts.Store(k, v)
+			}
 		}
 	}
 	return contexts, nil
