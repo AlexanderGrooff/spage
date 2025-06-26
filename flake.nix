@@ -17,17 +17,17 @@
             pkgs.go_1_23 # Or your preferred Go version
             pkgs.temporal-cli
             pkgs.golangci-lint
+            pkgs.ansible
             # Add other Go tools or dependencies here if needed, e.g.:
             # pkgs.gopls
             # pkgs.delve
           ];
 
           # Set environment variables if necessary
-          # shellHook = '''
-          #   export GOPATH=$(pwd)/.go
-          #   export GOBIN=$(pwd)/.go/bin
-          #   # You might not need to set GOROOT if using a nix-shell provided Go
-          # ''';
+          shellHook = ''
+            export ANSIBLE_COLLECTIONS_PATH=./.ansible
+            ansible-galaxy collection install community.general --force
+          '';
         };
       });
 } 

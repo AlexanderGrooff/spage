@@ -42,7 +42,7 @@
       register: my_task
       until: my_task.rc == 0
       retries: 5
-      delay: 0
+      delay: 1
 
     - name: Verify the results
       assert:

@@ -203,6 +203,13 @@ func (m AnsiblePythonModule) executePythonModule(params AnsiblePythonInput, clos
 	// Set environment variables
 	cmd.Env = os.Environ()
 
+	// Ensure ANSIBLE_COLLECTIONS_PATH is passed through, checking for both new and old names.
+	if path, ok := os.LookupEnv("ANSIBLE_COLLECTIONS_PATH"); ok {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("ANSIBLE_COLLECTIONS_PATH=%s", path))
+	} else if path, ok := os.LookupEnv("ANSIBLE_COLLECTIONS_PATHS"); ok {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("ANSIBLE_COLLECTIONS_PATHS=%s", path))
+	}
+
 	// If we're executing on a remote host, we need to handle that differently
 	if !closure.HostContext.Host.IsLocal {
 		return m.executeRemotePythonModule(params, templatedArgs, closure, runAs)
@@ -238,11 +245,28 @@ func (m AnsiblePythonModule) executeRemotePythonModule(params AnsiblePythonInput
 		return nil, fmt.Errorf("failed to marshal args for remote execution: %w", err)
 	}
 
+	var pythonModulePath string
+	moduleName := params.ModuleName
+	if strings.Contains(moduleName, ".") {
+		parts := strings.Split(moduleName, ".")
+		if len(parts) < 3 {
+			return nil, fmt.Errorf("invalid ansible FQCN '%s', expected format 'namespace.collection.module'", moduleName)
+		}
+		namespace := parts[0]
+		collection := parts[1]
+		moduleParts := parts[2:]
+		pythonModulePath = fmt.Sprintf("ansible_collections.%s.%s.plugins.modules.%s", namespace, collection, strings.Join(moduleParts, "."))
+	} else {
+		pythonModulePath = "ansible.modules." + moduleName
+	}
+
 	pythonScript := fmt.Sprintf(`
 import json
 import sys
+import importlib
+
 try:
-    from ansible.modules import %s as ansible_module
+    ansible_module = importlib.import_module("%s")
     from ansible.module_utils.basic import AnsibleModule
     
     # Mock the AnsibleModule to capture the result
@@ -267,12 +291,12 @@ try:
     ansible_module.main()
     
 except ImportError as e:
-    print(json.dumps({"failed": True, "msg": "Module not found: " + str(e)}))
+    print(json.dumps({"failed": True, "msg": "Module '%s' not found: " + str(e)}))
     sys.exit(1)
 except Exception as e:
-    print(json.dumps({"failed": True, "msg": "Execution error: " + str(e)}))
+    print(json.dumps({"failed": True, "msg": "Execution error in module '%s': " + str(e)}))
     sys.exit(1)
-`, params.ModuleName, string(argsJSON))
+`, pythonModulePath, string(argsJSON), moduleName, moduleName)
 
 	// Execute the Python script on the remote host
 	cmd := fmt.Sprintf("python3 -c %q", pythonScript)

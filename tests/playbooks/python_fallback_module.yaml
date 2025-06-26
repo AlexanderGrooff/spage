@@ -23,3 +23,15 @@
         that:
           - unknown_result.failed
         fail_msg: "The unknown module should have failed"
+
+    - name: Test some collection module
+      community.general.git_config_info:
+        name: "user.email"
+      register: collection_result
+
+    - name: Verify collection result
+      assert:
+        that:
+          - not collection_result.failed
+          - collection_result.results.config_values
+        fail_msg: "The community.general.git_config_info module should have succeeded"
