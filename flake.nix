@@ -18,6 +18,8 @@
             pkgs.temporal-cli
             pkgs.golangci-lint
             pkgs.ansible
+            pkgs.python312Packages.distutils
+            pkgs.python312Packages.setuptools
             # Add other Go tools or dependencies here if needed, e.g.:
             # pkgs.gopls
             # pkgs.delve

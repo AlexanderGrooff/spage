@@ -1,13 +1,16 @@
 package modules
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/AlexanderGrooff/spage/pkg"
 	"github.com/AlexanderGrooff/spage/pkg/common"
@@ -217,7 +220,7 @@ func (m AnsiblePythonModule) executePythonModule(params AnsiblePythonInput, clos
 
 	output, err := cmd.CombinedOutput()
 
-	common.DebugOutput("Ansible command output: %s", string(output))
+	common.DebugOutput("Ansible command output on host %s: %s", closure.HostContext.Host.Name, string(output))
 
 	result := m.parseAnsibleOutput(string(output), params.ModuleName)
 
@@ -238,8 +241,80 @@ func (m AnsiblePythonModule) executePythonModule(params AnsiblePythonInput, clos
 	return result, nil
 }
 
-func (m AnsiblePythonModule) executeRemotePythonModule(params AnsiblePythonInput, templatedArgs map[string]interface{}, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
-	// For remote execution, we'll create a simple Python script that imports and runs the module
+func (m AnsiblePythonModule) executeRemotePythonModule(params AnsiblePythonInput, templatedArgs map[string]interface{}, closure *pkg.Closure, runAs string) (_ pkg.ModuleOutput, err error) {
+	// --- BUNDLING LOGIC ---
+	// Find local paths for ansible module_utils and collections to create a self-contained bundle
+	cmd := exec.Command("python3", "-c", `import ansible; import os; print(os.path.dirname(ansible.__file__))`)
+	ansiblePathBytes, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("could not find local ansible installation to bundle: %w: %s", err, string(ansiblePathBytes))
+	}
+	ansibleDir := strings.TrimSpace(string(ansiblePathBytes))
+	ansibleBaseDir := filepath.Dir(ansibleDir)
+
+	collectionsPath := os.Getenv("ANSIBLE_COLLECTIONS_PATH")
+	if collectionsPath == "" {
+		collectionsPath = os.Getenv("ANSIBLE_COLLECTIONS_PATHS") // fallback to old name
+	} else {
+		collectionsPath, err = filepath.Abs(collectionsPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get absolute path for collections path: %w", err)
+		}
+	}
+
+	// Create a temporary tarball locally
+	localTarFile, err := os.CreateTemp("", "spage-ansible-bundle-*.tar.gz")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create local temp file for tarball: %w", err)
+	}
+	localTarPath := localTarFile.Name()
+	defer os.Remove(localTarPath)
+	localTarFile.Close()
+
+	var tarArgs []string
+	tarArgs = append(tarArgs, "-czf", localTarPath)
+	tarArgs = append(tarArgs, "-C", ansibleBaseDir, "ansible/module_utils", "ansible/modules")
+	if collectionsPath != "" {
+		if _, err := os.Stat(filepath.Join(collectionsPath, "ansible_collections")); err == nil {
+			tarArgs = append(tarArgs, "-C", collectionsPath, "ansible_collections")
+		}
+	}
+
+	tarCmd := exec.Command("tar", tarArgs...)
+	if output, err := tarCmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("failed to create ansible bundle tarball: %w: %s", err, string(output))
+	}
+
+	// Read tarball and base64 encode it for safe transport
+	tarballBytes, err := os.ReadFile(localTarPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read local tarball: %w", err)
+	}
+	encodedTarball := base64.StdEncoding.EncodeToString(tarballBytes)
+
+	// Create a unique temporary directory on the remote host
+	remoteTempDir := fmt.Sprintf("/tmp/spage-exec-%d", time.Now().UnixNano())
+	defer closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", remoteTempDir), runAs) // Defer cleanup of the whole directory
+
+	// Create the remote directory
+	if rc, _, stderr, err := closure.HostContext.RunCommand(fmt.Sprintf("mkdir -p %s", remoteTempDir), runAs); err != nil || rc != 0 {
+		return nil, fmt.Errorf("failed to create remote temp dir: rc=%d, err=%w, stderr=%s", rc, err, stderr)
+	}
+
+	// Write the base64 encoded tarball to a file on the remote host
+	remoteB64Path := filepath.Join(remoteTempDir, "bundle.b64")
+	if err := closure.HostContext.WriteFile(remoteB64Path, encodedTarball, runAs); err != nil {
+		return nil, fmt.Errorf("failed to write ansible bundle to remote host: %w", err)
+	}
+
+	// Decode the tarball and unpack it
+	remoteTarPath := filepath.Join(remoteTempDir, "bundle.tar.gz")
+	unpackCmd := fmt.Sprintf("base64 -d %s > %s && tar -xzf %s -C %s", remoteB64Path, remoteTarPath, remoteTarPath, remoteTempDir)
+	if rc, _, stderr, err := closure.HostContext.RunCommand(unpackCmd, runAs); err != nil || rc != 0 {
+		return nil, fmt.Errorf("failed to unpack ansible bundle on remote host: rc=%d, err=%w, stderr=%s", rc, err, stderr)
+	}
+	// --- END BUNDLING LOGIC ---
+
 	argsJSON, err := json.Marshal(templatedArgs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal args for remote execution: %w", err)
@@ -260,83 +335,109 @@ func (m AnsiblePythonModule) executeRemotePythonModule(params AnsiblePythonInput
 		pythonModulePath = "ansible.modules." + moduleName
 	}
 
-	pythonScript := fmt.Sprintf(`
+	pythonScript := fmt.Sprintf(`#!/usr/bin/env python3
 import json
 import sys
 import importlib
+import ansible.module_utils.basic
+
+# Mock the AnsibleModule to capture the result
+class MockAnsibleModule:
+    def __init__(self, argument_spec, **kwargs):
+        # We don't need to read from stdin because the params are injected directly from Spage.
+        self.params = %s
+        
+    def exit_json(self, **kwargs):
+        print(json.dumps(kwargs))
+        sys.stdout.flush()
+        sys.exit(0)
+        
+    def fail_json(self, **kwargs):
+        kwargs['failed'] = True
+        print(json.dumps(kwargs))
+        sys.stdout.flush()
+        sys.exit(1)
+
+# Replace AnsibleModule with our mock class BEFORE importing the target module.
+# This ensures that when the module does 'from ansible.module_utils.basic import AnsibleModule',
+# it gets our mocked version.
+ansible.module_utils.basic.AnsibleModule = MockAnsibleModule
 
 try:
+    # Now, import the module.
     ansible_module = importlib.import_module("%s")
-    from ansible.module_utils.basic import AnsibleModule
     
-    # Mock the AnsibleModule to capture the result
-    class MockAnsibleModule:
-        def __init__(self, argument_spec, **kwargs):
-            self.params = %s
-            
-        def exit_json(self, **kwargs):
-            print(json.dumps(kwargs))
-            sys.exit(0)
-            
-        def fail_json(self, **kwargs):
-            kwargs['failed'] = True
-            print(json.dumps(kwargs))
-            sys.exit(1)
-    
-    # Replace AnsibleModule temporarily
-    original_module = AnsibleModule
-    ansible.module_utils.basic.AnsibleModule = MockAnsibleModule
-    
-    # Run the module
+    # Run the module's main() function.
     ansible_module.main()
     
 except ImportError as e:
     print(json.dumps({"failed": True, "msg": "Module '%s' not found: " + str(e)}))
+    sys.stdout.flush()
     sys.exit(1)
 except Exception as e:
-    print(json.dumps({"failed": True, "msg": "Execution error in module '%s': " + str(e)}))
+    print(json.dumps({"failed": True, "msg": f"Execution error in module '%s': {type(e).__name__}: {e}"}))
+    sys.stdout.flush()
     sys.exit(1)
-`, pythonModulePath, string(argsJSON), moduleName, moduleName)
+`, string(argsJSON), pythonModulePath, moduleName, moduleName)
 
-	// Execute the Python script on the remote host
-	cmd := fmt.Sprintf("python3 -c %q", pythonScript)
-	rc, stdout, stderr, err := closure.HostContext.RunCommand(cmd, runAs)
+	// Ensure the remote script is cleaned up regardless of what happens next.
+	remotePath := "/tmp/spage-python-fallback.py"
+	if err := closure.HostContext.WriteFile(remotePath, pythonScript, runAs); err != nil {
+		return AnsiblePythonOutput{
+			Failed: true,
+			Msg:    fmt.Sprintf("Failed to write remote script: %v", err),
+		}, nil
+	}
+	defer closure.HostContext.RunCommand(fmt.Sprintf("rm -f %s", remotePath), runAs)
+
+	// Execute the script directly with the python3 interpreter.
+	// This is more robust than making the script executable and relying on a shebang,
+	// which seems to be failing in the remote environment.
+	command := fmt.Sprintf("PYTHONPATH=%s /usr/bin/python3 %s", remoteTempDir, remotePath)
+	rc, stdout, stderr, err := closure.HostContext.RunCommand(command, runAs)
 
 	if err != nil {
 		return AnsiblePythonOutput{
 			Failed: true,
 			Msg:    fmt.Sprintf("Remote execution failed: %v", err),
-		}, nil
+		}, fmt.Errorf("failed to execute module '%s' via Python fallback: %s. Stdout: %s, Stderr: %s", params.ModuleName, err, stdout, stderr)
 	}
 
-	if rc != 0 && stdout == "" {
-		return AnsiblePythonOutput{
-			Failed: true,
-			Msg:    fmt.Sprintf("Remote execution failed with exit code %d: %s", rc, stderr),
-		}, nil
-	}
-
-	// Parse the JSON output
+	// Try to parse JSON output even if the script failed. If parsing fails,
+	// create our own JSON error to be parsed by the same logic below.
 	var result map[string]interface{}
 	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
-		return AnsiblePythonOutput{
-			Failed: true,
-			Msg:    fmt.Sprintf("Failed to parse module output: %v", err),
-		}, nil
+		errorMsg := fmt.Sprintf("Remote script exited with code %d and non-JSON output. Stderr: %s. Stdout: %s", rc, stderr, stdout)
+		errorJSON := fmt.Sprintf(`{"failed": true, "msg": %s}`, strconv.Quote(errorMsg))
+		if err := json.Unmarshal([]byte(errorJSON), &result); err != nil {
+			// This should never happen, but as a fallback, return a hardcoded error.
+			return AnsiblePythonOutput{
+				Failed: true,
+				Msg:    fmt.Sprintf("Internal error: Could not parse fallback error JSON: %v", err),
+			}, fmt.Errorf("failed to execute module '%s' and could not parse output: %s", params.ModuleName, err)
+		}
 	}
 
+	// We have valid JSON, construct the output from it.
 	output := AnsiblePythonOutput{
 		Results: result,
 	}
-
 	if changed, ok := result["changed"].(bool); ok {
 		output.WasChanged = changed
 	}
 	if failed, ok := result["failed"].(bool); ok {
 		output.Failed = failed
 	}
+	// If the script exited non-zero but didn't set "failed: true" in the JSON, force it.
+	if rc != 0 && !output.Failed {
+		output.Failed = true
+	}
 	if msg, ok := result["msg"].(string); ok {
 		output.Msg = msg
+	}
+	// If there's no message but we have stderr, use that.
+	if output.Msg == "" && stderr != "" {
+		output.Msg = stderr
 	}
 
 	return output, nil

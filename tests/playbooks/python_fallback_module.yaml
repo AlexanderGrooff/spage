@@ -25,13 +25,13 @@
         fail_msg: "The unknown module should have failed"
 
     - name: Test some collection module
-      community.general.git_config_info:
-        name: "user.email"
+      community.general.python_requirements_info:
+        dependencies: []
       register: collection_result
 
     - name: Verify collection result
       assert:
         that:
           - not collection_result.failed
-          - collection_result.results.config_values
-        fail_msg: "The community.general.git_config_info module should have succeeded"
+          - collection_result.results.python_version_info
+        fail_msg: "The collection module should have succeeded"
