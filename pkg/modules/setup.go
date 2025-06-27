@@ -90,7 +90,57 @@ func (m SetupModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pk
 		facts[fact] = factValue
 		closure.HostContext.Facts.Store(fact, factValue)
 	}
+
+	// After gathering facts, re-process any variables in the host context that contain Jinja templates
+	// This ensures that variables like "{{ inventory_hostname }}" get resolved with the newly available facts
+	err := m.reprocessVariablesWithNewFacts(closure)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reprocess variables after gathering facts: %w", err)
+	}
+
 	return SetupOutput{Facts: facts}, nil
+}
+
+// reprocessVariablesWithNewFacts iterates through all variables in the host context
+// and re-templates any string values that contain Jinja template syntax
+func (m SetupModule) reprocessVariablesWithNewFacts(closure *pkg.Closure) error {
+	// Collect all variables that need to be re-processed
+	var variablesToUpdate []struct {
+		key   string
+		value string
+	}
+
+	// Iterate through all facts in the host context
+	closure.HostContext.Facts.Range(func(k, v interface{}) bool {
+		key, keyOk := k.(string)
+		if !keyOk {
+			return true // continue iteration
+		}
+
+		// Check if the value is a string that contains Jinja template syntax
+		if strValue, ok := v.(string); ok {
+			variablesToUpdate = append(variablesToUpdate, struct {
+				key   string
+				value string
+			}{key, strValue})
+		}
+		return true // continue iteration
+	})
+
+	// Re-process the collected variables
+	for _, variable := range variablesToUpdate {
+		templatedValue, err := pkg.TemplateString(variable.value, closure)
+		if err != nil {
+			return fmt.Errorf("failed to template variable %q with value %q: %w", variable.key, variable.value, err)
+		}
+
+		// Only update if the value actually changed (to avoid unnecessary updates)
+		if templatedValue != variable.value {
+			closure.HostContext.Facts.Store(variable.key, templatedValue)
+		}
+	}
+
+	return nil
 }
 
 func (m SetupModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {

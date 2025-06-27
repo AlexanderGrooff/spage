@@ -3,7 +3,12 @@
   hosts: localhost
   vars:
     some_var: "some value"
+    nested_var: "blaap {{ inventory_hostname }}"
   tasks:
     - name: Show some_var fact
       debug:
-        var: "{{ some_var }}"
+        var: some_var
+
+    - name: Show nested_var fact
+      debug:
+        var: nested_var

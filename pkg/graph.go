@@ -69,6 +69,18 @@ func (g Graph) ToCode() string {
 			}
 		}
 	}
+
+	// Filter out required inputs that are facts and add them to usedFacts
+	filteredInputs := make([]string, 0, len(g.RequiredInputs))
+	for _, input := range g.RequiredInputs {
+		if _, ok := AllowedFacts[input]; ok {
+			usedFacts[input] = struct{}{} 
+		} else {
+			filteredInputs = append(filteredInputs, input)
+		}
+	}
+	g.RequiredInputs = filteredInputs
+
 	factList := make([]string, 0, len(usedFacts))
 	for fct := range usedFacts {
 		factList = append(factList, fct)
@@ -373,6 +385,12 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}) (Graph,
 	}
 	for _, node := range nodes { // Iterate original nodes structure for nested graph inputs
 		collectRequiredInputs(node)
+	}
+
+	// Get required inputs from graph attributes
+	for _, v := range graphAttributes["vars"].(map[string]interface{}) {
+		varsUsage := GetVariableUsageFromTemplate(v.(string))
+		g.RequiredInputs = append(g.RequiredInputs, varsUsage...)
 	}
 
 	// 3. Check for cycles
