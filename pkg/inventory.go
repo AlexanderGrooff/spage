@@ -143,14 +143,19 @@ func (i Inventory) GetContextForHost(host *Host) (*HostContext, error) {
 	return ctx, nil
 }
 
-func (i Inventory) GetContextForRun(cfg *config.Config) (map[string]*HostContext, error) {
+func GetContextForRun(inventory *Inventory, graph Graph, cfg *config.Config) (map[string]*HostContext, error) {
 	var err error
 	contexts := make(map[string]*HostContext)
-	for _, host := range i.Hosts {
+	for _, host := range inventory.Hosts {
 		common.DebugOutput("Getting context for host %q", host.Name)
-		contexts[host.Name], err = i.GetContextForHost(host)
+		contexts[host.Name], err = inventory.GetContextForHost(host)
 		if err != nil {
 			return nil, fmt.Errorf("could not get context for host '%s' (%s): %w", host.Name, host.Host, err)
+		}
+
+		// Add graph vars to host context
+		for k, v := range graph.Vars {
+			contexts[host.Name].Facts.Store(k, v)
 		}
 
 		// Add global facts from config to host context

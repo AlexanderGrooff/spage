@@ -170,6 +170,7 @@ func applyTagFiltering(graph pkg.Graph, tagsConfig config.TagsConfig) (pkg.Graph
 	filteredGraph := pkg.Graph{
 		RequiredInputs: graph.RequiredInputs, // Copy required inputs
 		Tasks:          make([][]pkg.Task, 0),
+		Vars:           graph.Vars,
 	}
 
 	for _, taskLayer := range graph.Tasks {

@@ -33,6 +33,7 @@ type GraphNode interface {
 type Graph struct {
 	RequiredInputs []string
 	Tasks          [][]Task
+	Vars           map[string]interface{}
 }
 
 func (g Graph) String() string {
@@ -46,6 +47,10 @@ func (g Graph) String() string {
 	fmt.Fprintf(&b, "Required inputs:\n")
 	for _, input := range g.RequiredInputs {
 		fmt.Fprintf(&b, "  - %s\n", input)
+	}
+	fmt.Fprintf(&b, "Vars:\n")
+	for k, v := range g.Vars {
+		fmt.Fprintf(&b, "  - %s: %#v\n", k, v)
 	}
 	return b.String()
 }
@@ -75,6 +80,11 @@ func (g Graph) ToCode() string {
 	fmt.Fprintf(&f, "%sRequiredInputs: []string{\n", Indent(1))
 	for _, input := range g.RequiredInputs {
 		fmt.Fprintf(&f, "%s  %q,\n", Indent(2), input)
+	}
+	fmt.Fprintf(&f, "%s},\n", Indent(1))
+	fmt.Fprintf(&f, "%sVars: map[string]interface{}{\n", Indent(1))
+	for k, v := range g.Vars {
+		fmt.Fprintf(&f, "%s  %q: %#v,\n", Indent(2), k, v)
 	}
 	fmt.Fprintf(&f, "%s},\n", Indent(1))
 	fmt.Fprintf(&f, "%sTasks: [][]pkg.Task{\n", Indent(1))
@@ -175,45 +185,36 @@ func NewGraphFromFile(path string) (Graph, error) {
 	if err != nil {
 		return Graph{}, fmt.Errorf("error reading YAML file %s: %v", path, err)
 	}
-	// Determine base path for resolving relative includes/roles
-	basePath := filepath.Dir(path)
-	// Preprocess the playbook to handle plays, includes, roles
-	processedNodes, err := compile.PreprocessPlaybook(data, basePath)
-	if err != nil {
-		return Graph{}, fmt.Errorf("error preprocessing playbook %s: %w", path, err)
-	}
-
-	// Parse the preprocessed nodes into tasks
-	tasks, err := TextToGraphNodes(processedNodes)
-	if err != nil {
-		return Graph{}, fmt.Errorf("error parsing preprocessed tasks from %s: %w", path, err)
-	}
-
-	graph, err := NewGraph(tasks)
-	if err != nil {
-		return Graph{}, fmt.Errorf("failed to generate graph from %s: %w", path, err)
-	}
-	return graph, nil
+	return NewGraphFromPlaybook(data, filepath.Dir(path))
 }
 
-func NewGraphFromPlaybook(data []byte) (Graph, error) {
+func NewGraphFromPlaybook(data []byte, basePath string) (Graph, error) {
 	// Preprocess the playbook data with current directory as base path
-	basePath := "."
+	if basePath == "" {
+		basePath = "."
+	}
 	processedNodes, err := compile.PreprocessPlaybook(data, basePath)
 	if err != nil {
 		return Graph{}, fmt.Errorf("error preprocessing playbook data: %w", err)
 	}
 
 	// Parse YAML nodes into tasks
+	attributes, err := ParsePlayAttributes(processedNodes)
+	if err != nil {
+		// We allow the graph to not have a root
+		common.LogDebug("No root block found in playbook, using empty attributes", map[string]interface{}{"playbook": basePath})
+		attributes = make(map[string]interface{})
+	}
 	tasks, err := TextToGraphNodes(processedNodes)
 	if err != nil {
 		return Graph{}, fmt.Errorf("error parsing preprocessed tasks: %w", err)
 	}
 
-	graph, err := NewGraph(tasks)
+	graph, err := NewGraph(tasks, attributes)
 	if err != nil {
 		return Graph{}, fmt.Errorf("failed to generate graph: %w", err)
 	}
+	common.LogDebug("NewGraph generated graph.", map[string]interface{}{"graph": graph.String()})
 	return graph, nil
 }
 
@@ -260,9 +261,12 @@ func GetVariableUsage(task Task) ([]string, error) {
 	return varsUsage, nil
 }
 
-func NewGraph(nodes []GraphNode) (Graph, error) {
-	common.LogDebug("NewGraph received nodes.", map[string]interface{}{"count": len(nodes)}) // Log input count
-	g := Graph{RequiredInputs: []string{}}
+func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}) (Graph, error) {
+	common.LogDebug("NewGraph received nodes.", map[string]interface{}{"count": len(nodes), "attributes": graphAttributes}) // Log input count
+	if graphAttributes["vars"] == nil {
+		graphAttributes["vars"] = make(map[string]interface{})
+	}
+	g := Graph{RequiredInputs: []string{}, Vars: graphAttributes["vars"].(map[string]interface{})}
 	dependsOn := map[string][]string{}
 	taskNameMapping := map[string]Task{}
 	originalIndexMap := map[string]int{} // Map task name to its original flattened index
@@ -383,6 +387,10 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 		for _, varName := range vars {
 			// Skip special vars like 'previous'
 			if containsInSlice(SpecialVars, varName) {
+				continue
+			}
+			// Skip vars that are provided by the playbook root
+			if g.Vars[varName] != nil {
 				continue
 			}
 

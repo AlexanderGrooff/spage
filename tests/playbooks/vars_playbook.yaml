@@ -1,0 +1,9 @@
+---
+- name: Vars test
+  hosts: localhost
+  vars:
+    some_var: "some value"
+  tasks:
+    - name: Show some_var fact
+      debug:
+        var: "{{ some_var }}"

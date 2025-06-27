@@ -165,6 +165,15 @@ func processPlaybookRoot(playbookRoot map[string]interface{}, currentBasePath st
 	}
 
 	var result []map[string]interface{}
+	root_block := map[string]interface{}{
+		"is_root": true,
+	}
+
+	// Add vars to the root block
+	if vars, ok := playbookRoot["vars"]; ok {
+		root_block["vars"] = vars
+	}
+	result = append(result, root_block)
 
 	// Process 'roles' section if it exists
 	if roles, hasRoles := playbookRoot["roles"]; hasRoles {

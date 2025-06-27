@@ -134,6 +134,12 @@ go build -o generated_tasks generated_tasks.go || true
 ./generated_tasks $INVENTORY_ARG -config "$TESTS_DIR/configs/default.yaml" || true
 echo "Pre-test cleanup finished."
 
+# Test 0: Vars test
+echo "Running vars test..."
+go run main.go generate -p $TESTS_DIR/playbooks/vars_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+./generated_tasks $INVENTORY_ARG -config tests/configs/default.yaml
+
 # Test 1: Template playbook test
 echo "Running template playbook test..."
 go run main.go generate -p $TESTS_DIR/playbooks/template_playbook.yaml -o generated_tasks.go

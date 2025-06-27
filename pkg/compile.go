@@ -92,6 +92,20 @@ func parseConditionString(block map[string]interface{}, key string, taskName str
 	}
 }
 
+func isRootBlock(block map[string]interface{}) bool {
+	return block["is_root"] == true
+}
+
+func ParsePlayAttributes(blocks []map[string]interface{}) (map[string]interface{}, error) {
+	rootBlock := blocks[0]
+	if !isRootBlock(rootBlock) {
+		return nil, fmt.Errorf("root block not found")
+	}
+	attributes := make(map[string]interface{})
+	attributes["vars"] = rootBlock["vars"]
+	return attributes, nil
+}
+
 func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 	arguments := []string{
 		"name",
@@ -123,6 +137,10 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 	var errors []error
 
 	for idx, block := range blocks {
+		if isRootBlock(block) {
+			continue
+		}
+
 		task := Task{
 			Id:         idx,
 			Name:       getStringFromMap(block, "name"),
