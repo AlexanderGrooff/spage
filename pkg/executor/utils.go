@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/AlexanderGrooff/spage/pkg"
-	"github.com/AlexanderGrooff/spage/pkg/common"
 )
 
 func InitializeRecapStats(hostContexts map[string]*pkg.HostContext) map[string]map[string]int {
@@ -73,7 +72,6 @@ func PrepareLevelHistoryAndGetCount(
 		return nil, 0, err
 	}
 
-	common.DebugOutput("Expecting %d total task instances on level %d", numExpectedResultsOnLevel, executionLevel)
 	return levelHistoryForRevert, numExpectedResultsOnLevel, nil
 }
 
@@ -140,21 +138,10 @@ func ParseLoop(task pkg.Task, c *pkg.HostContext) ([]interface{}, error) {
 					for i := 0; i < val.Len(); i++ {
 						loopItems[i] = val.Index(i).Interface()
 					}
-					common.LogDebug("Resolved loop template via direct fact lookup", map[string]interface{}{
-						"task": task.Name, "template": loopValue, "variable": varName,
-						"type": fmt.Sprintf("%T", factValue), "count": len(loopItems),
-					})
 				} else {
-					common.LogDebug("Loop template variable found but is not a slice, falling back to string templating", map[string]interface{}{
-						"task": task.Name, "template": loopValue, "variable": varName,
-						"type": fmt.Sprintf("%T", factValue),
-					})
 					// Fall through to string templating logic below
 				}
 			} else {
-				common.LogDebug("Loop template variable not found in facts, falling back to string templating", map[string]interface{}{
-					"task": task.Name, "template": loopValue, "variable": varName,
-				})
 				// Fall through to string templating logic below
 			}
 		}
@@ -171,17 +158,10 @@ func ParseLoop(task pkg.Task, c *pkg.HostContext) ([]interface{}, error) {
 					loopItems = append(loopItems, itemStr)
 				}
 			}
-			common.LogDebug("Resolved loop via string templating and splitting", map[string]interface{}{
-				"task": task.Name, "template": loopValue,
-				"resultString": evalLoopStr, "count": len(loopItems),
-			})
 		}
 
 	case []interface{}:
 		loopItems = loopValue
-		common.LogDebug("Resolved loop via direct list", map[string]interface{}{
-			"task": task.Name, "type": fmt.Sprintf("%T", loopValue), "count": len(loopItems),
-		})
 
 	default:
 		return nil, fmt.Errorf("unsupported loop type '%T' for task '%s'", task.Loop, task.Name)

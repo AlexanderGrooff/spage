@@ -1283,21 +1283,21 @@ if [ $DIFF_EXIT_CODE -ne 0 ]; then
 fi
 
 # Check for diff output from task 1 (no diff keyword)
-if ! echo "$DIFF_OUTPUT" | grep -A 10 "TASK \[Task with no diff keyword" | grep -q "diff: |"; then
+if ! echo "$DIFF_OUTPUT" | grep -A 3 "TASK \[Task with no diff keyword" | grep -q "diff: |"; then
     echo "Diff mode test (--diff) failed: Did not find diff for task with no diff keyword."
     echo "Output was:"
     echo "$DIFF_OUTPUT"
     exit 1
 fi
 # Check for diff output from task 2 (diff: yes)
-if ! echo "$DIFF_OUTPUT" | grep -A 10 "TASK \[Task with diff yes" | grep -q "diff: |"; then
+if ! echo "$DIFF_OUTPUT" | grep -A 3 "TASK \[Task with diff yes" | grep -q "diff: |"; then
     echo "Diff mode test (--diff) failed: Did not find diff for task with diff yes."
     echo "Output was:"
     echo "$DIFF_OUTPUT"
     exit 1
 fi
 # Check for NO diff output from task 3 (diff: no) - look specifically for "diff: |" pattern
-if echo "$DIFF_OUTPUT" | grep -A 10 "TASK \[Task with diff no" | grep -q "diff: |"; then
+if echo "$DIFF_OUTPUT" | grep -A 3 "TASK \[Task with diff no" | grep -q "diff: |"; then
     echo "Diff mode test (--diff) failed: Found diff for task with diff no, but it should be suppressed."
     echo "Output was:"
     echo "$DIFF_OUTPUT"
@@ -1323,21 +1323,21 @@ if [ $NORMAL_EXIT_CODE -ne 0 ]; then
 fi
 
 # Check for diff from task 2 (diff: yes)
-if ! echo "$NORMAL_OUTPUT" | grep -A 10 "TASK \[Task with diff yes" | grep -q "diff: |"; then
+if ! echo "$NORMAL_OUTPUT" | grep -A 3 "TASK \[Task with diff yes" | grep -q "diff: |"; then
     echo "Diff mode test (no --diff) failed: Did not find diff for task with diff yes."
     echo "Output was:"
     echo "$NORMAL_OUTPUT"
     exit 1
 fi
 # Check for NO diff from task 1 (no diff keyword)
-if echo "$NORMAL_OUTPUT" | grep -A 10 "TASK \[Task with no diff keyword" | grep -q "diff: |"; then
+if echo "$NORMAL_OUTPUT" | grep -A 3 "TASK \[Task with no diff keyword" | grep -q "diff: |"; then
     echo "Diff mode test (no --diff) failed: Found diff for task with no diff keyword."
     echo "Output was:"
     echo "$NORMAL_OUTPUT"
     exit 1
 fi
 # Check for NO diff from task 3 (diff: no)
-if echo "$NORMAL_OUTPUT" | grep -A 10 "TASK \[Task with diff no" | grep -q "diff: |"; then
+if echo "$NORMAL_OUTPUT" | grep -A 3 "TASK \[Task with diff no" | grep -q "diff: |"; then
     echo "Diff mode test (no --diff) failed: Found diff for task with diff no."
     echo "Output was:"
     echo "$NORMAL_OUTPUT"
@@ -1351,6 +1351,94 @@ if ! check_target "grep -q 'changed content 3' /tmp/spage/diff_test_file_3.txt";
 
 echo "Diff mode test without --diff flag succeeded."
 echo "Diff mode functionality test completed successfully!"
+
+# Test 36: Template module diff mode functionality test
+echo "Running template module diff mode functionality test..."
+
+go run main.go generate -p tests/playbooks/template_diff_test.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+
+# Test 36.1: Run with --diff flag
+echo "Running template diff mode test with --diff flag..."
+TEMPLATE_DIFF_OUTPUT=$(./generated_tasks $INVENTORY_ARG --diff -config tests/configs/sequential.yaml 2>&1)
+TEMPLATE_DIFF_EXIT_CODE=$?
+
+if [ $TEMPLATE_DIFF_EXIT_CODE -ne 0 ]; then
+    echo "Template diff mode test (--diff) failed: Playbook execution failed unexpectedly (Exit Code: $TEMPLATE_DIFF_EXIT_CODE)."
+    echo "Output was:"
+    echo "$TEMPLATE_DIFF_OUTPUT"
+    exit 1
+fi
+
+# Check for diff output from template task 1 (no diff keyword)
+if ! echo "$TEMPLATE_DIFF_OUTPUT" | grep -A 3 "TASK \[Task with no diff keyword" | grep -q "diff: |"; then
+    echo "Template diff mode test (--diff) failed: Did not find diff for task with no diff keyword."
+    echo "Output was:"
+    echo "$TEMPLATE_DIFF_OUTPUT"
+    exit 1
+fi
+# Check for diff output from template task 2 (diff: yes)
+if ! echo "$TEMPLATE_DIFF_OUTPUT" | grep -A 3 "TASK \[Task with diff yes" | grep -q "diff: |"; then
+    echo "Template diff mode test (--diff) failed: Did not find diff for task with diff yes."
+    echo "Output was:"
+    echo "$TEMPLATE_DIFF_OUTPUT"
+    exit 1
+fi
+# Check for NO diff output from template task 3 (diff: no) - look specifically for "diff: |" pattern
+if echo "$TEMPLATE_DIFF_OUTPUT" | grep -A 3 "TASK \[Task with diff no" | grep -q "diff: |"; then
+    echo "Template diff mode test (--diff) failed: Found diff for task with diff no, but it should be suppressed."
+    echo "Output was:"
+    echo "$TEMPLATE_DIFF_OUTPUT"
+    exit 1
+fi
+echo "Template diff mode test with --diff flag succeeded."
+
+# Test 36.2: Run without --diff flag
+echo "Running template diff mode test without --diff flag..."
+# Reset the files first
+rm -rf /tmp/spage && mkdir -p /tmp/spage
+go run main.go generate -p tests/playbooks/template_diff_test.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+
+TEMPLATE_NORMAL_OUTPUT=$(./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml 2>&1)
+TEMPLATE_NORMAL_EXIT_CODE=$?
+
+if [ $TEMPLATE_NORMAL_EXIT_CODE -ne 0 ]; then
+    echo "Template diff mode test (no --diff) failed: Playbook execution failed unexpectedly (Exit Code: $TEMPLATE_NORMAL_EXIT_CODE)."
+    echo "Output was:"
+    echo "$TEMPLATE_NORMAL_OUTPUT"
+    exit 1
+fi
+
+# Check for diff from template task 2 (diff: yes)
+if ! echo "$TEMPLATE_NORMAL_OUTPUT" | grep -A 3 "TASK \[Task with diff yes" | grep -q "diff: |"; then
+    echo "Template diff mode test (no --diff) failed: Did not find diff for task with diff yes."
+    echo "Output was:"
+    echo "$TEMPLATE_NORMAL_OUTPUT"
+    exit 1
+fi
+# Check for NO diff from template task 1 (no diff keyword)
+if echo "$TEMPLATE_NORMAL_OUTPUT" | grep -A 3 "TASK \[Task with no diff keyword" | grep -q "diff: |"; then
+    echo "Template diff mode test (no --diff) failed: Found diff for task with no diff keyword."
+    echo "Output was:"
+    echo "$TEMPLATE_NORMAL_OUTPUT"
+    exit 1
+fi
+# Check for NO diff from template task 3 (diff: no)
+if echo "$TEMPLATE_NORMAL_OUTPUT" | grep -A 3 "TASK \[Task with diff no" | grep -q "diff: |"; then
+    echo "Template diff mode test (no --diff) failed: Found diff for task with diff no."
+    echo "Output was:"
+    echo "$TEMPLATE_NORMAL_OUTPUT"
+    exit 1
+fi
+
+# Finally, check if template files were actually created on the target
+if ! check_target "grep -q 'Hello World!' /tmp/spage/template_test_file_1.txt"; then echo "Template diff test final check 1 failed"; exit 1; fi
+if ! check_target "grep -q 'Hello Spage!' /tmp/spage/template_test_file_2.txt"; then echo "Template diff test final check 2 failed"; exit 1; fi
+if ! check_target "grep -q 'Hello Test!' /tmp/spage/template_test_file_3.txt"; then echo "Template diff test final check 3 failed"; exit 1; fi
+
+echo "Template diff mode test without --diff flag succeeded."
+echo "Template module diff mode functionality test completed successfully!"
 
 echo "All tests completed successfully!"
 

@@ -116,6 +116,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"tags",
 		"check_mode",
 		"diff",
+		"vars",
 	}
 
 	var tasks []GraphNode
@@ -299,6 +300,12 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			errored = true
 		} else {
 			task.ChangedWhen = changedWhenCond
+		}
+
+		// Handle 'vars' field - can be a map of variables
+		if varsVal, ok := block["vars"]; ok {
+			// vars can be a map[string]interface{} or other types
+			task.Vars = varsVal
 		}
 
 		var module Module

@@ -3,6 +3,7 @@ package modules
 import (
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
 
@@ -26,7 +27,8 @@ type TemplateInput struct {
 }
 
 type TemplateOutput struct {
-	Contents pkg.RevertableChange[string]
+	Contents       pkg.RevertableChange[string] `yaml:"-"` // Don't serialize diff in YAML
+	ShouldShowDiff bool                         `yaml:"-"` // New field to control diff display
 	// TODO: track if file was created
 	pkg.ModuleOutput
 }
@@ -69,9 +71,32 @@ func (i TemplateInput) HasRevert() bool {
 func (i TemplateInput) ProvidesVariables() []string {
 	return nil
 }
+
 func (o TemplateOutput) String() string {
-	// TODO: show diff
-	return fmt.Sprintf("  original: %q\n  new: %q", o.Contents.Before, o.Contents.After)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("  msg: %s\n", o.msg()))
+	// Only show diff if ShouldShowDiff is true AND there's actually a change
+	if o.ShouldShowDiff && o.Contents.Changed() {
+		sb.WriteString("  diff: |\n")
+		// Indent each line of the diff for nice output
+		diff, err := o.Contents.DiffOutput()
+		if err != nil {
+			common.LogWarn("failed to generate diff", map[string]interface{}{"error": err})
+		}
+		for _, line := range strings.Split(diff, "\n") {
+			sb.WriteString(fmt.Sprintf("    %s\n", line))
+		}
+	}
+	sb.WriteString(fmt.Sprintf("  new content: %q\n", o.Contents.After))
+	return sb.String()
+}
+
+// msg returns an appropriate message based on whether content changed
+func (o TemplateOutput) msg() string {
+	if o.Contents.Changed() {
+		return "template file updated"
+	}
+	return "template file already up to date"
 }
 
 func (o TemplateOutput) Changed() bool {
@@ -128,6 +153,7 @@ func (m TemplateModule) Execute(params pkg.ConcreteModuleInputProvider, closure 
 			Before: original,
 			After:  new,
 		},
+		ShouldShowDiff: pkg.ShouldShowDiff(closure),
 	}, nil
 }
 
@@ -153,10 +179,12 @@ func (m TemplateModule) Revert(params pkg.ConcreteModuleInputProvider, closure *
 				Before: prev.Contents.After,
 				After:  prev.Contents.Before,
 			},
+			ShouldShowDiff: pkg.ShouldShowDiff(closure),
 		}, nil
 	}
-	common.DebugOutput("Not reverting because previous result was %v", previous)
-	return TemplateOutput{}, nil
+	return TemplateOutput{
+		ShouldShowDiff: pkg.ShouldShowDiff(closure),
+	}, nil
 }
 
 func init() {

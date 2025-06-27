@@ -1,6 +1,10 @@
 package pkg
 
-import "log"
+import (
+	"log"
+
+	"github.com/AlexanderGrooff/jinja-go"
+)
 
 type Closure struct {
 	HostContext *HostContext
@@ -15,6 +19,24 @@ func ConstructClosure(c *HostContext, t Task) *Closure {
 
 	if t.Loop != nil {
 		closure.ExtraFacts["item"] = t.Loop
+	}
+	if t.Vars != nil {
+		switch t.Vars.(type) {
+		case string:
+			vars, err := jinja.ParseVariables(t.Vars.(string))
+			if err != nil {
+				log.Fatalf("Failed to parse vars: %v", err)
+			}
+			for _, v := range vars {
+				closure.ExtraFacts[v] = t.Vars
+			}
+		case map[string]interface{}:
+			for k, v := range t.Vars.(map[string]interface{}) {
+				closure.ExtraFacts[k] = v
+			}
+		default:
+			log.Fatalf("Invalid vars type: %T", t.Vars)
+		}
 	}
 
 	return &closure

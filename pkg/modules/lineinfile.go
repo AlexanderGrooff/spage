@@ -102,19 +102,6 @@ func (o LineinfileOutput) Changed() bool {
 	return o.Diff.Changed() || (o.Msg != "" && !strings.Contains(o.Msg, "already")) // A bit simplistic, refine
 }
 
-// shouldShowDiff determines if diff output should be displayed based on:
-// 1. Global ansible_diff setting (set by --diff flag or task level setting)
-// 2. Task-level diff setting (overrides global setting)
-func shouldShowDiff(closure *pkg.Closure) bool {
-	// Check if ansible_diff is set in the closure (either globally or by task-level diff setting)
-	if val, ok := closure.GetFact("ansible_diff"); ok {
-		if diffVal, ok := val.(bool); ok {
-			return diffVal
-		}
-	}
-	return false
-}
-
 // String provides a human-readable summary of the output.
 func (o LineinfileOutput) String() string {
 	var sb strings.Builder
@@ -150,9 +137,6 @@ func (lm LineinfileModule) Execute(params pkg.ConcreteModuleInputProvider, closu
 		state = "present" // Default state
 	}
 
-	common.DebugOutput("Lineinfile: path=%s, line=%s, regexp=%s, state=%s, create=%t, insertafter=%s, insertbefore=%s",
-		input.Path, input.Line, input.Regexp, state, input.Create, input.InsertAfter, input.InsertBefore)
-
 	originalContent, err := closure.HostContext.ReadFile(input.Path, runAs)
 	originalFileExists := err == nil
 	originalMode := "" // Placeholder, implement mode fetching if needed for revert
@@ -164,7 +148,6 @@ func (lm LineinfileModule) Execute(params pkg.ConcreteModuleInputProvider, closu
 	// Handle file creation if requested and file doesn't exist
 	if !originalFileExists && input.Create {
 		if state == "present" {
-			common.DebugOutput("Lineinfile: creating file %s with line: %s", input.Path, input.Line)
 			if err := closure.HostContext.WriteFile(input.Path, input.Line+"\n", runAs); err != nil {
 				return nil, fmt.Errorf("failed to create and write to file %s: %w", input.Path, err)
 			}
@@ -177,14 +160,13 @@ func (lm LineinfileModule) Execute(params pkg.ConcreteModuleInputProvider, closu
 				Msg:                fmt.Sprintf("file %s created with line", input.Path),
 				Diff:               pkg.RevertableChange[string]{Before: "", After: input.Line + "\n"},
 				OriginalFileExists: false,
-				ShouldShowDiff:     shouldShowDiff(closure),
+				ShouldShowDiff:     pkg.ShouldShowDiff(closure),
 			}, nil
 		} else { // state == "absent"
-			common.DebugOutput("Lineinfile: file %s does not exist and state is absent, doing nothing", input.Path)
 			return LineinfileOutput{
 				Msg:                fmt.Sprintf("file %s does not exist, line is already absent", input.Path),
 				OriginalFileExists: false,
-				ShouldShowDiff:     shouldShowDiff(closure),
+				ShouldShowDiff:     pkg.ShouldShowDiff(closure),
 			}, nil
 		}
 	} else if !originalFileExists {
@@ -223,7 +205,6 @@ func (lm LineinfileModule) Execute(params pkg.ConcreteModuleInputProvider, closu
 		}
 
 		if match {
-			common.DebugOutput("Lineinfile: matched line %q (regexp: %q, exact_line_match: %t)", currentLine, input.Regexp, (compiledRegexp == nil && currentLine == input.Line))
 			found = true
 			if state == "present" {
 				lineToWrite := input.Line
@@ -231,9 +212,7 @@ func (lm LineinfileModule) Execute(params pkg.ConcreteModuleInputProvider, closu
 					// Convert Ansible-style backreferences (\1) to Go-style ($1)
 					backrefPattern := regexp.MustCompile(`\\([0-9]+)`)
 					replacementString := backrefPattern.ReplaceAllString(input.Line, "$$$1")
-					common.DebugOutput("Lineinfile: applying backrefs, original line: %q, replacement pattern: %q", currentLine, replacementString)
 					replacedLine := string(compiledRegexp.ReplaceAllString(currentLine, replacementString))
-					common.DebugOutput("Lineinfile: line after backrefs: %q", replacedLine)
 					if currentLine != replacedLine {
 						modified = true
 					}
@@ -246,7 +225,6 @@ func (lm LineinfileModule) Execute(params pkg.ConcreteModuleInputProvider, closu
 					newLines = append(newLines, lineToWrite)
 				}
 			} else { // state == "absent"
-				common.DebugOutput("Lineinfile: removing matched line %q", currentLine)
 				modified = true // Line removed
 				// Do not append currentLine
 				continue
@@ -258,7 +236,6 @@ func (lm LineinfileModule) Execute(params pkg.ConcreteModuleInputProvider, closu
 
 	// Secondary pass: handle insertafter/insertbefore or add if not found (for state=present)
 	if state == "present" && !found {
-		common.DebugOutput("Lineinfile: line not found, state is present. Adding line. InsertAfter: %q, InsertBefore: %q", input.InsertAfter, input.InsertBefore)
 		lineToAdd := input.Line
 		if input.InsertAfter != "" {
 			idxToInsert := -1
@@ -276,11 +253,9 @@ func (lm LineinfileModule) Execute(params pkg.ConcreteModuleInputProvider, closu
 					}
 				}
 				if idxToInsert == -1 { // Not found, append to end as per Ansible behavior
-					common.DebugOutput("Lineinfile: insertafter regexp %q not found, appending to end", input.InsertAfter)
 					idxToInsert = len(newLines)
 				}
 			}
-			common.DebugOutput("Lineinfile: inserting line %q at index %d (due to insertafter)", lineToAdd, idxToInsert)
 			tempLines := make([]string, 0, len(newLines)+1)
 			tempLines = append(tempLines, newLines[:idxToInsert]...)
 			tempLines = append(tempLines, lineToAdd)
@@ -303,11 +278,9 @@ func (lm LineinfileModule) Execute(params pkg.ConcreteModuleInputProvider, closu
 					}
 				}
 				if idxToInsert == -1 { // Not found, prepend as per Ansible behavior (insert at BOF if pattern not found)
-					common.DebugOutput("Lineinfile: insertbefore regexp %q not found, inserting at beginning", input.InsertBefore)
 					idxToInsert = 0
 				}
 			}
-			common.DebugOutput("Lineinfile: inserting line %q at index %d (due to insertbefore)", lineToAdd, idxToInsert)
 			tempLines := make([]string, 0, len(newLines)+1)
 			if idxToInsert == 0 {
 				tempLines = append(tempLines, lineToAdd)
@@ -321,7 +294,6 @@ func (lm LineinfileModule) Execute(params pkg.ConcreteModuleInputProvider, closu
 			modified = true
 		} else {
 			// No insertafter/insertbefore, and line not found. Add to the end of the file.
-			common.DebugOutput("Lineinfile: line not found, no insertafter/insertbefore, adding to end: %q", lineToAdd)
 			newLines = append(newLines, lineToAdd)
 			modified = true
 		}
@@ -339,7 +311,6 @@ func (lm LineinfileModule) Execute(params pkg.ConcreteModuleInputProvider, closu
 	}
 
 	if modified {
-		common.DebugOutput("Lineinfile: writing modified content to %s. Content:\n%s", input.Path, finalContent)
 		if err := closure.HostContext.WriteFile(input.Path, finalContent, runAs); err != nil {
 			return nil, fmt.Errorf("failed to write updated content to %s: %w", input.Path, err)
 		}
@@ -358,7 +329,7 @@ func (lm LineinfileModule) Execute(params pkg.ConcreteModuleInputProvider, closu
 			Diff:               pkg.RevertableChange[string]{Before: originalContent, After: finalContent},
 			OriginalFileExists: originalFileExists,
 			OriginalMode:       originalMode,
-			ShouldShowDiff:     shouldShowDiff(closure),
+			ShouldShowDiff:     pkg.ShouldShowDiff(closure),
 		}
 
 		return output, nil
@@ -380,13 +351,12 @@ func (lm LineinfileModule) Execute(params pkg.ConcreteModuleInputProvider, closu
 		}
 		msg = fmt.Sprintf("line already absent from %s", input.Path)
 	}
-	common.DebugOutput("Lineinfile: no modifications made to %s. Message: %s", input.Path, msg)
 	return LineinfileOutput{
 		Msg:                msg,
 		Diff:               pkg.RevertableChange[string]{Before: originalContent, After: originalContent},
 		OriginalFileExists: originalFileExists,
 		OriginalMode:       originalMode,
-		ShouldShowDiff:     shouldShowDiff(closure),
+		ShouldShowDiff:     pkg.ShouldShowDiff(closure),
 	}, nil
 }
 
@@ -403,13 +373,10 @@ func (lm LineinfileModule) Revert(params pkg.ConcreteModuleInputProvider, closur
 		prevOutput = LineinfileOutput{}
 	}
 
-	common.DebugOutput("Lineinfile Revert: Path: %s, OriginalFileExists: %t, DiffChanged: %t", input.Path, prevOutput.OriginalFileExists, prevOutput.Diff.Changed())
-
 	if !prevOutput.Diff.Changed() && prevOutput.OriginalFileExists {
-		common.DebugOutput("Lineinfile Revert: No changes to revert for %s (diff not changed and file existed)", input.Path)
 		return LineinfileOutput{
 			Msg:            "no changes to revert",
-			ShouldShowDiff: shouldShowDiff(closure),
+			ShouldShowDiff: pkg.ShouldShowDiff(closure),
 		}, nil
 	}
 
@@ -422,7 +389,7 @@ func (lm LineinfileModule) Revert(params pkg.ConcreteModuleInputProvider, closur
 		}
 		return LineinfileOutput{
 			Msg:            "reverted file creation",
-			ShouldShowDiff: shouldShowDiff(closure),
+			ShouldShowDiff: pkg.ShouldShowDiff(closure),
 		}, nil
 	}
 
@@ -444,7 +411,7 @@ func (lm LineinfileModule) Revert(params pkg.ConcreteModuleInputProvider, closur
 		Diff:               pkg.RevertableChange[string]{Before: prevOutput.Diff.After, After: prevOutput.Diff.Before},
 		OriginalFileExists: true,                    // It existed before Execute and still exists (content reverted).
 		OriginalMode:       prevOutput.OriginalMode, // Carry over if we had it
-		ShouldShowDiff:     shouldShowDiff(closure),
+		ShouldShowDiff:     pkg.ShouldShowDiff(closure),
 	}, nil
 }
 

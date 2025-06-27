@@ -207,7 +207,9 @@ func TemplateString(s string, closure *Closure) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to template string: %v", err)
 	}
-	common.DebugOutput("Templated %q into %q with facts: %v", s, res, closure.GetFacts())
+	if s != res {
+		common.DebugOutput("Templated %q into %q with facts: %v", s, res, closure.GetFacts())
+	}
 	return res, nil
 }
 
@@ -223,7 +225,6 @@ func GetVariablesFromExpression(jinjaString string) []string {
 
 	var vars []string
 	if filterApplication.MatchString(jinjaString) {
-		common.DebugOutput("Found Jinja filter %v", jinjaString)
 		for _, match := range filterApplication.FindAllStringSubmatch(jinjaString, -1) {
 			jinjaVar := strings.TrimSpace(match[1])
 			if jinjaVar != "" && !slices.Contains(jinjaKeywords, jinjaVar) {
@@ -233,7 +234,6 @@ func GetVariablesFromExpression(jinjaString string) []string {
 		return vars
 	}
 	if attributeVariable.MatchString(jinjaString) {
-		common.DebugOutput("Found Jinja subattribute %v", jinjaString)
 		for _, match := range attributeVariable.FindAllStringSubmatch(jinjaString, -1) {
 			jinjaVar := strings.TrimSpace(match[1])
 			if jinjaVar != "" && !slices.Contains(jinjaKeywords, jinjaVar) {
@@ -246,23 +246,15 @@ func GetVariablesFromExpression(jinjaString string) []string {
 }
 
 func GetVariableUsageFromTemplate(s string) []string {
-	everythingBetweenBrackets := regexp.MustCompile(`{{\s*([^{}\s]+)\s*}}`)
-	matches := everythingBetweenBrackets.FindAllStringSubmatch(s, -1)
-
-	var vars []string
-	for _, match := range matches {
-		jinjaVariables := GetVariablesFromExpression(match[1])
-		vars = append(vars, jinjaVariables...)
-	}
-	if len(vars) > 0 {
-		common.DebugOutput("Found variables %v in %v", vars, s)
+	vars, err := jinja.ParseVariables(s)
+	if err != nil {
+		return nil
 	}
 	return vars
 }
 
 func (c *HostContext) Close() error {
 	if c.sshClient != nil {
-		common.DebugOutput("Closing SSH connection to %s", c.Host.Host)
 		err := c.sshClient.Close()
 		c.sshClient = nil // Ensure it's marked as closed
 		return err

@@ -296,7 +296,31 @@ func NewGraph(nodes []GraphNode) (Graph, error) {
 			if err != nil {
 				return Graph{}, fmt.Errorf("error getting variable usage for task %q: %w", n.Name, err)
 			}
-			dependsOnVariables[n.Name] = vars
+
+			// Filter out variables that are provided by task-level vars
+			filteredVars := []string{}
+			if n.Vars != nil {
+				if varsMap, ok := n.Vars.(map[string]interface{}); ok {
+					taskVarNames := make(map[string]bool)
+					for varName := range varsMap {
+						taskVarNames[varName] = true
+					}
+					// Only include variables that are NOT provided by task-level vars
+					for _, varName := range vars {
+						if !taskVarNames[varName] {
+							filteredVars = append(filteredVars, varName)
+						}
+					}
+				} else {
+					// If vars is not a map, use all variables
+					filteredVars = vars
+				}
+			} else {
+				// No task-level vars, use all variables
+				filteredVars = vars
+			}
+
+			dependsOnVariables[n.Name] = filteredVars
 		}
 
 		if n.Before != "" {

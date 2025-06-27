@@ -88,6 +88,7 @@ type Task struct {
 	RunOnce      bool        `yaml:"run_once,omitempty" json:"run_once,omitempty"`
 	NoLog        bool        `yaml:"no_log,omitempty" json:"no_log,omitempty"`
 	Tags         []string    `yaml:"tags,omitempty" json:"tags,omitempty"`
+	Vars         interface{} `yaml:"vars,omitempty" json:"vars,omitempty"`
 
 	Until   string `yaml:"until,omitempty" json:"until,omitempty"`
 	Retries int    `yaml:"retries,omitempty" json:"retries,omitempty"`
@@ -347,6 +348,9 @@ func (t Task) ToCode() string {
 	if t.Delay > 0 {
 		sb.WriteString(fmt.Sprintf(", Delay: %d", t.Delay))
 	}
+	if t.Vars != nil {
+		sb.WriteString(fmt.Sprintf(", Vars: %#v", t.Vars))
+	}
 	if len(t.Tags) > 0 {
 		sb.WriteString(", Tags: []string{")
 		for i, tag := range t.Tags {
@@ -452,6 +456,22 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	}
 	taskClosure.ExtraFacts["ansible_check_mode"] = checkMode
 	taskClosure.ExtraFacts["ansible_diff"] = diffMode
+
+	// Add task-level vars to the closure
+	if t.Vars != nil {
+		switch t.Vars.(type) {
+		case map[string]interface{}:
+			for k, v := range t.Vars.(map[string]interface{}) {
+				taskClosure.ExtraFacts[k] = v
+			}
+		default:
+			common.LogWarn("Unsupported task vars type", map[string]interface{}{
+				"task": t.Name,
+				"host": closure.HostContext.Host.Name,
+				"type": fmt.Sprintf("%T", t.Vars),
+			})
+		}
+	}
 
 	// If 'until' is not defined, execute once as normal.
 	if t.Until == "" {
@@ -596,7 +616,6 @@ func (t Task) executeOnce(closure *Closure) TaskResult {
 		t.Params.Actual = templatedActualProvider // This could be nil if original was nil and TemplateModuleInputFields returns nil
 	}
 
-	common.DebugOutput("Executing module %s with params %v and context %v", t.Module, t.Params.Actual, closure)
 	r.Output, r.Error = module.Execute(t.Params.Actual, closure, t.RunAs)
 	duration := time.Since(startTime)
 	r.Duration = duration

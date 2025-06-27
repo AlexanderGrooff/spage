@@ -108,8 +108,6 @@ func (e *LocalGraphExecutor) Execute(hostContexts map[string]*pkg.HostContext, o
 		resultsCh := make(chan pkg.TaskResult, numExpectedResultsOnLevel)
 		errCh := make(chan error, 1) // For fatal errors from the task loading goroutine
 
-		common.DebugOutput("Scheduling %d task instances on level %d", numExpectedResultsOnLevel, executionLevel)
-
 		go e.loadLevelTasks(ctx, tasksInLevel, hostContexts, resultsCh, errCh, cfg)
 
 		levelErrored, errProcessingResults := e.processLevelResults(
