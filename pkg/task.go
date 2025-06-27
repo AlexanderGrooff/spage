@@ -94,6 +94,7 @@ type Task struct {
 	Delay   int    `yaml:"delay,omitempty" json:"delay,omitempty"`
 
 	CheckMode *bool `yaml:"check_mode,omitempty" json:"check_mode,omitempty"`
+	Diff      *bool `yaml:"diff,omitempty" json:"diff,omitempty"`
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface for Task.
@@ -290,6 +291,9 @@ func (t Task) ToCode() string {
 		// Create a pointer to a boolean for the generated code
 		sb.WriteString(fmt.Sprintf(", CheckMode: func() *bool { b := %t; return &b }()", *t.CheckMode))
 	}
+	if t.Diff != nil {
+		sb.WriteString(fmt.Sprintf(", Diff: func() *bool { b := %t; return &b }()", *t.Diff))
+	}
 	if t.FailedWhen != nil {
 		switch v := t.FailedWhen.(type) {
 		case string:
@@ -422,13 +426,22 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 
 	// Determine check mode for this task execution
 	checkMode := false
+	diffMode := false
 	if val, ok := closure.GetFact("ansible_check_mode"); ok {
 		if checkModeVal, ok := val.(bool); ok {
 			checkMode = checkModeVal
 		}
 	}
+	if val, ok := closure.GetFact("ansible_diff"); ok {
+		if diffModeVal, ok := val.(bool); ok {
+			diffMode = diffModeVal
+		}
+	}
 	if t.CheckMode != nil {
 		checkMode = *t.CheckMode
+	}
+	if t.Diff != nil {
+		diffMode = *t.Diff
 	}
 
 	// Create a new closure for this execution with the correct check_mode value.
@@ -438,6 +451,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 		taskClosure.ExtraFacts = make(map[string]interface{})
 	}
 	taskClosure.ExtraFacts["ansible_check_mode"] = checkMode
+	taskClosure.ExtraFacts["ansible_diff"] = diffMode
 
 	// If 'until' is not defined, execute once as normal.
 	if t.Until == "" {

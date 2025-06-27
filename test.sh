@@ -1264,5 +1264,93 @@ fi
 echo "Check mode test (normal mode) with internal assertions succeeded."
 echo "Check mode functionality test completed successfully!"
 
+# Test 35: Diff mode functionality test
+echo "Running diff mode functionality test..."
+
+go run main.go generate -p tests/playbooks/diff_mode_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+
+# Test 35.1: Run with --diff flag
+echo "Running diff mode test with --diff flag..."
+DIFF_OUTPUT=$(./generated_tasks $INVENTORY_ARG --diff -config tests/configs/sequential.yaml 2>&1)
+DIFF_EXIT_CODE=$?
+
+if [ $DIFF_EXIT_CODE -ne 0 ]; then
+    echo "Diff mode test (--diff) failed: Playbook execution failed unexpectedly (Exit Code: $DIFF_EXIT_CODE)."
+    echo "Output was:"
+    echo "$DIFF_OUTPUT"
+    exit 1
+fi
+
+# Check for diff output from task 1 (no diff keyword)
+if ! echo "$DIFF_OUTPUT" | grep -A 10 "TASK \[Task with no diff keyword" | grep -q "diff: |"; then
+    echo "Diff mode test (--diff) failed: Did not find diff for task with no diff keyword."
+    echo "Output was:"
+    echo "$DIFF_OUTPUT"
+    exit 1
+fi
+# Check for diff output from task 2 (diff: yes)
+if ! echo "$DIFF_OUTPUT" | grep -A 10 "TASK \[Task with diff yes" | grep -q "diff: |"; then
+    echo "Diff mode test (--diff) failed: Did not find diff for task with diff yes."
+    echo "Output was:"
+    echo "$DIFF_OUTPUT"
+    exit 1
+fi
+# Check for NO diff output from task 3 (diff: no) - look specifically for "diff: |" pattern
+if echo "$DIFF_OUTPUT" | grep -A 10 "TASK \[Task with diff no" | grep -q "diff: |"; then
+    echo "Diff mode test (--diff) failed: Found diff for task with diff no, but it should be suppressed."
+    echo "Output was:"
+    echo "$DIFF_OUTPUT"
+    exit 1
+fi
+echo "Diff mode test with --diff flag succeeded."
+
+# Test 35.2: Run without --diff flag
+echo "Running diff mode test without --diff flag..."
+# We can reuse the generated binary, but first, we need to reset the files
+go run main.go generate -p tests/playbooks/diff_mode_playbook.yaml -o generated_tasks.go
+go build -o generated_tasks generated_tasks.go
+./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml > /dev/null 2>&1
+
+NORMAL_OUTPUT=$(./generated_tasks $INVENTORY_ARG -config tests/configs/sequential.yaml 2>&1)
+NORMAL_EXIT_CODE=$?
+
+if [ $NORMAL_EXIT_CODE -ne 0 ]; then
+    echo "Diff mode test (no --diff) failed: Playbook execution failed unexpectedly (Exit Code: $NORMAL_EXIT_CODE)."
+    echo "Output was:"
+    echo "$NORMAL_OUTPUT"
+    exit 1
+fi
+
+# Check for diff from task 2 (diff: yes)
+if ! echo "$NORMAL_OUTPUT" | grep -A 10 "TASK \[Task with diff yes" | grep -q "diff: |"; then
+    echo "Diff mode test (no --diff) failed: Did not find diff for task with diff yes."
+    echo "Output was:"
+    echo "$NORMAL_OUTPUT"
+    exit 1
+fi
+# Check for NO diff from task 1 (no diff keyword)
+if echo "$NORMAL_OUTPUT" | grep -A 10 "TASK \[Task with no diff keyword" | grep -q "diff: |"; then
+    echo "Diff mode test (no --diff) failed: Found diff for task with no diff keyword."
+    echo "Output was:"
+    echo "$NORMAL_OUTPUT"
+    exit 1
+fi
+# Check for NO diff from task 3 (diff: no)
+if echo "$NORMAL_OUTPUT" | grep -A 10 "TASK \[Task with diff no" | grep -q "diff: |"; then
+    echo "Diff mode test (no --diff) failed: Found diff for task with diff no."
+    echo "Output was:"
+    echo "$NORMAL_OUTPUT"
+    exit 1
+fi
+
+# Finally, check if files were actually changed on the target
+if ! check_target "grep -q 'changed content 1' /tmp/spage/diff_test_file_1.txt"; then echo "Diff test final check 1 failed"; exit 1; fi
+if ! check_target "grep -q 'changed content 2' /tmp/spage/diff_test_file_2.txt"; then echo "Diff test final check 2 failed"; exit 1; fi
+if ! check_target "grep -q 'changed content 3' /tmp/spage/diff_test_file_3.txt"; then echo "Diff test final check 3 failed"; exit 1; fi
+
+echo "Diff mode test without --diff flag succeeded."
+echo "Diff mode functionality test completed successfully!"
+
 echo "All tests completed successfully!"
 

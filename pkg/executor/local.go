@@ -417,9 +417,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 		}
 
 		// Normal task execution for non-run_once tasks
-		for hostNameKey, hostCtxInstance := range hostContexts {
-			hostCtx := hostCtxInstance
-			hostName := hostNameKey
+		for hostName, hostCtx := range hostContexts {
 
 			closures, err := GetTaskClosures(task, hostCtx)
 			if err != nil {
@@ -432,9 +430,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				return
 			}
 
-			for _, individualClosure := range closures {
-				closure := individualClosure
-
+			for _, closure := range closures {
 				// Resolve delegate_to if specified
 				if task.DelegateTo != "" {
 					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure)

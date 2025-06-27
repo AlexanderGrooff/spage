@@ -115,6 +115,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"delay",
 		"tags",
 		"check_mode",
+		"diff",
 	}
 
 	var tasks []GraphNode
@@ -230,6 +231,17 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		} else {
 			if checkModeFound {
 				task.CheckMode = &checkModeVal
+			}
+		}
+
+		// Handle 'check_mode' using the helper function
+		diffVal, diffFound, diffErr := parseBoolOrStringBoolValue(block, "diff", task.Name)
+		if diffErr != nil {
+			errors = append(errors, diffErr)
+			errored = true
+		} else {
+			if diffFound {
+				task.Diff = &diffVal
 			}
 		}
 

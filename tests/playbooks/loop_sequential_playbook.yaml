@@ -47,6 +47,7 @@
         state: touch
       loop: "{{ loop_list }}"
       after: define list
+
     - name: verify item 3
       stat:
         path: /tmp/spage/item3.txt

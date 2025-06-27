@@ -7,10 +7,10 @@ import (
 	"github.com/AlexanderGrooff/jinja-go"
 )
 
-// processRecursive is the core recursive function that creates a new reflect.Value
+// ProcessRecursive is the core recursive function that creates a new reflect.Value
 // based on originalVal, with string fields templated.
 // It returns a new reflect.Value representing the copied and processed value, or an error.
-func processRecursive(originalVal reflect.Value, closure *Closure) (reflect.Value, error) {
+func ProcessRecursive(originalVal reflect.Value, closure *Closure) (reflect.Value, error) {
 	if !originalVal.IsValid() {
 		// Return the invalid value as is; the caller's .Set might handle or error.
 		return originalVal, nil
@@ -19,11 +19,19 @@ func processRecursive(originalVal reflect.Value, closure *Closure) (reflect.Valu
 	switch originalVal.Kind() {
 	case reflect.String:
 		origStr := originalVal.String()
-		templatedStr, err := TemplateString(origStr, closure)
-		if err != nil {
-			return reflect.Value{}, err // Propagate error
+
+		maxIterations := 10 // To prevent infinite loops
+		for i := 0; i < maxIterations; i++ {
+			templatedStr, err := TemplateString(origStr, closure)
+			if err != nil {
+				return reflect.Value{}, err // Propagate error
+			}
+			if templatedStr == origStr {
+				return reflect.ValueOf(templatedStr), nil
+			}
+			origStr = templatedStr
 		}
-		return reflect.ValueOf(templatedStr), nil
+		return reflect.Value{}, fmt.Errorf("template expansion exceeded max iterations for: %s", originalVal.String())
 
 	case reflect.Struct:
 		originalStructType := originalVal.Type()
@@ -42,7 +50,7 @@ func processRecursive(originalVal reflect.Value, closure *Closure) (reflect.Valu
 				continue
 			}
 
-			processedFieldVal, err := processRecursive(originalFieldVal, closure)
+			processedFieldVal, err := ProcessRecursive(originalFieldVal, closure)
 			if err != nil {
 				return reflect.Value{}, fmt.Errorf("failed to process field %s: %w", fieldType.Name, err)
 			}
@@ -57,7 +65,7 @@ func processRecursive(originalVal reflect.Value, closure *Closure) (reflect.Valu
 			return reflect.Zero(originalVal.Type()), nil // Return a new nil pointer of the same type
 		}
 		elemVal := originalVal.Elem()
-		processedElemVal, err := processRecursive(elemVal, closure)
+		processedElemVal, err := ProcessRecursive(elemVal, closure)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -77,7 +85,7 @@ func processRecursive(originalVal reflect.Value, closure *Closure) (reflect.Valu
 		newSliceInstance := reflect.MakeSlice(originalVal.Type(), originalVal.Len(), originalVal.Cap())
 		for j := 0; j < originalVal.Len(); j++ {
 			originalElemVal := originalVal.Index(j)
-			processedElemVal, err := processRecursive(originalElemVal, closure)
+			processedElemVal, err := ProcessRecursive(originalElemVal, closure)
 			if err != nil {
 				return reflect.Value{}, fmt.Errorf("failed to process slice element %d: %w", j, err)
 			}
@@ -98,7 +106,7 @@ func processRecursive(originalVal reflect.Value, closure *Closure) (reflect.Valu
 			key := iter.Key() // Keys are not templated, used as is.
 			originalMapElemVal := iter.Value()
 
-			processedMapElemVal, err := processRecursive(originalMapElemVal, closure)
+			processedMapElemVal, err := ProcessRecursive(originalMapElemVal, closure)
 			if err != nil {
 				return reflect.Value{}, fmt.Errorf("failed to process map value for key %v: %w", key.Interface(), err)
 			}
@@ -149,7 +157,7 @@ func TemplateModuleInputFields(originalProvider ConcreteModuleInputProvider, clo
 	}
 
 	// Process the struct value recursively to get a new templated struct value.
-	templatedStructVal, err := processRecursive(originalStructVal, closure)
+	templatedStructVal, err := ProcessRecursive(originalStructVal, closure)
 	if err != nil {
 		return nil, err
 	}

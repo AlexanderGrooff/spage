@@ -46,7 +46,7 @@
           - "stat_file1.stat.exists"     # file1 should exist
           - "stat_file2.stat.exists"     # file2 should exist
           - "not stat_file3.stat.exists" # file3 should not exist
-      when: "not ansible_check_mode"
+      when: not ansible_check_mode
 
     - name: Debug check mode fact
       debug:

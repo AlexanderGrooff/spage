@@ -1,0 +1,35 @@
+---
+- name: Test diff mode
+  hosts: all
+  gather_facts: no
+  tasks:
+    - name: Create test files and initial content
+      lineinfile:
+        path: "{{ item.path }}"
+        line: "{{ item.line }}"
+        create: yes
+      loop:
+        - { path: "/tmp/spage/diff_test_file_1.txt", line: "initial content 1" }
+        - { path: "/tmp/spage/diff_test_file_2.txt", line: "initial content 2" }
+        - { path: "/tmp/spage/diff_test_file_3.txt", line: "initial content 3" }
+      check_mode: no
+
+    - name: Task with no diff keyword (should show diff with --diff)
+      lineinfile:
+        path: "/tmp/spage/diff_test_file_1.txt"
+        regexp: "initial content 1"
+        line: "changed content 1"
+
+    - name: Task with diff yes (should always show diff)
+      lineinfile:
+        path: "/tmp/spage/diff_test_file_2.txt"
+        regexp: "initial content 2"
+        line: "changed content 2"
+      diff: yes
+
+    - name: Task with diff no (should never show diff)
+      lineinfile:
+        path: "/tmp/spage/diff_test_file_3.txt"
+        regexp: "initial content 3"
+        line: "changed content 3"
+      diff: no

@@ -87,6 +87,18 @@ func (r RevertableChange[T]) Changed() bool {
 	return r.Before != r.After
 }
 
+func (r RevertableChange[T]) DiffOutput() (string, error) {
+	before, ok := any(r.Before).(string)
+	if !ok {
+		return "", fmt.Errorf("cannot generate diff for non-string type %T", r.Before)
+	}
+	after, ok := any(r.After).(string) 
+	if !ok {
+		return "", fmt.Errorf("cannot generate diff for non-string type %T", r.After)
+	}
+	return GenerateUnifiedDiff("", before, after)
+}
+
 type Module interface {
 	InputType() reflect.Type
 	OutputType() reflect.Type

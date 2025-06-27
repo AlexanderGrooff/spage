@@ -32,11 +32,13 @@ type LineinfileInput struct {
 	Mode         string `yaml:"mode,omitempty"`         // File mode if created
 }
 
+// LineinfileOutput contains the result information for a lineinfile operation.
 type LineinfileOutput struct {
 	Msg                string                       `yaml:"msg"`
-	Diff               pkg.RevertableChange[string] `yaml:"diff"` // For file content changes
-	OriginalFileExists bool                         `yaml:"originalFileExists"`
-	OriginalMode       string                       `yaml:"originalMode"`
+	Diff               pkg.RevertableChange[string] `yaml:"-"` // Don't serialize diff in YAML
+	OriginalFileExists bool                         `yaml:"-"`
+	OriginalMode       string                       `yaml:"-"`
+	ShouldShowDiff     bool                         `yaml:"-"` // New field to control diff display
 	pkg.ModuleOutput
 }
 
@@ -100,11 +102,36 @@ func (o LineinfileOutput) Changed() bool {
 	return o.Diff.Changed() || (o.Msg != "" && !strings.Contains(o.Msg, "already")) // A bit simplistic, refine
 }
 
+// shouldShowDiff determines if diff output should be displayed based on:
+// 1. Global ansible_diff setting (set by --diff flag or task level setting)
+// 2. Task-level diff setting (overrides global setting)
+func shouldShowDiff(closure *pkg.Closure) bool {
+	// Check if ansible_diff is set in the closure (either globally or by task-level diff setting)
+	if val, ok := closure.GetFact("ansible_diff"); ok {
+		if diffVal, ok := val.(bool); ok {
+			return diffVal
+		}
+	}
+	return false
+}
+
 // String provides a human-readable summary of the output.
 func (o LineinfileOutput) String() string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("  msg: %s\n", o.Msg))
-	sb.WriteString(fmt.Sprintf("  original content: %q\n", o.Diff.Before))
+	// Only show diff if ShouldShowDiff is true AND there's actually a change
+	if o.ShouldShowDiff && o.Diff.Changed() {
+		sb.WriteString("  diff: |\n")
+		// Indent each line of the diff for nice output
+		diff, err := o.Diff.DiffOutput()
+		if err != nil {
+			common.LogWarn("failed to generate diff", map[string]interface{}{"error": err})
+		}
+		for _, line := range strings.Split(diff, "\n") {
+			sb.WriteString(fmt.Sprintf("    %s\n", line))
+		}
+	}
+
 	sb.WriteString(fmt.Sprintf("  new content: %q\n", o.Diff.After))
 	return sb.String()
 }
@@ -150,12 +177,14 @@ func (lm LineinfileModule) Execute(params pkg.ConcreteModuleInputProvider, closu
 				Msg:                fmt.Sprintf("file %s created with line", input.Path),
 				Diff:               pkg.RevertableChange[string]{Before: "", After: input.Line + "\n"},
 				OriginalFileExists: false,
+				ShouldShowDiff:     shouldShowDiff(closure),
 			}, nil
 		} else { // state == "absent"
 			common.DebugOutput("Lineinfile: file %s does not exist and state is absent, doing nothing", input.Path)
 			return LineinfileOutput{
 				Msg:                fmt.Sprintf("file %s does not exist, line is already absent", input.Path),
 				OriginalFileExists: false,
+				ShouldShowDiff:     shouldShowDiff(closure),
 			}, nil
 		}
 	} else if !originalFileExists {
@@ -324,12 +353,15 @@ func (lm LineinfileModule) Execute(params pkg.ConcreteModuleInputProvider, closu
 		} else { // state == "absent"
 			msg = fmt.Sprintf("line removed from %s", input.Path)
 		}
-		return LineinfileOutput{
+		output := LineinfileOutput{
 			Msg:                msg,
 			Diff:               pkg.RevertableChange[string]{Before: originalContent, After: finalContent},
 			OriginalFileExists: originalFileExists,
-			OriginalMode:       originalMode, // Store original mode if fetched
-		}, nil
+			OriginalMode:       originalMode,
+			ShouldShowDiff:     shouldShowDiff(closure),
+		}
+
+		return output, nil
 	}
 
 	// No modifications made
@@ -354,6 +386,7 @@ func (lm LineinfileModule) Execute(params pkg.ConcreteModuleInputProvider, closu
 		Diff:               pkg.RevertableChange[string]{Before: originalContent, After: originalContent},
 		OriginalFileExists: originalFileExists,
 		OriginalMode:       originalMode,
+		ShouldShowDiff:     shouldShowDiff(closure),
 	}, nil
 }
 
@@ -374,7 +407,10 @@ func (lm LineinfileModule) Revert(params pkg.ConcreteModuleInputProvider, closur
 
 	if !prevOutput.Diff.Changed() && prevOutput.OriginalFileExists {
 		common.DebugOutput("Lineinfile Revert: No changes to revert for %s (diff not changed and file existed)", input.Path)
-		return LineinfileOutput{Msg: "no changes to revert"}, nil
+		return LineinfileOutput{
+			Msg:            "no changes to revert",
+			ShouldShowDiff: shouldShowDiff(closure),
+		}, nil
 	}
 
 	// If the file was created by the Execute step, revert is to delete it.
@@ -384,7 +420,10 @@ func (lm LineinfileModule) Revert(params pkg.ConcreteModuleInputProvider, closur
 		if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -f %s", fmt.Sprintf("%q", input.Path)), runAs); err != nil {
 			return nil, fmt.Errorf("revert failed: could not remove created file %s: %w", input.Path, err)
 		}
-		return LineinfileOutput{Msg: "reverted file creation"}, nil
+		return LineinfileOutput{
+			Msg:            "reverted file creation",
+			ShouldShowDiff: shouldShowDiff(closure),
+		}, nil
 	}
 
 	// File existed before, revert its content (and potentially mode if we tracked it)
@@ -405,6 +444,7 @@ func (lm LineinfileModule) Revert(params pkg.ConcreteModuleInputProvider, closur
 		Diff:               pkg.RevertableChange[string]{Before: prevOutput.Diff.After, After: prevOutput.Diff.Before},
 		OriginalFileExists: true,                    // It existed before Execute and still exists (content reverted).
 		OriginalMode:       prevOutput.OriginalMode, // Carry over if we had it
+		ShouldShowDiff:     shouldShowDiff(closure),
 	}, nil
 }
 
