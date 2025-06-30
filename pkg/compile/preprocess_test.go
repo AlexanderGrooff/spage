@@ -6,6 +6,17 @@ import (
 	"testing"
 )
 
+// Helper to filter out the root block for task count assertions
+func countTasks(blocks []map[string]interface{}) int {
+	count := 0
+	for _, block := range blocks {
+		if isRoot, ok := block["is_root"]; !ok || !isRoot.(bool) {
+			count++
+		}
+	}
+	return count
+}
+
 func TestProcessPlaybookRoot(t *testing.T) {
 	// Create a temporary test directory
 	tmpDir, err := os.MkdirTemp("", "spage-test")
@@ -40,8 +51,8 @@ func TestProcessPlaybookRoot(t *testing.T) {
 	if err != nil {
 		t.Errorf("processPlaybookRoot failed for roles: %v", err)
 	}
-	if len(result1) != 1 {
-		t.Errorf("Expected 1 task from role, got %d", len(result1))
+	if taskCount := countTasks(result1); taskCount != 1 {
+		t.Errorf("Expected 1 task from role, got %d", taskCount)
 	}
 
 	// Test case 2: Playbook with tasks
@@ -60,8 +71,8 @@ func TestProcessPlaybookRoot(t *testing.T) {
 	if err != nil {
 		t.Errorf("processPlaybookRoot failed for tasks: %v", err)
 	}
-	if len(result2) != 1 {
-		t.Errorf("Expected 1 direct task, got %d", len(result2))
+	if taskCount := countTasks(result2); taskCount != 1 {
+		t.Errorf("Expected 1 direct task, got %d", taskCount)
 	}
 
 	// Test case 3: Playbook with both roles and tasks
@@ -81,8 +92,8 @@ func TestProcessPlaybookRoot(t *testing.T) {
 	if err != nil {
 		t.Errorf("processPlaybookRoot failed for roles and tasks: %v", err)
 	}
-	if len(result3) != 2 {
-		t.Errorf("Expected 2 tasks (1 from role, 1 direct), got %d", len(result3))
+	if taskCount := countTasks(result3); taskCount != 2 {
+		t.Errorf("Expected 2 tasks (1 from role, 1 direct), got %d", taskCount)
 	}
 
 	// Test case 4: Invalid input - missing hosts
@@ -100,6 +111,81 @@ func TestProcessPlaybookRoot(t *testing.T) {
 	_, err = processPlaybookRoot(playbook4, tmpDir)
 	if err == nil {
 		t.Error("Expected error for missing hosts field, got nil")
+	}
+
+	// Test case 5: Playbook with pre_tasks, tasks, and post_tasks
+	playbook5 := map[string]interface{}{
+		"name":  "Test playbook with pre/post tasks",
+		"hosts": "all",
+		"pre_tasks": []interface{}{
+			map[string]interface{}{
+				"name":  "Pre task",
+				"shell": "echo 'Pre'",
+			},
+		},
+		"tasks": []interface{}{
+			map[string]interface{}{
+				"name":  "Main task",
+				"shell": "echo 'Main'",
+			},
+		},
+		"post_tasks": []interface{}{
+			map[string]interface{}{
+				"name":  "Post task",
+				"shell": "echo 'Post'",
+			},
+		},
+	}
+
+	result5, err := processPlaybookRoot(playbook5, tmpDir)
+	if err != nil {
+		t.Errorf("processPlaybookRoot failed for pre/post tasks: %v", err)
+	}
+	if taskCount := countTasks(result5); taskCount != 3 {
+		t.Errorf("Expected 3 tasks (1 pre, 1 main, 1 post), got %d", taskCount)
+	}
+
+	// Check order: pre_task, task, post_task
+	if result5[1]["name"] != "Pre task" {
+		t.Errorf("Expected first task to be pre_task, got %s", result5[1]["name"])
+	}
+	if result5[2]["name"] != "Main task" {
+		t.Errorf("Expected second task to be main task, got %s", result5[2]["name"])
+	}
+	if result5[3]["name"] != "Post task" {
+		t.Errorf("Expected third task to be post_task, got %s", result5[3]["name"])
+	}
+
+	// Test case 6: Playbook with roles, pre_tasks, tasks, and post_tasks
+	playbook6 := map[string]interface{}{
+		"name":       "Test playbook with everything",
+		"hosts":      "all",
+		"roles":      []interface{}{"testrole"},
+		"pre_tasks":  []interface{}{map[string]interface{}{"name": "Pre task", "shell": "echo 'Pre'"}},
+		"tasks":      []interface{}{map[string]interface{}{"name": "Main task", "shell": "echo 'Main'"}},
+		"post_tasks": []interface{}{map[string]interface{}{"name": "Post task", "shell": "echo 'Post'"}},
+	}
+
+	result6, err := processPlaybookRoot(playbook6, tmpDir)
+	if err != nil {
+		t.Errorf("processPlaybookRoot failed for everything: %v", err)
+	}
+	if taskCount := countTasks(result6); taskCount != 4 {
+		t.Errorf("Expected 4 tasks (1 role, 1 pre, 1 main, 1 post), got %d", taskCount)
+	}
+
+	// Check order: role, pre_task, task, post_task
+	if result6[1]["name"] != "Role task 1" {
+		t.Errorf("Expected first task to be from role, got %s", result6[1]["name"])
+	}
+	if result6[2]["name"] != "Pre task" {
+		t.Errorf("Expected second task to be pre_task, got %s", result6[2]["name"])
+	}
+	if result6[3]["name"] != "Main task" {
+		t.Errorf("Expected third task to be main task, got %s", result6[3]["name"])
+	}
+	if result6[4]["name"] != "Post task" {
+		t.Errorf("Expected fourth task to be post_task, got %s", result6[4]["name"])
 	}
 }
 
@@ -135,9 +221,15 @@ func TestPreprocessPlaybook(t *testing.T) {
 
 - name: Root playbook 2
   hosts: group2
+  pre_tasks:
+    - name: Pre-task in playbook 2
+      shell: echo "pre2"
   tasks:
     - name: Direct task
       shell: echo "Direct task"
+  post_tasks:
+    - name: Post-task in playbook 2
+      shell: echo "post2"
 `
 	playbookPath := filepath.Join(tmpDir, "playbook.yml")
 	if err := os.WriteFile(playbookPath, []byte(playbookContent), 0644); err != nil {
@@ -155,20 +247,27 @@ func TestPreprocessPlaybook(t *testing.T) {
 		t.Fatalf("PreprocessPlaybook failed: %v", err)
 	}
 
-	// We expect 2 tasks total (1 from role, 1 direct)
-	if len(processedBlocks) != 2 {
-		t.Errorf("Expected 2 processed blocks, got %d", len(processedBlocks))
+	// We expect 6 blocks total:
+	// Playbook 1: root block, role task (2)
+	// Playbook 2: root block, pre-task, task, post-task (4)
+	// Total: 2 + 4 = 6
+	if len(processedBlocks) != 6 {
+		t.Errorf("Expected 6 processed blocks, got %d", len(processedBlocks))
 	}
 
-	// Check first task is from the role
-	task1, hasShell1 := processedBlocks[0]["shell"]
-	if !hasShell1 || task1 != "echo \"From role\"" {
-		t.Errorf("Expected first task to be from role, got %v", processedBlocks[0])
+	// Check tasks from playbook 1
+	if name := processedBlocks[1]["name"]; name != "Role task 1" {
+		t.Errorf("Expected task at index 1 to be from role, got %v", name)
 	}
 
-	// Check second task is the direct task
-	task2, hasShell2 := processedBlocks[1]["shell"]
-	if !hasShell2 || task2 != "echo \"Direct task\"" {
-		t.Errorf("Expected second task to be direct task, got %v", processedBlocks[1])
+	// Check tasks from playbook 2 and their order
+	if name := processedBlocks[3]["name"]; name != "Pre-task in playbook 2" {
+		t.Errorf("Expected task at index 3 to be pre-task, got %v", name)
+	}
+	if name := processedBlocks[4]["name"]; name != "Direct task" {
+		t.Errorf("Expected task at index 4 to be main task, got %v", name)
+	}
+	if name := processedBlocks[5]["name"]; name != "Post-task in playbook 2" {
+		t.Errorf("Expected task at index 5 to be post-task, got %v", name)
 	}
 }

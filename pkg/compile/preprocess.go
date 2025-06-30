@@ -211,6 +211,24 @@ func processPlaybookRoot(playbookRoot map[string]interface{}, currentBasePath st
 		}
 	}
 
+	// Process 'pre_tasks' section if it exists
+	if preTasks, hasPreTasks := playbookRoot["pre_tasks"]; hasPreTasks {
+		taskList, ok := preTasks.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("invalid 'pre_tasks' section: expected list, got %T", preTasks)
+		}
+
+		for _, taskEntry := range taskList {
+			taskMap, ok := taskEntry.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("invalid task entry: expected map, got %T", taskEntry)
+			}
+
+			// Each task is already a map, so just add it directly to the result
+			result = append(result, taskMap)
+		}
+	}
+
 	// Process 'tasks' section if it exists
 	if tasks, hasTasks := playbookRoot["tasks"]; hasTasks {
 		tasksList, ok := tasks.([]interface{})
@@ -219,6 +237,24 @@ func processPlaybookRoot(playbookRoot map[string]interface{}, currentBasePath st
 		}
 
 		for _, taskEntry := range tasksList {
+			taskMap, ok := taskEntry.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("invalid task entry: expected map, got %T", taskEntry)
+			}
+
+			// Each task is already a map, so just add it directly to the result
+			result = append(result, taskMap)
+		}
+	}
+
+	// Process 'post_tasks' section if it exists
+	if postTasks, haspostTasks := playbookRoot["post_tasks"]; haspostTasks {
+		taskList, ok := postTasks.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("invalid 'post_tasks' section: expected list, got %T", postTasks)
+		}
+
+		for _, taskEntry := range taskList {
 			taskMap, ok := taskEntry.(map[string]interface{})
 			if !ok {
 				return nil, fmt.Errorf("invalid task entry: expected map, got %T", taskEntry)
