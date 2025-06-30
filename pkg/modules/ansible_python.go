@@ -152,19 +152,7 @@ func (m AnsiblePythonModule) executePythonModule(params AnsiblePythonInput, clos
 	}
 	defer os.RemoveAll(tempDir)
 
-	// Template the arguments with current facts
-	templatedArgs := make(map[string]interface{})
-	for k, v := range params.Args {
-		if strVal, ok := v.(string); ok {
-			templated, err := pkg.TemplateString(strVal, closure)
-			if err != nil {
-				return nil, fmt.Errorf("failed to template argument %s: %w", k, err)
-			}
-			templatedArgs[k] = templated
-		} else {
-			templatedArgs[k] = v
-		}
-	}
+	templatedArgs := params.Args
 
 	// Create the ansible-playbook YAML file
 	playbook := map[string]interface{}{

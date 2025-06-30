@@ -18,7 +18,7 @@ type Inventory struct {
 }
 
 type Host struct {
-	Name    string
+	Name    string `json:"name"`
 	Host    string `yaml:"host"`
 	Vars    map[string]interface{}
 	Groups  map[string]string `yaml:"groups"`

@@ -35,3 +35,15 @@
           - not collection_result.failed
           - collection_result.results.python_version_info
         fail_msg: "The collection module should have succeeded"
+
+    - name: test collection module with jinja template
+      community.general.python_requirements_info:
+        dependencies: ["{{ some_module }}"]
+      vars:
+        some_module: "ansible-core"
+      register: collection_result_jinja
+
+    - name: Verify collection result
+      assert:
+        that:
+          - not collection_result_jinja.failed

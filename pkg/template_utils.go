@@ -116,8 +116,22 @@ func ProcessRecursive(originalVal reflect.Value, closure *Closure) (reflect.Valu
 		}
 		return newMapInstance, nil
 
+	case reflect.Interface:
+		if originalVal.IsNil() {
+			return reflect.Zero(originalVal.Type()), nil
+		}
+		// Recurse on the concrete value stored within the interface.
+		elemVal := originalVal.Elem()
+		processedElemVal, err := ProcessRecursive(elemVal, closure)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		// The parent setter (e.g., for a map or slice) will handle re-wrapping the processed value
+		// into an interface{} if needed.
+		return processedElemVal, nil
+
 	default:
-		// For basic types (int, bool, float, interface{}, etc.), return the original value.
+		// For basic types (int, bool, float, etc.), return the original value.
 		// The .Set() method on the parent structure/slice/map will handle copying the value.
 		return originalVal, nil
 	}

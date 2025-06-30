@@ -189,10 +189,11 @@ func (c *HostContext) RunCommand(command, username string) (int, string, string,
 }
 
 func EvaluateExpression(s string, closure *Closure) (interface{}, error) {
-	res, err := jinja.EvaluateExpression(s, closure.GetFacts())
-	common.DebugOutput("Evaluated expression %q -> %v with facts: %v. Error: %v", s, res, closure.GetFacts(), err)
+	context := closure.GetFacts()
+	res, err := jinja.EvaluateExpression(s, context)
+	common.DebugOutput("Evaluated expression %q -> %v with facts: %v. Error: %v", s, res, context, err)
 	if err != nil {
-		return nil, fmt.Errorf("failed to evaluate expression: %v", err)
+		return nil, fmt.Errorf("failed to evaluate expression: %w", err)
 	}
 	return res, nil
 }
@@ -202,13 +203,13 @@ func TemplateString(s string, closure *Closure) (string, error) {
 	if s == "" {
 		return "", nil
 	}
-	facts := closure.GetFacts()
-	res, err := jinja.TemplateString(s, facts)
+	context := closure.GetFacts()
+	res, err := jinja.TemplateString(s, context)
 	if err != nil {
-		return "", fmt.Errorf("failed to template string: %v", err)
+		return "", fmt.Errorf("failed to template string: %w", err)
 	}
 	if s != res {
-		common.DebugOutput("Templated %q into %q with facts: %v", s, res, closure.GetFacts())
+		common.DebugOutput("Templated %q into %q with facts: %v", s, res, context)
 	}
 	return res, nil
 }
