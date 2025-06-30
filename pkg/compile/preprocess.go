@@ -242,10 +242,12 @@ var preprocessorRegistry map[string]preprocessorFunc
 // init populates the preprocessorRegistry.
 func init() {
 	preprocessorRegistry = map[string]preprocessorFunc{
-		"include":      processIncludeDirective,
-		"import_tasks": processImportTasksDirective,
-		"include_role": processIncludeRoleDirective,
-		"import_role":  processImportRoleDirective,
+		"include":          processIncludeDirective,
+		"include_playbook": processIncludeDirective,
+		"import_tasks":     processImportTasksDirective,
+		"import_playbook":  processImportTasksDirective,
+		"include_role":     processIncludeRoleDirective,
+		"import_role":      processImportRoleDirective,
 		// Add other meta directives here in the future
 	}
 }
