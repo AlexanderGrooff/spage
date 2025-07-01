@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -15,6 +15,7 @@ import (
 
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
@@ -61,6 +62,104 @@ type SpageRunOnceLoopActivityResult struct {
 	TaskName          string
 	LoopResults       []SpageActivityResult // Results for each loop iteration
 	HostFactsSnapshot map[string]interface{}
+}
+
+// TemporalResultChannel implements ResultChannel for Temporal workflow channels
+type TemporalResultChannel struct {
+	ctx workflow.Context
+	ch  workflow.ReceiveChannel
+}
+
+func NewTemporalResultChannel(ctx workflow.Context, ch workflow.ReceiveChannel) *TemporalResultChannel {
+	return &TemporalResultChannel{ctx: ctx, ch: ch}
+}
+
+func (c *TemporalResultChannel) ReceiveResult() (pkg.TaskResult, bool, error) {
+	var result pkg.TaskResult
+	more := c.ch.Receive(c.ctx, &result)
+	return result, more, nil
+}
+
+func (c *TemporalResultChannel) IsClosed() bool {
+	// For Temporal channels, we handle this differently in the selector pattern
+	return false
+}
+
+// TemporalErrorChannel implements ErrorChannel for Temporal workflow channels
+type TemporalErrorChannel struct {
+	ctx workflow.Context
+	ch  workflow.ReceiveChannel
+}
+
+func NewTemporalErrorChannel(ctx workflow.Context, ch workflow.ReceiveChannel) *TemporalErrorChannel {
+	return &TemporalErrorChannel{ctx: ctx, ch: ch}
+}
+
+func (c *TemporalErrorChannel) ReceiveError() (error, bool, error) {
+	var err error
+	more := c.ch.Receive(c.ctx, &err)
+	return err, more, nil
+}
+
+func (c *TemporalErrorChannel) IsClosed() bool {
+	return false
+}
+
+// TemporalLogger implements Logger for Temporal workflow logging
+type TemporalLogger struct {
+	logger log.Logger
+}
+
+func NewTemporalLogger(ctx workflow.Context) *TemporalLogger {
+	return &TemporalLogger{logger: workflow.GetLogger(ctx)}
+}
+
+func (l *TemporalLogger) Error(msg string, args ...interface{}) {
+	l.logger.Error(msg, args...)
+}
+
+func (l *TemporalLogger) Warn(msg string, args ...interface{}) {
+	l.logger.Warn(msg, args...)
+}
+
+func (l *TemporalLogger) Info(msg string, args ...interface{}) {
+	l.logger.Info(msg, args...)
+}
+
+func (l *TemporalLogger) Debug(msg string, args ...interface{}) {
+	l.logger.Debug(msg, args...)
+}
+
+// FormattedGenericOutput preserves the formatted string output from modules
+// while still implementing the ModuleOutput interface and providing map access
+type FormattedGenericOutput struct {
+	formattedString string
+	moduleMap       map[string]interface{}
+	changed         bool
+}
+
+// String returns the already formatted string from the original module
+func (f FormattedGenericOutput) String() string {
+	return f.formattedString
+}
+
+// Changed returns the changed status from the original module
+func (f FormattedGenericOutput) Changed() bool {
+	return f.changed
+}
+
+// Facts returns the module output map for fact registration
+func (f FormattedGenericOutput) Facts() map[string]interface{} {
+	return f.moduleMap
+}
+
+// NewFormattedGenericOutput creates a FormattedGenericOutput from activity result
+func NewFormattedGenericOutput(output string, moduleMap map[string]interface{}, changed bool) FormattedGenericOutput {
+	return FormattedGenericOutput{
+		formattedString: output,
+		moduleMap:       moduleMap,
+		changed:         changed,
+	}
 }
 
 // ExecuteSpageTaskActivity is the generic activity that runs a Spage task.
@@ -462,7 +561,7 @@ func (r *TemporalTaskRunner) ExecuteTask(execCtx workflow.Context, task pkg.Task
 		Changed:                 activityOutput.Changed,
 		Duration:                duration,
 		ExecutionSpecificOutput: activityOutput, // Store the full SpageActivityResult
-		Output:                  GenericOutput(activityOutput.ModuleOutputMap),
+		Output:                  NewFormattedGenericOutput(activityOutput.Output, activityOutput.ModuleOutputMap, activityOutput.Changed),
 	}
 }
 
@@ -564,7 +663,7 @@ func (r *TemporalTaskRunner) RevertTask(execCtx workflow.Context, task pkg.Task,
 		Changed:                 activityOutput.Changed,
 		Duration:                duration,
 		ExecutionSpecificOutput: activityOutput, // Store the full SpageActivityResult
-		Output:                  GenericOutput(activityOutput.ModuleOutputMap),
+		Output:                  NewFormattedGenericOutput(activityOutput.Output, activityOutput.ModuleOutputMap, activityOutput.Changed),
 	}
 }
 
@@ -827,7 +926,7 @@ func (e *TemporalGraphExecutor) executeRunOnceWithAllLoops(
 			Changed:                 loopResult.Changed,
 			Duration:                duration / time.Duration(len(loopItems)), // Approximate duration per loop
 			ExecutionSpecificOutput: loopResult,
-			Output:                  GenericOutput(loopResult.ModuleOutputMap),
+			Output:                  NewFormattedGenericOutput(loopResult.Output, loopResult.ModuleOutputMap, loopResult.Changed),
 		}
 
 		// Create results for all hosts based on this loop iteration
@@ -988,112 +1087,43 @@ func (e *TemporalGraphExecutor) processLevelResults(
 	recapStats map[string]map[string]int,
 ) (bool, []pkg.TaskResult, error) {
 	ctx := e.Runner.WorkflowCtx
-	logger := workflow.GetLogger(ctx)
 
-	var levelHardErrored bool
-	resultsReceived := 0
-	var dispatchError error
-	resultsChActive := true
-	errChActive := true
-	var processedTasksOnLevel []pkg.TaskResult // To store task results for this level
+	// Create adapters for the shared function
+	resultsChAdapter := NewTemporalResultChannel(ctx, resultsCh)
+	errChAdapter := NewTemporalErrorChannel(ctx, errCh)
+	logger := NewTemporalLogger(ctx)
 
-	selector := workflow.NewSelector(ctx)
-
-	selector.AddReceive(errCh, func(c workflow.ReceiveChannel, more bool) {
-		if !more {
-			errChActive = false
-			return
-		}
-		var errFromDispatch error
-		c.Receive(ctx, &errFromDispatch)
-		if errFromDispatch != nil {
-			dispatchError = errFromDispatch
-			logger.Error("Dispatch error received from loadLevelTasks", "level", executionLevel, "error", dispatchError)
-			levelHardErrored = true
-		}
-	})
-
-	selector.AddReceive(resultsCh, func(c workflow.ReceiveChannel, more bool) {
-		if !more {
-			resultsChActive = false
-			return
-		}
-
-		var result pkg.TaskResult
-		c.Receive(ctx, &result)
-		resultsReceived++
-		processedTasksOnLevel = append(processedTasksOnLevel, result) // Store the result
-
+	// Create the fact processing callback for temporal executor
+	onResult := func(result pkg.TaskResult) error {
 		if result.Closure == nil || result.Closure.HostContext == nil || result.Closure.HostContext.Host == nil {
-			logger.Error("Received TaskResult with nil Closure/HostContext/Host", "level", executionLevel, "result_task_name", result.Task.Name)
-			levelHardErrored = true
-			if dispatchError == nil {
-				dispatchError = fmt.Errorf("corrupted task result for task %s on level %d", result.Task.Name, executionLevel)
-			}
-			return
+			return fmt.Errorf("received TaskResult with nil Closure/HostContext/Host for task %s on level %d", result.Task.Name, executionLevel)
 		}
 
 		hostname := result.Closure.HostContext.Host.Name
 		taskName := result.Task.Name
 
-		if _, exists := recapStats[hostname]; !exists {
-			recapStats[hostname] = map[string]int{"ok": 0, "changed": 0, "failed": 0, "skipped": 0, "ignored": 0}
-		}
-
 		activitySpecificOutput, ok := result.ExecutionSpecificOutput.(SpageActivityResult)
 		if !ok {
 			logger.Error("TaskResult.ExecutionSpecificOutput is not of type SpageActivityResult", "task", taskName, "host", hostname)
-		} else {
-			errFactProcessing := processActivityResultAndRegisterFacts(ctx, activitySpecificOutput, taskName, hostname, hostFacts)
-			if errFactProcessing != nil {
-				logger.Error("Task processing reported an error after fact registration", "task", taskName, "host", hostname, "error", errFactProcessing)
-				levelHardErrored = true
-			}
+			return nil // Don't fail for this, just log and continue
 		}
 
-		var ignoredErrWrapper *pkg.IgnoredTaskError
-		isIgnoredError := errors.As(result.Error, &ignoredErrWrapper)
-
-		if result.Error != nil && !isIgnoredError {
-			logger.Error("Task failed (from TaskResult)", "level", executionLevel, "task", taskName, "host", hostname, "error", result.Error)
-			levelHardErrored = true
-			recapStats[hostname]["failed"]++
-		} else if result.Error != nil && isIgnoredError {
-			logger.Warn("Task failed but was ignored (from TaskResult)", "level", executionLevel, "task", taskName, "host", hostname, "original_error", ignoredErrWrapper.Unwrap())
-			recapStats[hostname]["ignored"]++
-		} else {
-			if result.Status == pkg.TaskStatusChanged {
-				recapStats[hostname]["changed"]++
-			} else if result.Status == pkg.TaskStatusSkipped {
-				recapStats[hostname]["skipped"]++
-			} else {
-				recapStats[hostname]["ok"]++
-			}
-		}
-	})
-
-	for (resultsChActive || errChActive) && resultsReceived < numExpectedResultsOnLevel && dispatchError == nil {
-		selector.Select(ctx)
+		return processActivityResultAndRegisterFacts(ctx, activitySpecificOutput, taskName, hostname, hostFacts)
 	}
 
-	if dispatchError != nil {
-		logger.Error("Level processing stopped due to error.", "level", executionLevel, "error", dispatchError, "results_received", resultsReceived)
-		return true, processedTasksOnLevel, dispatchError
-	}
+	levelHardErrored, processedTasksOnLevel, err := SharedProcessLevelResults(
+		resultsChAdapter,
+		errChAdapter,
+		logger,
+		executionLevel,
+		cfg,
+		numExpectedResultsOnLevel,
+		recapStats,
+		nil,      // No execution history for temporal executor
+		onResult, // Fact processing callback
+	)
 
-	if !resultsChActive && resultsReceived < numExpectedResultsOnLevel {
-		errMsg := fmt.Errorf("level %d results channel closed prematurely: got %d, expected %d. loadLevelTasks might have an issue", executionLevel, resultsReceived, numExpectedResultsOnLevel)
-		logger.Error(errMsg.Error())
-		return true, processedTasksOnLevel, errMsg
-	}
-
-	if resultsReceived < numExpectedResultsOnLevel {
-		errMsg := fmt.Errorf("level %d did not receive all expected results: got %d, expected %d. resultsCh may have closed prematurely or loadLevelTasks did not send all results", executionLevel, resultsReceived, numExpectedResultsOnLevel)
-		logger.Error(errMsg.Error())
-		return true, processedTasksOnLevel, errMsg
-	}
-
-	return levelHardErrored, processedTasksOnLevel, nil
+	return levelHardErrored, processedTasksOnLevel, err
 }
 
 func (e *TemporalGraphExecutor) Execute(
@@ -1429,7 +1459,7 @@ type RunSpageTemporalWorkerAndWorkflowOptions struct {
 func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOptions) {
 	spageAppConfig := opts.LoadedConfig
 	if spageAppConfig == nil {
-		log.Println("Warning: No Spage configuration provided to RunSpageTemporalWorkerAndWorkflow. Using a default config.")
+		common.LogInfo("Warning: No Spage configuration provided to RunSpageTemporalWorkerAndWorkflow. Using a default config.", map[string]interface{}{})
 		spageAppConfig = &config.Config{
 			ExecutionMode: "parallel",
 			Logging:       config.LoggingConfig{Format: "plain", Level: "info"},
@@ -1441,30 +1471,30 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 			},
 		}
 	} else {
-		log.Println("Using provided Spage configuration.")
+		common.LogInfo("Using provided Spage configuration.", map[string]interface{}{"config": spageAppConfig})
 	}
 
 	clientOpts := client.Options{}
 	if spageAppConfig.Temporal.Address != "" {
 		clientOpts.HostPort = spageAppConfig.Temporal.Address
-		log.Printf("Temporal client configured with address: %s", spageAppConfig.Temporal.Address)
+		common.LogInfo("Temporal client configured with address", map[string]interface{}{"address": spageAppConfig.Temporal.Address})
 	} else {
-		log.Println("Temporal client using default address (localhost:7233 or TEMPORAL_GRPC_ENDPOINT).")
+		common.LogInfo("Temporal client using default address (localhost:7233 or TEMPORAL_GRPC_ENDPOINT).", map[string]interface{}{})
 	}
 
 	temporalClient, err := client.Dial(clientOpts)
 	if err != nil {
-		log.Fatalf("Unable to create Temporal client: %v", err)
+		common.LogError("Unable to create Temporal client", map[string]interface{}{"error": err})
+		return
 	}
 	defer temporalClient.Close()
-	log.Println("Temporal client connected.")
 
 	taskQueue := spageAppConfig.Temporal.TaskQueue
 	if taskQueue == "" {
 		taskQueue = "SPAGE_DEFAULT_TASK_QUEUE"
-		log.Printf("TaskQueue from config is empty, using emergency default: %s", taskQueue)
+		common.LogInfo("TaskQueue from config is empty, using emergency default", map[string]interface{}{"task_queue": taskQueue})
 	} else {
-		log.Printf("Using Temporal TaskQueue from config: %s", taskQueue)
+		common.LogInfo("Using Temporal TaskQueue from config", map[string]interface{}{"task_queue": taskQueue})
 	}
 	myWorker := worker.New(temporalClient, taskQueue, worker.Options{})
 
@@ -1473,18 +1503,18 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 	myWorker.RegisterActivity(RevertSpageTaskActivity)         // Register the new activity
 	myWorker.RegisterActivity(ExecuteSpageRunOnceLoopActivity) // Register the run_once loop activity
 
-	log.Printf("Starting Temporal worker on task queue '%s'...", taskQueue)
+	common.LogInfo("Starting Temporal worker on task queue", map[string]interface{}{"task_queue": taskQueue})
 	if err := myWorker.Start(); err != nil {
-		log.Fatalf("Unable to start worker: %v", err)
+		common.LogError("Unable to start worker", map[string]interface{}{"error": err})
+		return
 	}
-	log.Println("Worker started successfully.")
 
 	if spageAppConfig.Temporal.Trigger {
-		log.Println("Attempting to start the SpageTemporalWorkflow based on configuration...")
+		common.LogInfo("Attempting to start the SpageTemporalWorkflow based on configuration...", map[string]interface{}{})
 		workflowIDPrefix := opts.WorkflowIDPrefix
 		if workflowIDPrefix == "" {
 			workflowIDPrefix = "spage-workflow"
-			log.Printf("WorkflowIDPrefix from config is empty, using emergency default: %s", workflowIDPrefix)
+			common.LogInfo("WorkflowIDPrefix from config is empty, using emergency default", map[string]interface{}{"workflow_id_prefix": workflowIDPrefix})
 		}
 		workflowID := workflowIDPrefix + "-" + uuid.New().String()
 
@@ -1501,23 +1531,26 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 
 		we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, SpageTemporalWorkflow, opts.Graph, opts.InventoryPath, spageAppConfig)
 		if err != nil {
-			log.Fatalf("Unable to execute SpageTemporalWorkflow: %v", err)
+			common.LogError("Unable to execute SpageTemporalWorkflow", map[string]interface{}{"error": err})
+			return
 		}
-		log.Println("Successfully started SpageTemporalWorkflow", "WorkflowID", we.GetID(), "RunID", we.GetRunID())
+		common.LogInfo("Successfully started SpageTemporalWorkflow", map[string]interface{}{"workflow_id": we.GetID(), "run_id": we.GetRunID()})
 
-		log.Println("Waiting for workflow to complete...", "WorkflowID", we.GetID())
+		common.LogInfo("Waiting for workflow to complete...", map[string]interface{}{"workflow_id": we.GetID()})
 		err = we.Get(context.Background(), nil)
 		if err != nil {
-			log.Fatalf("Workflow %s completed with error: %v", we.GetID(), err)
+			common.LogError("Workflow completed with error", map[string]interface{}{"workflow_id": we.GetID(), "error": err})
+			myWorker.Stop()
+			os.Exit(1)
 		} else {
-			log.Println("Workflow completed successfully.", "WorkflowID", we.GetID())
+			common.LogInfo("Workflow completed successfully.", map[string]interface{}{"workflow_id": we.GetID()})
 			myWorker.Stop()
 		}
 	} else {
-		log.Println("Application setup complete. Worker is running. Press Ctrl+C to exit.")
+		common.LogInfo("Application setup complete. Worker is running. Press Ctrl+C to exit.", map[string]interface{}{})
 		<-worker.InterruptCh()
-		log.Println("Shutting down worker...")
+		common.LogInfo("Shutting down worker...", map[string]interface{}{"task_queue": taskQueue})
 		myWorker.Stop()
-		log.Println("Worker stopped.")
+		common.LogInfo("Worker stopped.", map[string]interface{}{"task_queue": taskQueue})
 	}
 }

@@ -1,12 +1,16 @@
 package executor
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
 	"strings"
 
 	"github.com/AlexanderGrooff/spage/pkg"
+	"github.com/AlexanderGrooff/spage/pkg/common"
+	"github.com/AlexanderGrooff/spage/pkg/config"
 )
 
 func InitializeRecapStats(hostContexts map[string]*pkg.HostContext) map[string]map[string]int {
@@ -269,4 +273,390 @@ func PPrintOutput(output pkg.ModuleOutput, err error) {
 		// Error is usually printed by the caller context, so no duplicate print here.
 		// fmt.Printf("Error: %v\n", err) // Avoid double printing of error message
 	}
+}
+
+// ResultChannel abstracts over different channel types used by local and temporal executors
+type ResultChannel interface {
+	ReceiveResult() (pkg.TaskResult, bool, error)
+	IsClosed() bool
+}
+
+// ErrorChannel abstracts over different error channel types
+type ErrorChannel interface {
+	ReceiveError() (error, bool, error)
+	IsClosed() bool
+}
+
+// Logger abstracts over different logging implementations
+type Logger interface {
+	Error(msg string, args ...interface{})
+	Warn(msg string, args ...interface{})
+	Info(msg string, args ...interface{})
+	Debug(msg string, args ...interface{})
+}
+
+// LocalResultChannel implements ResultChannel for standard Go channels
+type LocalResultChannel struct {
+	ch chan pkg.TaskResult
+}
+
+func NewLocalResultChannel(ch chan pkg.TaskResult) *LocalResultChannel {
+	return &LocalResultChannel{ch: ch}
+}
+
+func (c *LocalResultChannel) ReceiveResult() (pkg.TaskResult, bool, error) {
+	result, ok := <-c.ch
+	return result, ok, nil
+}
+
+func (c *LocalResultChannel) IsClosed() bool {
+	// For local channels, we can't easily check if closed without receiving
+	// This will be handled by the receive loop
+	return false
+}
+
+// LocalErrorChannel implements ErrorChannel for standard Go channels
+type LocalErrorChannel struct {
+	ch chan error
+}
+
+func NewLocalErrorChannel(ch chan error) *LocalErrorChannel {
+	return &LocalErrorChannel{ch: ch}
+}
+
+func (c *LocalErrorChannel) ReceiveError() (error, bool, error) {
+	err, ok := <-c.ch
+	return err, ok, nil
+}
+
+func (c *LocalErrorChannel) IsClosed() bool {
+	return false
+}
+
+// ContextAwareResultChannel wraps a LocalResultChannel to handle context cancellation
+type ContextAwareResultChannel struct {
+	ctx context.Context
+	ch  *LocalResultChannel
+}
+
+func NewContextAwareResultChannel(ctx context.Context, ch *LocalResultChannel) *ContextAwareResultChannel {
+	return &ContextAwareResultChannel{ctx: ctx, ch: ch}
+}
+
+func (c *ContextAwareResultChannel) ReceiveResult() (pkg.TaskResult, bool, error) {
+	select {
+	case <-c.ctx.Done():
+		return pkg.TaskResult{}, false, c.ctx.Err()
+	default:
+		return c.ch.ReceiveResult()
+	}
+}
+
+func (c *ContextAwareResultChannel) IsClosed() bool {
+	select {
+	case <-c.ctx.Done():
+		return true
+	default:
+		return c.ch.IsClosed()
+	}
+}
+
+// ContextAwareErrorChannel wraps a LocalErrorChannel to handle context cancellation
+type ContextAwareErrorChannel struct {
+	ctx context.Context
+	ch  *LocalErrorChannel
+}
+
+func NewContextAwareErrorChannel(ctx context.Context, ch *LocalErrorChannel) *ContextAwareErrorChannel {
+	return &ContextAwareErrorChannel{ctx: ctx, ch: ch}
+}
+
+func (c *ContextAwareErrorChannel) ReceiveError() (error, bool, error) {
+	select {
+	case <-c.ctx.Done():
+		return c.ctx.Err(), true, nil
+	default:
+		return c.ch.ReceiveError()
+	}
+}
+
+func (c *ContextAwareErrorChannel) IsClosed() bool {
+	select {
+	case <-c.ctx.Done():
+		return true
+	default:
+		return c.ch.IsClosed()
+	}
+}
+
+// LocalLogger implements Logger for standard logging
+type LocalLogger struct{}
+
+func NewLocalLogger() *LocalLogger {
+	return &LocalLogger{}
+}
+
+func (l *LocalLogger) Error(msg string, args ...interface{}) {
+	data := make(map[string]interface{})
+	for i := 0; i < len(args); i += 2 {
+		if i+1 < len(args) {
+			if key, ok := args[i].(string); ok {
+				data[key] = args[i+1]
+			}
+		}
+	}
+	common.LogError(msg, data)
+}
+
+func (l *LocalLogger) Warn(msg string, args ...interface{}) {
+	data := make(map[string]interface{})
+	for i := 0; i < len(args); i += 2 {
+		if i+1 < len(args) {
+			if key, ok := args[i].(string); ok {
+				data[key] = args[i+1]
+			}
+		}
+	}
+	common.LogWarn(msg, data)
+}
+
+func (l *LocalLogger) Info(msg string, args ...interface{}) {
+	data := make(map[string]interface{})
+	for i := 0; i < len(args); i += 2 {
+		if i+1 < len(args) {
+			if key, ok := args[i].(string); ok {
+				data[key] = args[i+1]
+			}
+		}
+	}
+	common.LogInfo(msg, data)
+}
+
+func (l *LocalLogger) Debug(msg string, args ...interface{}) {
+	data := make(map[string]interface{})
+	for i := 0; i < len(args); i += 2 {
+		if i+1 < len(args) {
+			if key, ok := args[i].(string); ok {
+				data[key] = args[i+1]
+			}
+		}
+	}
+	common.LogDebug(msg, data)
+}
+
+// ResultProcessor handles the common logic for processing individual task results
+type ResultProcessor struct {
+	ExecutionLevel int
+	Logger         Logger
+	Config         *config.Config
+}
+
+// ProcessSingleResult handles the common logic for processing a single task result
+// Returns whether the result represents a hard error that should stop execution
+func (rp *ResultProcessor) ProcessSingleResult(
+	result pkg.TaskResult,
+	recapStats map[string]map[string]int,
+	executionHistoryLevel map[string]chan pkg.Task,
+) bool {
+	if result.Closure == nil || result.Closure.HostContext == nil || result.Closure.HostContext.Host == nil {
+		rp.Logger.Error("Received TaskResult with nil Closure/HostContext/Host",
+			"level", rp.ExecutionLevel, "result_task_name", result.Task.Name)
+		return true
+	}
+
+	hostname := result.Closure.HostContext.Host.Name
+	task := result.Task
+
+	// Ensure recapStats entry exists for this hostname (e.g., for delegate_to localhost)
+	if _, exists := recapStats[hostname]; !exists {
+		recapStats[hostname] = map[string]int{"ok": 0, "changed": 0, "failed": 0, "skipped": 0, "ignored": 0}
+	}
+
+	// Handle task history recording for local executor
+	if executionHistoryLevel != nil {
+		if hostChan, ok := executionHistoryLevel[hostname]; ok {
+			select {
+			case hostChan <- task:
+			default:
+				rp.Logger.Warn("Failed to record task in history channel (full or closed)",
+					"task", task.Name, "host", hostname)
+			}
+		}
+	}
+
+	// Store task output in history
+	if result.Closure.HostContext.History != nil {
+		result.Closure.HostContext.History.Store(task.Name, result.Output)
+	}
+
+	// Print task header for plain format
+	if rp.Config.Logging.Format == "plain" {
+		fmt.Printf("\nTASK [%s] (%s) ****************************************************\n", task.Name, hostname)
+	}
+
+	logData := map[string]interface{}{
+		"host":     hostname,
+		"task":     task.Name,
+		"duration": result.Duration.String(),
+		"status":   result.Status.String(),
+	}
+
+	var ignoredErrWrapper *pkg.IgnoredTaskError
+	isIgnoredError := errors.As(result.Error, &ignoredErrWrapper)
+	isHardError := false
+
+	if isIgnoredError {
+		originalErr := ignoredErrWrapper.Unwrap()
+		logData["ignored"] = true
+		logData["error_original"] = originalErr.Error()
+		if result.Output != nil {
+			logData["output"] = result.Output.String()
+		}
+		recapStats[hostname]["ignored"]++
+		if result.Failed {
+			recapStats[hostname]["failed"]++
+		}
+
+		if rp.Config.Logging.Format == "plain" {
+			fmt.Printf("failed: [%s] => (ignored error: %v)\n", hostname, originalErr)
+			PPrintOutput(result.Output, originalErr)
+		} else {
+			rp.Logger.Warn("Task failed (ignored)", logData)
+		}
+	} else if result.Error != nil {
+		isHardError = true
+		logData["error"] = result.Error.Error()
+		if result.Output != nil {
+			logData["output"] = result.Output.String()
+		}
+		if result.Failed {
+			recapStats[hostname]["failed"]++
+		}
+
+		if rp.Config.Logging.Format == "plain" {
+			fmt.Printf("failed: [%s] => (%v)\n", hostname, result.Error)
+			PPrintOutput(result.Output, result.Error)
+		} else {
+			rp.Logger.Error("Task failed", logData)
+		}
+	} else {
+		switch result.Status {
+		case pkg.TaskStatusChanged:
+			logData["changed"] = true
+			if result.Output != nil {
+				logData["output"] = result.Output.String()
+			}
+			recapStats[hostname]["changed"]++
+			if rp.Config.Logging.Format == "plain" {
+				fmt.Printf("changed: [%s] => \n%v\n", hostname, result.Output)
+			}
+		case pkg.TaskStatusSkipped:
+			recapStats[hostname]["skipped"]++
+			if rp.Config.Logging.Format == "plain" {
+				fmt.Printf("skipped: [%s]\n", hostname)
+			}
+		default:
+			logData["changed"] = false
+			if result.Output != nil {
+				logData["output"] = result.Output.String()
+			}
+			recapStats[hostname]["ok"]++
+			if rp.Config.Logging.Format == "plain" {
+				fmt.Printf("ok: [%s]\n", hostname)
+			} else {
+				rp.Logger.Info("Task ok", logData)
+			}
+		}
+	}
+
+	return isHardError
+}
+
+// SharedProcessLevelResults contains the common logic for processing level results
+// that can be used by both local and temporal executors
+func SharedProcessLevelResults(
+	resultsCh ResultChannel,
+	errCh ErrorChannel,
+	logger Logger,
+	executionLevel int,
+	cfg *config.Config,
+	numExpectedResultsOnLevel int,
+	recapStats map[string]map[string]int,
+	executionHistoryLevel map[string]chan pkg.Task, // nil for temporal executor
+	onResult func(pkg.TaskResult) error, // additional processing for temporal executor
+) (bool, []pkg.TaskResult, error) {
+	var levelHardErrored bool
+	resultsReceived := 0
+	var dispatchError error
+	var processedTasksOnLevel []pkg.TaskResult
+
+	processor := &ResultProcessor{
+		ExecutionLevel: executionLevel,
+		Logger:         logger,
+		Config:         cfg,
+	}
+
+	// Process results until we get all expected results or encounter an error
+	for resultsReceived < numExpectedResultsOnLevel {
+		// Try to receive from error channel first (non-blocking)
+		if !errCh.IsClosed() {
+			if err, ok, receiveErr := errCh.ReceiveError(); receiveErr == nil && ok && err != nil {
+				dispatchError = err
+				logger.Error("Dispatch error received from loadLevelTasks", "level", executionLevel, "error", dispatchError)
+				levelHardErrored = true
+				break
+			}
+		}
+
+		// Try to receive from results channel
+		result, ok, receiveErr := resultsCh.ReceiveResult()
+		if receiveErr != nil {
+			return true, processedTasksOnLevel, fmt.Errorf("error receiving result: %w", receiveErr)
+		}
+
+		if !ok {
+			// Channel closed
+			if resultsReceived < numExpectedResultsOnLevel {
+				return true, processedTasksOnLevel, fmt.Errorf("results channel closed prematurely on level %d. Expected %d, got %d", executionLevel, numExpectedResultsOnLevel, resultsReceived)
+			}
+			break
+		}
+
+		resultsReceived++
+		processedTasksOnLevel = append(processedTasksOnLevel, result)
+
+		// Additional processing for temporal executor (fact registration)
+		if onResult != nil {
+			if err := onResult(result); err != nil {
+				logger.Error("Task processing reported an error after fact registration",
+					"task", result.Task.Name, "host", result.Closure.HostContext.Host.Name, "error", err)
+				levelHardErrored = true
+			}
+		}
+
+		// Process the individual result
+		if processor.ProcessSingleResult(result, recapStats, executionHistoryLevel) {
+			levelHardErrored = true
+
+			// In sequential mode, stop processing further results
+			if cfg.ExecutionMode == "sequential" && levelHardErrored {
+				logger.Warn("Sequential mode: task hard-failed, stopping further result processing for this level.",
+					"task", result.Task.Name, "host", result.Closure.HostContext.Host.Name, "level", executionLevel)
+				break
+			}
+		}
+	}
+
+	if dispatchError != nil {
+		logger.Error("Level processing stopped due to error.", "level", executionLevel, "error", dispatchError, "results_received", resultsReceived)
+		return true, processedTasksOnLevel, dispatchError
+	}
+
+	if resultsReceived < numExpectedResultsOnLevel {
+		errMsg := fmt.Errorf("level %d did not receive all expected results: got %d, expected %d", executionLevel, resultsReceived, numExpectedResultsOnLevel)
+		logger.Error(errMsg.Error())
+		return true, processedTasksOnLevel, errMsg
+	}
+
+	return levelHardErrored, processedTasksOnLevel, nil
 }

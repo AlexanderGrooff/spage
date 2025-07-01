@@ -500,9 +500,6 @@ func (e *LocalGraphExecutor) processLevelResults(
 	cfg *config.Config,
 	numExpectedResultsOnLevel int,
 ) (bool, error) {
-	var levelHardErrored bool
-	resultsReceived := 0
-
 	defer func() {
 		histEntry := executionHistory[executionLevel]
 		for _, hostChan := range histEntry {
@@ -510,156 +507,28 @@ func (e *LocalGraphExecutor) processLevelResults(
 		}
 	}()
 
-	for resultsReceived < numExpectedResultsOnLevel {
-		select {
-		case result, ok := <-resultsCh:
-			if !ok {
-				if resultsReceived < numExpectedResultsOnLevel && ctx.Err() == nil && !levelHardErrored {
-					select {
-					case dispatchErr := <-errCh:
-						if dispatchErr != nil {
-							return true, fmt.Errorf("task dispatch failed on level %d: %w. Expected %d results, got %d.", executionLevel, dispatchErr, numExpectedResultsOnLevel, resultsReceived)
-						}
-					default:
-					}
-					return true, fmt.Errorf("results channel closed prematurely on level %d. Expected %d, got %d. No specific dispatch error or context cancellation.", executionLevel, numExpectedResultsOnLevel, resultsReceived)
-				}
-				goto endProcessingLoop
-			}
+	// Create adapters for the shared function
+	resultsChAdapter := NewLocalResultChannel(resultsCh)
+	errChAdapter := NewLocalErrorChannel(errCh)
+	logger := NewLocalLogger()
 
-			resultsReceived++
-			hostname := result.Closure.HostContext.Host.Name
-			task := result.Task
-			currentClosure := result.Closure
+	// Create a context-aware result channel that handles cancellation
+	ctxResultsCh := NewContextAwareResultChannel(ctx, resultsChAdapter)
+	ctxErrCh := NewContextAwareErrorChannel(ctx, errChAdapter)
 
-			// Ensure recapStats entry exists for this hostname (e.g., for delegate_to localhost)
-			if _, exists := recapStats[hostname]; !exists {
-				recapStats[hostname] = map[string]int{"ok": 0, "changed": 0, "failed": 0, "skipped": 0, "ignored": 0}
-			}
+	levelHardErrored, _, err := SharedProcessLevelResults(
+		ctxResultsCh,
+		ctxErrCh,
+		logger,
+		executionLevel,
+		cfg,
+		numExpectedResultsOnLevel,
+		recapStats,
+		executionHistory[executionLevel], // Pass the execution history for this level
+		nil,                              // No additional processing needed for local executor
+	)
 
-			if cfg.Logging.Format == "plain" {
-				fmt.Printf("\nTASK [%s] (%s) ****************************************************\n", task.Name, hostname)
-			}
-
-			levelHistMap := executionHistory[executionLevel]
-			if hostChan, ok := levelHistMap[hostname]; ok {
-				select {
-				case hostChan <- task:
-				default:
-					common.LogWarn("Failed to record task in history channel (full or closed)", map[string]interface{}{"task": task.Name, "host": hostname})
-				}
-			}
-
-			currentClosure.HostContext.History.Store(task.Name, result.Output)
-
-			logData := map[string]any{
-				"host":     hostname,
-				"task":     task.Name,
-				"duration": result.Duration.String(),
-				"status":   result.Status.String(),
-			}
-
-			var ignoredErrWrapper *pkg.IgnoredTaskError
-			isIgnoredError := errors.As(result.Error, &ignoredErrWrapper)
-
-			if isIgnoredError {
-				originalErr := ignoredErrWrapper.Unwrap()
-				logData["ignored"] = true
-				logData["error_original"] = originalErr.Error()
-				if result.Output != nil {
-					logData["output"] = result.Output.String()
-				}
-				recapStats[hostname]["ignored"]++
-				if result.Failed {
-					recapStats[hostname]["failed"]++
-				}
-
-				if cfg.Logging.Format == "plain" {
-					fmt.Printf("failed: [%s] => (ignored error: %v)\n", hostname, originalErr)
-					PPrintOutput(result.Output, originalErr)
-				} else {
-					common.LogWarn("Task failed (ignored)", logData)
-				}
-			} else if result.Error != nil {
-				levelHardErrored = true
-				logData["error"] = result.Error.Error()
-				if result.Output != nil {
-					logData["output"] = result.Output.String()
-				}
-				if result.Failed {
-					recapStats[hostname]["failed"]++
-				}
-
-				if cfg.Logging.Format == "plain" {
-					fmt.Printf("failed: [%s] => (%v)\n", hostname, result.Error)
-					PPrintOutput(result.Output, result.Error)
-				} else {
-					common.LogError("Task failed", logData)
-				}
-			} else {
-				switch result.Status {
-				case pkg.TaskStatusChanged:
-					logData["changed"] = true
-					if result.Output != nil {
-						logData["output"] = result.Output.String()
-					}
-					recapStats[hostname]["changed"]++
-					if cfg.Logging.Format == "plain" {
-						fmt.Printf("changed: [%s] => \n%v\n", hostname, result.Output)
-					}
-				case pkg.TaskStatusSkipped:
-					recapStats[hostname]["skipped"]++
-					if cfg.Logging.Format == "plain" {
-						fmt.Printf("skipped: [%s]\n", hostname)
-					}
-				default:
-					logData["changed"] = false
-					if result.Output != nil {
-						logData["output"] = result.Output.String()
-					}
-					recapStats[hostname]["ok"]++
-					if cfg.Logging.Format == "plain" {
-						fmt.Printf("ok: [%s]\n", hostname)
-					} else {
-						common.LogInfo("Task ok", logData)
-					}
-				}
-			}
-
-			if cfg.ExecutionMode == "sequential" && levelHardErrored {
-				common.LogWarn("Sequential mode: task hard-failed, stopping further result processing for this level.", map[string]interface{}{"task": task.Name, "host": hostname, "level": executionLevel})
-				goto endProcessingLoop
-			}
-
-		case dispatchErr := <-errCh:
-			if dispatchErr != nil {
-				common.LogError("Critical dispatch error received while processing results", map[string]interface{}{"level": executionLevel, "error": dispatchErr})
-				return true, fmt.Errorf("task dispatch/loading critical error on level %d: %w", executionLevel, dispatchErr)
-			}
-
-		case <-ctx.Done():
-			common.LogWarn("Context cancelled while processing results for level.", map[string]interface{}{"level": executionLevel, "error": ctx.Err()})
-			return true, fmt.Errorf("execution cancelled while processing results for level %d: %w", executionLevel, ctx.Err())
-		}
-	}
-endProcessingLoop:
-
-	if !levelHardErrored && ctx.Err() == nil && resultsReceived != numExpectedResultsOnLevel {
-		select {
-		case dispatchErr := <-errCh:
-			if dispatchErr != nil {
-				return true, fmt.Errorf("final dispatch error check on level %d: %w. Expected %d, got %d.", executionLevel, dispatchErr, numExpectedResultsOnLevel, resultsReceived)
-			}
-		default:
-		}
-		common.LogWarn("Mismatch in expected vs received results", map[string]interface{}{
-			"level":    executionLevel,
-			"expected": numExpectedResultsOnLevel,
-			"received": resultsReceived,
-		})
-	}
-
-	return levelHardErrored, nil
+	return levelHardErrored, err
 }
 
 func (e *LocalGraphExecutor) printPlayRecap(cfg *config.Config, recapStats map[string]map[string]int) {

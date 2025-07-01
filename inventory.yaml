@@ -1,5 +1,5 @@
 all:
   theta:
     host: 100.78.218.73
-  alpha:
-    host: localhost
+  # alpha:
+  #   host: localhost
