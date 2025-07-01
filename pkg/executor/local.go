@@ -597,7 +597,8 @@ func (e *LocalGraphExecutor) processLevelResults(
 					common.LogError("Task failed", logData)
 				}
 			} else {
-				if result.Status == pkg.TaskStatusChanged {
+				switch result.Status {
+				case pkg.TaskStatusChanged:
 					logData["changed"] = true
 					if result.Output != nil {
 						logData["output"] = result.Output.String()
@@ -605,17 +606,13 @@ func (e *LocalGraphExecutor) processLevelResults(
 					recapStats[hostname]["changed"]++
 					if cfg.Logging.Format == "plain" {
 						fmt.Printf("changed: [%s] => \n%v\n", hostname, result.Output)
-					} else {
-						common.LogInfo("Task changed", logData)
 					}
-				} else if result.Status == pkg.TaskStatusSkipped {
+				case pkg.TaskStatusSkipped:
 					recapStats[hostname]["skipped"]++
 					if cfg.Logging.Format == "plain" {
 						fmt.Printf("skipped: [%s]\n", hostname)
-					} else {
-						common.LogInfo("Task skipped", logData)
 					}
-				} else {
+				default:
 					logData["changed"] = false
 					if result.Output != nil {
 						logData["output"] = result.Output.String()
