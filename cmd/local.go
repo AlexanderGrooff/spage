@@ -3,13 +3,23 @@ package cmd
 import (
 	"flag"
 	"fmt"
-	"os"
 
 	"github.com/AlexanderGrooff/spage/pkg"
+	"github.com/AlexanderGrooff/spage/pkg/config"
 	"github.com/AlexanderGrooff/spage/pkg/executor"
 )
 
-func StartLocalExecutor(graph pkg.Graph) {
+func StartLocalExecutor(graph pkg.Graph, inventoryFile string, cfg *config.Config) error {
+	exec := executor.NewLocalGraphExecutor(&executor.LocalTaskRunner{})
+	err := pkg.ExecuteGraph(exec, graph, inventoryFile, cfg)
+	if err != nil {
+		fmt.Printf("Execution failed: %v\n", err)
+		return err
+	}
+	return nil
+}
+
+func EntrypointLocalExecutor(graph pkg.Graph) error {
 	configFile := flag.String("config", "", "Config file path (default: ./spage.yaml)")
 	inventoryFile := flag.String("inventory", "", "Inventory file path")
 	checkMode := flag.Bool("check", false, "Enable check mode (dry run)")
@@ -20,7 +30,7 @@ func StartLocalExecutor(graph pkg.Graph) {
 	err := LoadConfig(*configFile)
 	if err != nil {
 		fmt.Printf("Error loading config: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	// Execute the graph using the loaded configuration
@@ -38,10 +48,5 @@ func StartLocalExecutor(graph pkg.Graph) {
 		cfg.Facts["ansible_diff"] = true
 	}
 
-	exec := executor.NewLocalGraphExecutor(&executor.LocalTaskRunner{})
-	err = pkg.ExecuteGraph(exec, graph, *inventoryFile, cfg)
-	if err != nil {
-		fmt.Printf("Execution failed: %v\n", err)
-		os.Exit(1)
-	}
+	return StartLocalExecutor(graph, *inventoryFile, cfg)
 }

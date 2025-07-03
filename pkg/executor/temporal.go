@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
@@ -1456,7 +1455,7 @@ type RunSpageTemporalWorkerAndWorkflowOptions struct {
 
 // RunSpageTemporalWorkerAndWorkflow sets up and runs a Temporal worker for Spage tasks,
 // and can optionally trigger a workflow execution.
-func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOptions) {
+func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOptions) error {
 	spageAppConfig := opts.LoadedConfig
 	if spageAppConfig == nil {
 		common.LogInfo("Warning: No Spage configuration provided to RunSpageTemporalWorkerAndWorkflow. Using a default config.", map[string]interface{}{})
@@ -1485,7 +1484,7 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 	temporalClient, err := client.Dial(clientOpts)
 	if err != nil {
 		common.LogError("Unable to create Temporal client", map[string]interface{}{"error": err})
-		return
+		return err
 	}
 	defer temporalClient.Close()
 
@@ -1506,7 +1505,7 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 	common.LogInfo("Starting Temporal worker on task queue", map[string]interface{}{"task_queue": taskQueue})
 	if err := myWorker.Start(); err != nil {
 		common.LogError("Unable to start worker", map[string]interface{}{"error": err})
-		return
+		return err
 	}
 
 	if spageAppConfig.Temporal.Trigger {
@@ -1532,7 +1531,7 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 		we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, SpageTemporalWorkflow, opts.Graph, opts.InventoryPath, spageAppConfig)
 		if err != nil {
 			common.LogError("Unable to execute SpageTemporalWorkflow", map[string]interface{}{"error": err})
-			return
+			return err
 		}
 		common.LogInfo("Successfully started SpageTemporalWorkflow", map[string]interface{}{"workflow_id": we.GetID(), "run_id": we.GetRunID()})
 
@@ -1541,7 +1540,7 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 		if err != nil {
 			common.LogError("Workflow completed with error", map[string]interface{}{"workflow_id": we.GetID(), "error": err})
 			myWorker.Stop()
-			os.Exit(1)
+			return err
 		} else {
 			common.LogInfo("Workflow completed successfully.", map[string]interface{}{"workflow_id": we.GetID()})
 			myWorker.Stop()
@@ -1553,4 +1552,5 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 		myWorker.Stop()
 		common.LogInfo("Worker stopped.", map[string]interface{}{"task_queue": taskQueue})
 	}
+	return nil
 }

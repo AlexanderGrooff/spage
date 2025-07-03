@@ -21,6 +21,8 @@ var (
 	tags          []string
 	skipTags      []string
 	cfg           *config.Config // Store the loaded config
+	checkMode     bool
+	diffMode      bool
 )
 
 // LoadConfig loads the configuration and applies settings
@@ -72,65 +74,94 @@ var RootCmd = &cobra.Command{
 	},
 }
 
-func generatePlaybook(cmd *cobra.Command, args []string) {
-	graph, err := pkg.NewGraphFromFile(playbookFile)
-	if err != nil {
-		common.LogError("Failed to generate graph", map[string]interface{}{
-			"error": err.Error(),
-		})
-		os.Exit(1)
-	}
-
+func GetGraph(playbookFile string, tags, skipTags []string, baseConfig *config.Config) (pkg.Graph, error) {
 	// Override config with command line flags if provided
 	if len(tags) > 0 {
-		cfg.Tags.Tags = tags
+		baseConfig.Tags.Tags = tags
 	}
 	if len(skipTags) > 0 {
-		cfg.Tags.SkipTags = skipTags
+		baseConfig.Tags.SkipTags = skipTags
+	}
+
+	graph, err := pkg.NewGraphFromFile(playbookFile)
+	if err != nil {
+		return pkg.Graph{}, fmt.Errorf("failed to generate graph from playbook: %w", err)
 	}
 
 	// Apply tag filtering to the graph
-	filteredGraph, err := applyTagFiltering(graph, cfg.Tags)
+	filteredGraph, err := applyTagFiltering(graph, baseConfig.Tags)
 	if err != nil {
-		common.LogError("Failed to apply tag filtering", map[string]interface{}{
-			"error": err.Error(),
-		})
-		os.Exit(1)
+		return pkg.Graph{}, fmt.Errorf("failed to apply tag filtering: %w", err)
 	}
-
-	if cfg.Executor == "temporal" {
-		filteredGraph.SaveToTemporalWorkflowFile(outputFile)
-	} else {
-		filteredGraph.SaveToFile(outputFile)
-	}
-	common.LogInfo("Compiled binary", map[string]interface{}{
-		"output_file": outputFile,
-	})
+	return filteredGraph, nil
 }
 
 var generateCmd = &cobra.Command{
 	Use:   "generate",
 	Short: "Generate a graph from a playbook and save it as Go code",
-	Run:   generatePlaybook,
-}
-
-var runCmd = &cobra.Command{
-	Use:   "run",
-	Short: "Run a playbook by compiling & executing it",
-	Run: func(cmd *cobra.Command, args []string) {
-		generatePlaybook(cmd, args)
-		graph, err := pkg.NewGraphFromFile(outputFile)
+	RunE: func(cmd *cobra.Command, args []string) error {
+		graph, err := GetGraph(playbookFile, tags, skipTags, cfg)
 		if err != nil {
 			common.LogError("Failed to generate graph", map[string]interface{}{
 				"error": err.Error(),
 			})
 			os.Exit(1)
 		}
+
 		if cfg.Executor == "temporal" {
-			StartTemporalExecutor(graph)
+			graph.SaveToTemporalWorkflowFile(outputFile)
 		} else {
-			StartLocalExecutor(graph)
+			graph.SaveToFile(outputFile)
 		}
+		common.LogInfo("Compiled binary", map[string]interface{}{
+			"output_file": outputFile,
+		})
+		if err != nil {
+			common.LogError("Failed to generate graph", map[string]interface{}{
+				"error": err.Error(),
+			})
+			os.Exit(1)
+		}
+		return nil
+	},
+}
+
+var runCmd = &cobra.Command{
+	Use:   "run",
+	Short: "Run a playbook by compiling & executing it",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		graph, err := GetGraph(playbookFile, tags, skipTags, cfg)
+		if err != nil {
+			common.LogError("Failed to generate graph", map[string]interface{}{
+				"error": err.Error(),
+			})
+			os.Exit(1)
+		}
+		if checkMode {
+			if cfg.Facts == nil {
+				cfg.Facts = make(map[string]interface{})
+			}
+			cfg.Facts["ansible_check_mode"] = true
+		}
+		if diffMode {
+			if cfg.Facts == nil {
+				cfg.Facts = make(map[string]interface{})
+			}
+			cfg.Facts["ansible_diff"] = true
+		}
+
+		if cfg.Executor == "temporal" {
+			err = StartTemporalExecutor(graph, inventoryFile, cfg)
+		} else {
+			err = StartLocalExecutor(graph, inventoryFile, cfg)
+		}
+		if err != nil {
+			common.LogError("Failed to run playbook", map[string]interface{}{
+				"error": err.Error(),
+			})
+			os.Exit(1)
+		}
+		return nil
 	},
 }
 
@@ -150,6 +181,8 @@ func init() {
 	runCmd.Flags().StringVarP(&outputFile, "output", "o", "generated_tasks.go", "Output file (default: generated_tasks.go)")
 	runCmd.Flags().StringSliceVarP(&tags, "tags", "t", []string{}, "Only include tasks with these tags (comma-separated)")
 	runCmd.Flags().StringSliceVar(&skipTags, "skip-tags", []string{}, "Skip tasks with these tags (comma-separated)")
+	runCmd.Flags().BoolVar(&checkMode, "check", false, "Enable check mode (dry run)")
+	runCmd.Flags().BoolVar(&diffMode, "diff", false, "Enable diff mode")
 
 	runCmd.MarkFlagRequired("playbook")
 

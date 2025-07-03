@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -57,36 +58,6 @@ func (g Graph) String() string {
 
 func (g Graph) ToCode() string {
 	var f strings.Builder
-	// Determine if we need to inject a gather facts task
-	usedFacts := make(map[string]struct{})
-	for _, level := range g.Tasks {
-		for _, task := range level {
-			vars, _ := GetVariableUsage(task)
-			for _, v := range vars {
-				if _, ok := AllowedFacts[v]; ok {
-					usedFacts[v] = struct{}{}
-				}
-			}
-		}
-	}
-
-	// Filter out required inputs that are facts and add them to usedFacts
-	filteredInputs := make([]string, 0, len(g.RequiredInputs))
-	for _, input := range g.RequiredInputs {
-		if _, ok := AllowedFacts[input]; ok {
-			usedFacts[input] = struct{}{} 
-		} else {
-			filteredInputs = append(filteredInputs, input)
-		}
-	}
-	g.RequiredInputs = filteredInputs
-
-	factList := make([]string, 0, len(usedFacts))
-	for fct := range usedFacts {
-		factList = append(factList, fct)
-	}
-
-	hasSetupTask := len(factList) > 0
 
 	fmt.Fprintln(&f, "var GeneratedGraph = pkg.Graph{")
 	fmt.Fprintf(&f, "%sRequiredInputs: []string{\n", Indent(1))
@@ -101,31 +72,10 @@ func (g Graph) ToCode() string {
 	fmt.Fprintf(&f, "%s},\n", Indent(1))
 	fmt.Fprintf(&f, "%sTasks: [][]pkg.Task{\n", Indent(1))
 
-	// Inject gather facts task as first step if needed
-	if hasSetupTask {
-		fmt.Fprintf(&f, "%s  []pkg.Task{\n", Indent(2))
-		fmt.Fprintf(&f, "%s    pkg.Task{Id: 0, Name: \"gather facts\", Module: \"setup\", Register: \"ansible_facts\", Params: pkg.ModuleInput{Actual: modules.SetupInput{Facts: %#v}}, RunAs: \"\", When: \"\"},\n", Indent(3), factList)
-		fmt.Fprintf(&f, "%s  },\n", Indent(2))
-	}
-
 	for _, node := range g.Tasks {
 		fmt.Fprintf(&f, "%s  []pkg.Task{\n", Indent(2))
 		for _, task := range node {
-			// Increment task ID by 1 if we have a setup task
-			taskId := task.Id
-			if hasSetupTask {
-				taskId = task.Id + 1
-			}
-			// Generate task code with potentially incremented ID
-			taskCode := task.ToCode()
-			// Replace the ID in the generated code
-			if hasSetupTask {
-				// Find and replace the Id field in the task code
-				oldIdStr := fmt.Sprintf("Id: %d", task.Id)
-				newIdStr := fmt.Sprintf("Id: %d", taskId)
-				taskCode = strings.Replace(taskCode, oldIdStr, newIdStr, 1)
-			}
-			fmt.Fprintf(&f, "%s    %s", Indent(3), taskCode)
+			fmt.Fprintf(&f, "%s    %s", Indent(3), task.ToCode())
 		}
 		fmt.Fprintf(&f, "%s  },\n", Indent(2))
 	}
@@ -161,7 +111,13 @@ func (g Graph) SaveToFile(path string) error {
 	fmt.Fprint(f, g.ToCode())
 	fmt.Fprintln(f)
 	fmt.Fprintln(f, "func main() {")
-	fmt.Fprintln(f, "    cmd.StartLocalExecutor(GeneratedGraph)")
+	fmt.Fprintln(f, "    err := cmd.EntrypointLocalExecutor(GeneratedGraph)")
+	fmt.Fprintln(f, "    if err != nil {")
+	fmt.Fprintln(f, "        common.LogError(\"Failed to run playbook\", map[string]interface{}{")
+	fmt.Fprintln(f, "            \"error\": err.Error(),")
+	fmt.Fprintln(f, "        })")
+	fmt.Fprintln(f, "        os.Exit(1)")
+	fmt.Fprintln(f, "    }")
 	fmt.Fprintln(f, "}")
 	return nil
 }
@@ -453,14 +409,102 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}) (Graph,
 		maxExecutionLevel = max(maxExecutionLevel, executionLevel)
 	}
 
+	// 6.5. Determine if we need to inject a gather facts task and create it
+	usedFacts := make(map[string]struct{})
+	for _, task := range taskNameMapping {
+		vars, _ := GetVariableUsage(task)
+		for _, v := range vars {
+			if _, ok := AllowedFacts[v]; ok {
+				usedFacts[v] = struct{}{}
+			}
+		}
+	}
+
+	// Filter out required inputs that are facts and add them to usedFacts
+	filteredInputs := make([]string, 0, len(g.RequiredInputs))
+	for _, input := range g.RequiredInputs {
+		if _, ok := AllowedFacts[input]; ok {
+			usedFacts[input] = struct{}{}
+		} else {
+			filteredInputs = append(filteredInputs, input)
+		}
+	}
+	g.RequiredInputs = filteredInputs
+
+	factList := make([]string, 0, len(usedFacts))
+	for fct := range usedFacts {
+		factList = append(factList, fct)
+	}
+
+	hasSetupTask := len(factList) > 0
+
+	// If we need a setup task, adjust the execution levels
+	if hasSetupTask {
+		// Increment all execution levels by 1 to make room for the setup task at level 0
+		for taskName := range executedOnStep {
+			executedOnStep[taskName]++
+		}
+		maxExecutionLevel++
+	}
+
 	g.Tasks = make([][]Task, maxExecutionLevel+1)
 	for i := range g.Tasks {
 		g.Tasks[i] = []Task{}
 	}
 
 	// 7. Populate tasks into levels
+	// First, add the setup task if needed
+	if hasSetupTask {
+		// Use reflection to create SetupInput to avoid import cycle
+		setupModule, ok := GetModule("setup")
+		if !ok {
+			return Graph{}, fmt.Errorf("setup module not found")
+		}
+
+		// Create SetupInput using reflection
+		setupInputType := setupModule.InputType()
+		setupInputValue := reflect.New(setupInputType).Elem()
+
+		// Set the Facts field using reflection
+		factsField := setupInputValue.FieldByName("Facts")
+		if !factsField.IsValid() {
+			return Graph{}, fmt.Errorf("Facts field not found in SetupInput")
+		}
+		factsField.Set(reflect.ValueOf(factList))
+
+		// Convert to ConcreteModuleInputProvider
+		setupInputProvider, ok := setupInputValue.Interface().(ConcreteModuleInputProvider)
+		if !ok {
+			return Graph{}, fmt.Errorf("SetupInput does not implement ConcreteModuleInputProvider")
+		}
+
+		setupTask := Task{
+			Id:       0,
+			Name:     "gather facts",
+			Module:   "setup",
+			Register: "ansible_facts",
+			Params: ModuleInput{
+				Actual: setupInputProvider,
+			},
+			RunAs: "",
+			When:  "",
+		}
+		g.Tasks[0] = []Task{setupTask}
+
+		// Register that the setup task provides facts
+		variableProvidedBy["ansible_facts"] = "gather facts"
+		for _, fact := range factList {
+			variableProvidedBy[fact] = "gather facts"
+		}
+	}
+
+	// Then add the regular tasks with potentially incremented IDs
 	for taskName, executionLevel := range executedOnStep {
 		task := taskNameMapping[taskName]
+		// Increment task ID by 1 if we have a setup task
+		if hasSetupTask {
+			task.Id = task.Id + 1
+		}
 		g.Tasks[executionLevel] = append(g.Tasks[executionLevel], task)
 	}
 
@@ -556,7 +600,13 @@ import (
 	content.WriteString("\n")      // Ensure a newline after graph code
 
 	content.WriteString(`func main() {
-	cmd.StartTemporalExecutor(GeneratedGraph)
+	err := cmd.EntrypointTemporalExecutor(GeneratedGraph)
+	if err != nil {
+		common.LogError("Failed to run playbook", map[string]interface{}{
+			"error": err.Error(),
+		})
+		os.Exit(1)
+	}
 }
 `)
 
