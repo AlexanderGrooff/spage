@@ -325,8 +325,13 @@ func NewLocalErrorChannel(ch chan error) *LocalErrorChannel {
 }
 
 func (c *LocalErrorChannel) ReceiveError() (error, bool, error) {
-	err, ok := <-c.ch
-	return err, ok, nil
+	// Non-blocking receive to prevent deadlocks in the processing loop.
+	select {
+	case err, ok := <-c.ch:
+		return err, ok, nil
+	default:
+		return nil, true, nil // Channel is open, but no error is present.
+	}
 }
 
 func (c *LocalErrorChannel) IsClosed() bool {
@@ -615,6 +620,12 @@ func SharedProcessLevelResults(
 		}
 
 		if !ok {
+			// Channel closed. Before declaring an error, do one last non-blocking check on the error channel
+			// to catch a race condition where the dispatching goroutine errored out and closed the results channel.
+			if dispatchError, ok, _ := errCh.ReceiveError(); ok && dispatchError != nil {
+				return true, processedTasksOnLevel, fmt.Errorf("dispatch error occurred: %w", dispatchError)
+			}
+
 			// Channel closed
 			if resultsReceived < numExpectedResultsOnLevel {
 				return true, processedTasksOnLevel, fmt.Errorf("results channel closed prematurely on level %d. Expected %d, got %d", executionLevel, numExpectedResultsOnLevel, resultsReceived)
