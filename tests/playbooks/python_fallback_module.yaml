@@ -3,12 +3,11 @@
   tasks:
     - name: Test ping module via Python fallback
       ping:
-        data: "Hello from Spage Python fallback!"
+        data: "pong"
       register: ping_result
 
-    - name: Verify ping result
-      debug:
-        var: ping_result
+    - name: Create file to verify ping worked
+      shell: echo "{{ ping_result.results.ping }}" | tee /tmp/spage/python_fallback_ping.txt
 
     - name: Test unknown module
       some.collection.unknown_module:
