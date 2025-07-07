@@ -34,20 +34,93 @@ func InitializeHostContext(host *Host, cfg *config.Config) (*HostContext, error)
 	}
 
 	if !host.IsLocal {
-		socket := os.Getenv("SSH_AUTH_SOCK")
-		if socket == "" {
-			return nil, fmt.Errorf("SSH_AUTH_SOCK environment variable not set, cannot connect to remote host %s", host.Host)
-		}
-		conn, err := net.Dial("unix", socket)
-		if err != nil {
-			return nil, fmt.Errorf("failed to open SSH_AUTH_SOCK for host %s: %v", host.Host, err)
-		}
-		// Note: We're not closing the 'conn' here because the agentClient needs it.
-		// The agentClient itself doesn't have a Close method. The underlying connection
-		// might be closed when the ssh.Client is closed, or it might persist.
-		// This is typical usage for ssh agent.
+		// Check if ansible_ssh_private_key_file is provided in host variables
+		var hasPrivateKeyFile bool
+		var privateKeyAuthMethod ssh.AuthMethod
+		if host.Vars != nil {
+			if privateKeyPath, exists := host.Vars["ansible_ssh_private_key_file"]; exists {
+				if keyPath, ok := privateKeyPath.(string); ok && keyPath != "" {
+					// Expand ~ to home directory if needed
+					if strings.HasPrefix(keyPath, "~/") {
+						if homeDir, err := os.UserHomeDir(); err == nil {
+							keyPath = strings.Replace(keyPath, "~", homeDir, 1)
+						}
+					}
 
-		agentClient := agent.NewClient(conn)
+					// Load private key from file
+					keyBytes, err := os.ReadFile(keyPath)
+					if err != nil {
+						common.LogWarn("Failed to read SSH private key file specified in ansible_ssh_private_key_file", map[string]interface{}{
+							"host":     host.Host,
+							"key_path": keyPath,
+							"error":    err.Error(),
+						})
+					} else {
+						// Try to parse the private key
+						signer, err := ssh.ParsePrivateKey(keyBytes)
+						if err != nil {
+							common.LogWarn("Failed to parse SSH private key file", map[string]interface{}{
+								"host":     host.Host,
+								"key_path": keyPath,
+								"error":    err.Error(),
+							})
+						} else {
+							privateKeyAuthMethod = ssh.PublicKeys(signer)
+							hasPrivateKeyFile = true
+							common.LogDebug("Loaded SSH private key from ansible_ssh_private_key_file", map[string]interface{}{
+								"host":     host.Host,
+								"key_path": keyPath,
+							})
+						}
+					}
+				} else {
+					common.LogWarn("ansible_ssh_private_key_file is not a string or is empty", map[string]interface{}{
+						"host":  host.Host,
+						"value": privateKeyPath,
+					})
+				}
+			}
+		}
+
+		// Prepare SSH auth methods
+		var authMethods []ssh.AuthMethod
+
+		// Add private key file auth method first if available
+		if hasPrivateKeyFile {
+			authMethods = append(authMethods, privateKeyAuthMethod)
+		}
+
+		// Try to add SSH agent auth method if available
+		socket := os.Getenv("SSH_AUTH_SOCK")
+		if socket != "" {
+			conn, err := net.Dial("unix", socket)
+			if err != nil {
+				common.LogWarn("Failed to connect to SSH agent, continuing with other auth methods", map[string]interface{}{
+					"host":  host.Host,
+					"error": err.Error(),
+				})
+			} else {
+				agentClient := agent.NewClient(conn)
+				authMethods = append(authMethods, ssh.PublicKeysCallback(agentClient.Signers))
+				common.LogDebug("Added SSH agent authentication method", map[string]interface{}{
+					"host": host.Host,
+				})
+			}
+		} else {
+			common.LogDebug("SSH_AUTH_SOCK not set, skipping SSH agent authentication", map[string]interface{}{
+				"host": host.Host,
+			})
+		}
+
+		// Check if we have any auth methods
+		if len(authMethods) == 0 {
+			if hasPrivateKeyFile {
+				return nil, fmt.Errorf("SSH private key file specified but failed to load, and SSH_AUTH_SOCK not available for host %s", host.Host)
+			} else {
+				return nil, fmt.Errorf("no SSH authentication methods available for host %s: SSH_AUTH_SOCK environment variable not set and no ansible_ssh_private_key_file specified", host.Host)
+			}
+		}
+
 		currentUser, err := user.Current() // Consider making username configurable
 		if err != nil {
 			// We might not want to fail initialization just because we can't get the current user
@@ -68,10 +141,8 @@ func InitializeHostContext(host *Host, cfg *config.Config) (*HostContext, error)
 		}
 
 		config := &ssh.ClientConfig{
-			User: currentUser.Username, // Use current user's username
-			Auth: []ssh.AuthMethod{
-				ssh.PublicKeysCallback(agentClient.Signers), // Use keys from ssh-agent
-			},
+			User:            currentUser.Username, // Use current user's username
+			Auth:            authMethods,
 			HostKeyCallback: hostKeyCallback,
 		}
 
