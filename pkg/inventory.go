@@ -110,8 +110,8 @@ func LoadInventory(path string) (*Inventory, error) {
 	return &inventory, nil
 }
 
-func (i Inventory) GetContextForHost(host *Host) (*HostContext, error) {
-	ctx, err := InitializeHostContext(host)
+func (i Inventory) GetContextForHost(host *Host, cfg *config.Config) (*HostContext, error) {
+	ctx, err := InitializeHostContext(host, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +148,7 @@ func GetContextForRun(inventory *Inventory, graph Graph, cfg *config.Config) (ma
 	contexts := make(map[string]*HostContext)
 	for _, host := range inventory.Hosts {
 		common.DebugOutput("Getting context for host %q", host.Name)
-		contexts[host.Name], err = inventory.GetContextForHost(host)
+		contexts[host.Name], err = inventory.GetContextForHost(host, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("could not get context for host '%s' (%s): %w", host.Name, host.Host, err)
 		}

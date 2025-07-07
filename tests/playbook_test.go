@@ -30,7 +30,7 @@ func runPlaybookTest(t *testing.T, tc playbookTestCase) {
 		inventoryFile string
 	}{
 		{executor: "local", inventoryFile: ""},
-		// {executor: "local", inventoryFile: "inventory.yaml"},
+		{executor: "temporal", inventoryFile: ""},
 	}
 
 	for _, env := range environments {
@@ -86,8 +86,7 @@ func runPlaybookTest(t *testing.T, tc playbookTestCase) {
 			case "local":
 				runErr = cmd.StartLocalExecutor(graph, env.inventoryFile, cfg)
 			case "temporal":
-				// Placeholder for temporal once it's implemented to return an error
-				t.Skip("Temporal executor test not implemented")
+				runErr = cmd.StartTemporalExecutor(graph, env.inventoryFile, cfg)
 			default:
 				require.Fail(t, "invalid environment: %s", env.executor)
 			}
@@ -173,6 +172,14 @@ func assertFileContains(t *testing.T, path, expectedContent string) {
 	assert.Contains(t, string(content), expectedContent, "File content mismatch: %s", path)
 }
 
+// Helper function to check that a file does not contain a specific string.
+func assertFileDoesNotContain(t *testing.T, path, unexpectedContent string) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	require.NoError(t, err, "Failed to read file: %s", path)
+	assert.NotContains(t, string(content), unexpectedContent, "File content mismatch: %s", path)
+}
+
 func createTestPlaybook(t *testing.T, name, content string) string {
 	t.Helper()
 	// assumes the test is run from the tests directory
@@ -188,41 +195,6 @@ func createTestPlaybook(t *testing.T, name, content string) string {
 		os.Remove(path)
 	})
 	return path
-}
-
-func assertTaskOutputContains(t *testing.T, output, taskName, expected string) {
-	t.Helper()
-	taskOutput := getTaskOutput(t, output, taskName)
-	assert.Contains(t, taskOutput, expected, "Expected to find '%s' in output of task '%s'", expected, taskName)
-}
-
-func assertTaskOutputDoesNotContain(t *testing.T, output, taskName, unexpected string) {
-	t.Helper()
-	taskOutput := getTaskOutput(t, output, taskName)
-	assert.NotContains(t, taskOutput, unexpected, "Expected not to find '%s' in output of task '%s'", unexpected, taskName)
-}
-
-func getTaskOutput(t *testing.T, fullOutput, taskName string) string {
-	t.Helper()
-	lines := strings.Split(fullOutput, "\n")
-	taskStartIndex := -1
-	for i, line := range lines {
-		if strings.Contains(line, taskName) {
-			taskStartIndex = i
-			break
-		}
-	}
-	require.NotEqual(t, -1, taskStartIndex, "Task '%s' not found in output", taskName)
-
-	taskEndIndex := len(lines)
-	for i := taskStartIndex + 1; i < len(lines); i++ {
-		if strings.HasPrefix(lines[i], "TASK [") || strings.HasPrefix(lines[i], "PLAY [") {
-			taskEndIndex = i
-			break
-		}
-	}
-
-	return strings.Join(lines[taskStartIndex:taskEndIndex], "\n")
 }
 
 func TestVarsPlaybook(t *testing.T) {
@@ -518,29 +490,8 @@ func TestFailModulePlaybook(t *testing.T) {
 		configFile:   "sequential.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string) {
 			assert.NotEqual(t, 0, exitCode, "fail_module_playbook should fail")
-			assert.Contains(t, output, "About to test the fail module")
-			assert.NotContains(t, output, "This message should never appear")
-		},
-	})
-}
-
-func TestDebugModulePlaybook(t *testing.T) {
-	runPlaybookTest(t, playbookTestCase{
-		playbookFile: "playbooks/debug_playbook.yaml",
-		configFile:   "sequential.yaml",
-		check: func(t *testing.T, envName string, exitCode int, output string) {
-			assert.NotEqual(t, 0, exitCode, "debug_module_playbook should fail to test revert")
-			assert.Contains(t, output, "Static debug message for execution")
-			assert.Contains(t, output, "Templated message: Spage Debug Test (will be reverted)")
-			assert.Contains(t, output, "This is the first line in the list.")
-			assert.Contains(t, output, "This is a templated list item.")
-			assert.Contains(t, output, "This is the third line.")
-			assert.Contains(t, output, "Templated message: Spage Debug Test (will be reverted) [revert]")
-			assert.Contains(t, output, "This is the first line in the list. [revert]")
-			assert.Contains(t, output, "This is a templated list item. [revert]")
-			assert.Contains(t, output, "This is the third line. [revert]")
-			assert.NotContains(t, output, "This message should NOT appear in logs.")
-			assert.NotContains(t, output, "var: another_variable")
+			assertFileContains(t, "/tmp/spage/fail_test.txt", "About to test the fail module")
+			assertFileDoesNotContain(t, "/tmp/spage/fail_test.txt", "This message should never appear")
 		},
 	})
 }

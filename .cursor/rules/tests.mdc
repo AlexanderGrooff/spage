@@ -1,12 +1,10 @@
----
-description: 
-globs: test.sh,test_local.sh,test_remote.sh,tests/**
-alwaysApply: false
----
-Tests are done in a large bash script [test.sh](mdc:test.sh) that runs many kinds of playbooks. All modules should be tested in their own playbook to thoroughly check all kinds of behaviour described in the module.
+Tests are done in a comprehensive Go test suite [playbook_test.go](mdc:tests/playbook_test.go) that runs many kinds of playbooks with both local and temporal executors. All modules should be tested in their own playbook to thoroughly check all kinds of behaviour described in the module.
 
 When writing testcases, think of the following:
-- Does it work on both local and remote hosts?
+- Does it work on both local and temporal executors?
 - Does reverting work?
 - Are all fields registered correctly?
 - *EVERY* field should be able to be templated! Strings like "{{ somevariable }}" should always work, and should correctly determine the order of execution.
+- Test assertions should check for actual file creation/modification rather than relying on log output for resilience.
+- Each test should use the `runPlaybookTest` helper function which automatically tests both executor types.
+- Use helper functions like `assertFileExists`, `assertFileContains`, `assertFileDoesNotExist` for consistent test validation.

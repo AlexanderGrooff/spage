@@ -463,44 +463,6 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 	return tasks, nil
 }
 
-func CompilePlaybookForHost(graph Graph, inventoryFile, hostname string) (Graph, error) {
-	inventory, err := LoadInventory(inventoryFile)
-	if err != nil {
-		return Graph{}, fmt.Errorf("failed to load inventory: %w", err)
-	}
-	host, ok := inventory.Hosts[hostname]
-	if !ok {
-		return Graph{}, fmt.Errorf("host not found in inventory: %s", hostname)
-	}
-
-	return CompileGraphForHost(graph, *host)
-}
-
-// Compile the graph for a specific host by replacing variables with host-specific values.
-// This is useful for generating a binary for a specific host, where it can be used directly
-// without the need of an inventory file. It's as simple as downloading the binary and running it.
-func CompileGraphForHost(graph Graph, host Host) (Graph, error) {
-	// Create a copy of the graph to avoid modifying the original
-	compiledGraph := Graph{
-		RequiredInputs: graph.RequiredInputs,
-		Tasks:          make([][]Task, len(graph.Tasks)),
-	}
-
-	// Replace variables in each task with host-specific values
-	for i, taskLayer := range graph.Tasks {
-		compiledGraph.Tasks[i] = make([]Task, len(taskLayer))
-		for j, node := range taskLayer {
-			compiledNode, err := compileNode(node, host)
-			if err != nil {
-				return Graph{}, fmt.Errorf("failed to compile node: %w", err)
-			}
-			compiledGraph.Tasks[i][j] = compiledNode
-		}
-	}
-
-	return compiledGraph, nil
-}
-
 // Helper function to convert map[string]interface{} to *sync.Map
 func MapToSyncMap(m map[string]interface{}) *sync.Map {
 	sm := new(sync.Map)
@@ -508,43 +470,4 @@ func MapToSyncMap(m map[string]interface{}) *sync.Map {
 		sm.Store(k, v)
 	}
 	return sm
-}
-
-// compileNode handles compilation of a single graph node, replacing variables with host values
-func compileNode(node GraphNode, host Host) (Task, error) {
-	switch n := node.(type) {
-	case Task:
-		task := n
-		v := reflect.ValueOf(&task).Elem()
-
-		closure := TempClosureForHost(&host)
-
-		for i := 0; i < v.NumField(); i++ {
-			field := v.Field(i)
-			if field.Kind() == reflect.String {
-				strVal := field.String()
-				// Pass the converted *sync.Map to TemplateString
-				if templated, err := TemplateString(strVal, closure); err == nil {
-					// Check if templating actually changed the value before setting
-					// This avoids unnecessary reflection sets if the string doesn't contain variables
-					if templated != strVal {
-						field.SetString(templated)
-					}
-				} else {
-					// Log or handle templating errors if necessary
-					common.LogWarn("Templating failed for field", map[string]interface{}{
-						"task":  task.Name,
-						"field": v.Type().Field(i).Name,
-						"value": strVal,
-						"error": err.Error(),
-					})
-					// Decide if a templating error should halt compilation
-					// return nil, fmt.Errorf("templating failed for task %s field %s: %w", task.Name, v.Type().Field(i).Name, err)
-				}
-			}
-		}
-		// TODO: Template the params from inventory into the tasks if they exist
-		return task, nil
-	}
-	return Task{}, fmt.Errorf("unknown node type: %T", node)
 }

@@ -167,7 +167,7 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 
 	activity.RecordHeartbeat(ctx, fmt.Sprintf("Starting task %s on host %s", input.TaskDefinition.Name, input.TargetHost.Name))
 
-	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost)
+	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost, input.SpageCoreConfig)
 	if err != nil {
 		logger.Error("Failed to initialize host context", "host", input.TargetHost.Name, "task", input.TaskDefinition.Name, "error", err)
 		return &SpageActivityResult{
@@ -288,7 +288,7 @@ func ExecuteSpageRunOnceLoopActivity(ctx context.Context, input SpageRunOnceLoop
 
 	activity.RecordHeartbeat(ctx, fmt.Sprintf("Starting run_once loop task %s on host %s with %d iterations", input.TaskDefinition.Name, input.TargetHost.Name, len(input.LoopItems)))
 
-	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost)
+	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost, input.SpageCoreConfig)
 	if err != nil {
 		logger.Error("Failed to initialize host context for run_once loop", "host", input.TargetHost.Name, "task", input.TaskDefinition.Name, "error", err)
 		return &SpageRunOnceLoopActivityResult{
@@ -673,7 +673,7 @@ func RevertSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*Sp
 	logger.Debug("RevertSpageTaskActivity started", "task", input.TaskDefinition.Name, "host", input.TargetHost.Name)
 	activity.RecordHeartbeat(ctx, fmt.Sprintf("Starting revert for task %s on host %s", input.TaskDefinition.Name, input.TargetHost.Name))
 
-	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost)
+	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost, input.SpageCoreConfig)
 	if err != nil {
 		logger.Error("Failed to initialize host context for revert", "host", input.TargetHost.Name, "task", input.TaskDefinition.Name, "error", err)
 		return &SpageActivityResult{
@@ -825,7 +825,7 @@ func (e *TemporalGraphExecutor) executeRunOnceWithAllLoops(
 	// Get the first closure for context, handle delegate_to
 	firstClosure := closures[0]
 	if task.DelegateTo != "" {
-		delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, firstClosure)
+		delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, firstClosure, cfg)
 		if err != nil {
 			logger.Error("Failed to resolve delegate_to for run_once task", "task", task.Name, "error", err)
 			// Create an error result and replicate it
@@ -955,7 +955,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 	actualDispatchedTasks := 0 // Renamed from numDispatchedTasks to avoid confusion in the pre-calculation loop
 
 	if isParallelDispatch {
-		countForBuffer, err := CalculateExpectedResults(tasksInLevel, hostContexts)
+		countForBuffer, err := CalculateExpectedResults(tasksInLevel, hostContexts, cfg)
 		if err != nil {
 			errMsg := fmt.Errorf("critical error during pre-count for task closures: %w", err)
 			common.LogError("Dispatch error in loadLevelTasks (pre-count)", map[string]interface{}{"error": errMsg})
@@ -1035,7 +1035,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 				closure := individualClosure
 
 				if task.DelegateTo != "" {
-					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure)
+					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure, cfg)
 					if err != nil {
 						errMsg := fmt.Errorf("failed to resolve delegate_to for task '%s': %w", task.Name, err)
 						common.LogError("Delegate resolution error in loadLevelTasks", map[string]interface{}{"error": errMsg})
@@ -1166,7 +1166,7 @@ func (e *TemporalGraphExecutor) Execute(
 			}
 		}
 
-		numExpectedResultsOnLevel, err := CalculateExpectedResults(tasksInLevel, hostContexts)
+		numExpectedResultsOnLevel, err := CalculateExpectedResults(tasksInLevel, hostContexts, cfg)
 		if err != nil {
 			return fmt.Errorf("failed to calculate expected results for level %d: %w", executionLevel, err)
 		}

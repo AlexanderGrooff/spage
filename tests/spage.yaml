@@ -1,0 +1,13 @@
+logging:
+  level: debug
+  format: plain
+  timestamps: false
+execution_mode: sequential  # sequential  # parallel
+executor: local  # temporal
+#executor: temporal
+
+temporal:
+  address: localhost:7233
+  task_queue: spage_default_task_queue
+  workflow_id_prefix: spage_workflow
+  trigger: true

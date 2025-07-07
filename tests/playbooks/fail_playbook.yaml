@@ -4,13 +4,11 @@
   gather_facts: false
   tasks:
     - name: This task will run
-      debug:
-        msg: "About to test the fail module."
+      shell: echo "About to test the fail module." > /tmp/spage/fail_test.txt
 
     - name: Intentionally fail here with a templated message
       fail:
         msg: "Test Failure"
 
     - name: This task should NOT run
-      debug:
-        msg: "This message should never appear because the playbook should have failed." 
+      shell: echo "This message should never appear because the playbook should have failed." >> /tmp/spage/fail_test.txt

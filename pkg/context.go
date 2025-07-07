@@ -12,6 +12,7 @@ import (
 
 	"github.com/AlexanderGrooff/jinja-go"
 	"github.com/AlexanderGrooff/spage/pkg/common"
+	"github.com/AlexanderGrooff/spage/pkg/config"
 	"github.com/AlexanderGrooff/spage/pkg/runtime"
 
 	"golang.org/x/crypto/ssh"
@@ -25,7 +26,7 @@ type HostContext struct {
 	sshClient *ssh.Client
 }
 
-func InitializeHostContext(host *Host) (*HostContext, error) {
+func InitializeHostContext(host *Host, cfg *config.Config) (*HostContext, error) {
 	hc := &HostContext{
 		Host:    host,
 		Facts:   new(sync.Map),
@@ -55,12 +56,23 @@ func InitializeHostContext(host *Host) (*HostContext, error) {
 			return nil, fmt.Errorf("failed to get current user for SSH connection to %s: %v", host.Host, err)
 		}
 
+		// Configure host key checking based on config
+		var hostKeyCallback ssh.HostKeyCallback
+		if cfg != nil && cfg.HostKeyChecking {
+			// TODO: Implement proper host key checking with known_hosts file
+			// For now, this will accept any host key but warn about it
+			hostKeyCallback = ssh.InsecureIgnoreHostKey()
+			common.LogWarn("Host key checking is enabled but not fully implemented, using insecure host key verification", map[string]interface{}{"host": host.Host})
+		} else {
+			hostKeyCallback = ssh.InsecureIgnoreHostKey()
+		}
+
 		config := &ssh.ClientConfig{
 			User: currentUser.Username, // Use current user's username
 			Auth: []ssh.AuthMethod{
 				ssh.PublicKeysCallback(agentClient.Signers), // Use keys from ssh-agent
 			},
-			HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TODO: Make host key checking configurable
+			HostKeyCallback: hostKeyCallback,
 		}
 
 		// TODO: Make SSH port configurable

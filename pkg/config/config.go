@@ -10,13 +10,14 @@ import (
 
 // Config holds all configuration settings
 type Config struct {
-	Logging       LoggingConfig          `mapstructure:"logging"`
-	ExecutionMode string                 `mapstructure:"execution_mode"`
-	Executor      string                 `mapstructure:"executor"` // "local" or "temporal"
-	Temporal      TemporalConfig         `mapstructure:"temporal"`
-	Revert        bool                   `mapstructure:"revert"`
-	Tags          TagsConfig             `mapstructure:"tags"`
-	Facts         map[string]interface{} `mapstructure:"facts"`
+	Logging         LoggingConfig          `mapstructure:"logging"`
+	ExecutionMode   string                 `mapstructure:"execution_mode"`
+	Executor        string                 `mapstructure:"executor"` // "local" or "temporal"
+	Temporal        TemporalConfig         `mapstructure:"temporal"`
+	Revert          bool                   `mapstructure:"revert"`
+	Tags            TagsConfig             `mapstructure:"tags"`
+	Facts           map[string]interface{} `mapstructure:"facts"`
+	HostKeyChecking bool                   `mapstructure:"host_key_checking"`
 }
 
 // LoggingConfig holds logging-related configuration
@@ -117,6 +118,9 @@ func setDefaults(v *viper.Viper) {
 
 	// Facts default
 	v.SetDefault("facts", map[string]interface{}{})
+
+	// HostKeyChecking default
+	v.SetDefault("host_key_checking", true)
 }
 
 // isValidOutputFormat checks if the given format is supported
