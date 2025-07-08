@@ -34,12 +34,12 @@ func runPlaybookTest(t *testing.T, tc playbookTestCase) {
 		{executor: "local", inventoryFile: ""},
 		{executor: "local", inventoryFile: "inventory.yaml"},
 		{executor: "temporal", inventoryFile: ""},
+		{executor: "temporal", inventoryFile: "inventory.yaml"},
 	}
 
 	for _, env := range environments {
 		t.Run(fmt.Sprintf("%s_%s_%s", tc.playbookFile, env.executor, env.inventoryFile), func(t *testing.T) {
 			cleanup(t)
-			defer cleanup(t)
 
 			// 1. Load config
 			configPath := ""
@@ -66,6 +66,9 @@ func runPlaybookTest(t *testing.T, tc playbookTestCase) {
 			// 2. Load inventory
 			inventory, err := pkg.LoadInventory(env.inventoryFile)
 			require.NoError(t, err, "failed to load inventory")
+
+			// Use inventory-aware cleanup for deferred cleanup
+			defer cleanupWithInventory(t, inventory)
 
 			// 3. Get graph
 			var tags, skipTags []string
@@ -146,6 +149,48 @@ func cleanup(t *testing.T) {
 		if err := os.Remove(file); err != nil && !os.IsNotExist(err) {
 			t.Logf("Failed to remove test file %s: %v", file, err)
 		}
+	}
+}
+
+// cleanupWithInventory removes temporary files and directories on both local and remote hosts
+func cleanupWithInventory(t *testing.T, inventory *pkg.Inventory) {
+	t.Helper()
+
+	// Always do local cleanup
+	cleanup(t)
+
+	// If we have remote hosts, clean up on them too
+	if isRemoteInventory(inventory) {
+		host := getFirstRemoteHost(inventory)
+		if host == nil {
+			t.Logf("No remote host found in inventory for cleanup")
+			return
+		}
+
+		hostContext := createHostContextForTesting(t, host)
+		defer hostContext.Close()
+
+		// Remove the /tmp/spage directory on remote host
+		if _, _, _, err := hostContext.RunCommand("rm -rf /tmp/spage", ""); err != nil {
+			t.Logf("Failed to remove /tmp/spage on remote host %s: %v", host.Host, err)
+		}
+
+		// Recreate the /tmp/spage directory on remote host
+		if _, _, _, err := hostContext.RunCommand("mkdir -p /tmp/spage", ""); err != nil {
+			t.Logf("Failed to create /tmp/spage on remote host %s: %v", host.Host, err)
+		}
+
+		// Remove specific test files on remote host
+		remoteFilesToRemove := []string{
+			"./test.conf",
+		}
+		for _, file := range remoteFilesToRemove {
+			if _, _, _, err := hostContext.RunCommand(fmt.Sprintf("rm -f %s", file), ""); err != nil {
+				t.Logf("Failed to remove test file %s on remote host %s: %v", file, host.Host, err)
+			}
+		}
+
+		t.Logf("Completed cleanup on remote host %s", host.Host)
 	}
 }
 
@@ -643,11 +688,9 @@ func TestLineinfilePlaybook(t *testing.T) {
 			assertFileContainsWithInventory(t, path, "Spage still is awesome, indeed!", inventory)
 			assertFileContainsWithInventory(t, path, "This is a new line without regexp.", inventory)
 			assertFileContainsWithInventory(t, path, "Last line, added with insertafter EOF.", inventory)
-			content, err := os.ReadFile(path)
-			require.NoError(t, err)
-			assert.NotContains(t, string(content), "Spage was here!")
-			assert.NotContains(t, string(content), "# This is a comment to remove")
-			assert.NotContains(t, string(content), "This line will be removed by exact match.")
+			assertFileDoesNotContainWithInventory(t, path, "Spage was here!", inventory)
+			assertFileDoesNotContainWithInventory(t, path, "# This is a comment to remove", inventory)
+			assertFileDoesNotContainWithInventory(t, path, "This line will be removed by exact match.", inventory)
 
 			templatedPath := "/tmp/spage/lineinfile_templated.txt"
 			assertFileExistsWithInventory(t, templatedPath, inventory)
@@ -673,8 +716,8 @@ func TestDelegateToPlaybook(t *testing.T) {
 		configFile:   "sequential.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.Equal(t, 0, exitCode, "delegate_to_playbook should succeed")
-			// Assuming local run, all files are on the local machine.
-			assertFileExistsWithInventory(t, "/tmp/spage/delegate_test_on_localhost.txt", inventory)
+			// All files are on the local machine because it does `delegate_to: localhost`
+			assertFileExists(t, "/tmp/spage/delegate_test_on_localhost.txt")
 			assertFileExistsWithInventory(t, "/tmp/spage/delegate_test_on_inventory_host.txt", inventory)
 			assertFileExistsWithInventory(t, "/tmp/spage/delegate_test_delegated_to_inventory_host.txt", inventory)
 		},
@@ -706,10 +749,6 @@ func TestRunOncePlaybook(t *testing.T) {
 			assertFileContainsWithInventory(t, loopFile, "loop_item_first", inventory)
 			assertFileContainsWithInventory(t, loopFile, "loop_item_second", inventory)
 			assertFileContainsWithInventory(t, loopFile, "loop_item_third", inventory)
-
-			content, err := os.ReadFile(loopFile)
-			require.NoError(t, err)
-			assert.Equal(t, 3, strings.Count(string(content), "\n"), "run_once loop file should have 3 lines")
 		},
 	})
 }

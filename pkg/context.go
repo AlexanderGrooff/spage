@@ -67,10 +67,6 @@ func InitializeHostContext(host *Host, cfg *config.Config) (*HostContext, error)
 						} else {
 							privateKeyAuthMethod = ssh.PublicKeys(signer)
 							hasPrivateKeyFile = true
-							common.LogDebug("Loaded SSH private key from ansible_ssh_private_key_file", map[string]interface{}{
-								"host":     host.Host,
-								"key_path": keyPath,
-							})
 						}
 					}
 				} else {
@@ -102,14 +98,7 @@ func InitializeHostContext(host *Host, cfg *config.Config) (*HostContext, error)
 			} else {
 				agentClient := agent.NewClient(conn)
 				authMethods = append(authMethods, ssh.PublicKeysCallback(agentClient.Signers))
-				common.LogDebug("Added SSH agent authentication method", map[string]interface{}{
-					"host": host.Host,
-				})
 			}
-		} else {
-			common.LogDebug("SSH_AUTH_SOCK not set, skipping SSH agent authentication", map[string]interface{}{
-				"host": host.Host,
-			})
 		}
 
 		// Check if we have any auth methods
@@ -154,7 +143,6 @@ func InitializeHostContext(host *Host, cfg *config.Config) (*HostContext, error)
 			return nil, fmt.Errorf("failed to dial SSH host %s: %w", host.Host, err)
 		}
 		hc.sshClient = client
-		common.DebugOutput("Established SSH connection to %s", host.Host)
 	}
 
 	return hc, nil
