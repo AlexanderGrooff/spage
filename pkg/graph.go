@@ -103,8 +103,10 @@ func (g Graph) SaveToFile(path string) error {
 	fmt.Fprintln(f, "package main")
 	fmt.Fprintln(f)
 	fmt.Fprintln(f, "import (")
+	fmt.Fprintln(f, `    "os"`)
 	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/cmd"`)
 	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/pkg"`)
+	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/pkg/common"`)
 	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/pkg/modules"`)
 	fmt.Fprintln(f, ")")
 	fmt.Fprintln(f)
@@ -587,8 +589,11 @@ func (g Graph) SaveToTemporalWorkflowFile(path string) error {
 	content.WriteString(`package main
 
 import (
+	"os"
+
 	"github.com/AlexanderGrooff/spage/cmd"
 	"github.com/AlexanderGrooff/spage/pkg"
+	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/modules"
 )
 
