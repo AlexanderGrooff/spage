@@ -31,4 +31,4 @@
 
     - name: Show loop run_once result
       debug:
-        msg: "loop run_once result: {{ loop_run_once_result }}" 
+        msg: "loop run_once result: {{ loop_run_once_result }}"

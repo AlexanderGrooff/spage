@@ -419,7 +419,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 
 			closures, err := GetTaskClosures(task, hostCtx)
 			if err != nil {
-				errMsg := fmt.Errorf("critical error: failed to get task closures for task '%s' on host '%s': %w. Aborting level.", task.Name, hostName, err)
+				errMsg := fmt.Errorf("critical error: failed to get task closures for task '%s' on host '%s': %w, aborting level", task.Name, hostName, err)
 				common.LogError("Dispatch error in loadLevelTasks", map[string]interface{}{"error": errMsg})
 				select {
 				case errCh <- errMsg:

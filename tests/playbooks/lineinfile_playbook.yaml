@@ -69,4 +69,4 @@
         path: "{{ templated_dir }}/{{ templated_filename }}"
         line: "{{ templated_content }}"
         create: yes
-        mode: "0644" 
+        mode: "0644"

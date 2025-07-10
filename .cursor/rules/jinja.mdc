@@ -1,6 +1,6 @@
 ---
 description: Whenever changes are being made that involves Jinja templates
-globs: 
+globs:
 alwaysApply: false
 ---
 The Jinja templating engine is provided by jinja-go, which is provided at github.com/AlexanderGrooff/jinja-go. It's a faster version of Jinja/Pongo2, and provides two critical functions:

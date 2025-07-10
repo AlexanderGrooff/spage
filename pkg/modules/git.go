@@ -110,10 +110,14 @@ func (m GitModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.
 
 	revBefore, err := m.GetCurrentRev(gitParams.Dest, closure.HostContext, runAs)
 	if err != nil {
-		m.CloneRepo(gitParams.Repo, gitParams.Dest, closure.HostContext, runAs)
+		if err := m.CloneRepo(gitParams.Repo, gitParams.Dest, closure.HostContext, runAs); err != nil {
+			return nil, err
+		}
 	}
 	if gitParams.Version != "" {
-		m.CheckoutVersion(gitParams.Dest, gitParams.Version, closure.HostContext, runAs)
+		if _, err := m.CheckoutVersion(gitParams.Dest, gitParams.Version, closure.HostContext, runAs); err != nil {
+			return nil, err
+		}
 	}
 	revAfter, err := m.GetCurrentRev(gitParams.Dest, closure.HostContext, runAs)
 	if err != nil {

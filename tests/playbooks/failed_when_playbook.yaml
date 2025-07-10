@@ -72,9 +72,9 @@
       shell: cat /tmp/spage/failed_when_list.txt
       register: list_fail_result
       failed_when:
-        - "'nonexistent pattern' in list_fail_result.stdout"  # False
-        - "'failure pattern' in list_fail_result.stdout"      # True - should cause failure
-        - "list_fail_result.stderr != ''"                     # False
+        - "'nonexistent pattern' in list_fail_result.stdout" # False
+        - "'failure pattern' in list_fail_result.stdout" # True - should cause failure
+        - "list_fail_result.stderr != ''" # False
       ignore_errors: true
 
     - name: Verify list failure task result
@@ -126,9 +126,9 @@
       shell: cat /tmp/spage/changed_when_test.txt
       register: changed_list_result
       changed_when:
-        - "'nonexistent pattern' in changed_list_result.stdout"  # False
+        - "'nonexistent pattern' in changed_list_result.stdout" # False
         - "'testing changed_when' in changed_list_result.stdout" # True - should mark as changed
-        - "changed_list_result.stderr != ''"                     # False
+        - "changed_list_result.stderr != ''" # False
 
     - name: Verify changed result (list conditions)
       assert:
@@ -145,4 +145,4 @@
 
     # This task should NOT run because the previous task failed the playbook
     - name: Task after actual fail (Should NOT run)
-      shell: echo "This should not have executed" > /tmp/spage/failed_when_after_actual_fail.txt 
+      shell: echo "This should not have executed" > /tmp/spage/failed_when_after_actual_fail.txt

@@ -92,7 +92,7 @@ func (r RevertableChange[T]) DiffOutput() (string, error) {
 	if !ok {
 		return "", fmt.Errorf("cannot generate diff for non-string type %T", r.Before)
 	}
-	after, ok := any(r.After).(string) 
+	after, ok := any(r.After).(string)
 	if !ok {
 		return "", fmt.Errorf("cannot generate diff for non-string type %T", r.After)
 	}

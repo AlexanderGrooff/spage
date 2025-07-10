@@ -2,4 +2,4 @@
 - name: Root playbook with roles
   hosts: localhost
   roles:
-    - test_root_role 
+    - test_root_role

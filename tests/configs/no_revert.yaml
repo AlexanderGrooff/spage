@@ -4,6 +4,6 @@ logging:
   timestamps: false
 execution_mode: "parallel"
 executor: "local"
-revert: false 
+revert: false
 temporal:
   trigger: true

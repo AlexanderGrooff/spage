@@ -62,7 +62,14 @@ func RunRemoteCommand(client *ssh.Client, command, username string) (int, string
 		// Include the host address in the error if possible. client.RemoteAddr()
 		return -1, "", "", fmt.Errorf("failed to create ssh session to %s: %w", client.RemoteAddr(), err)
 	}
-	defer session.Close()
+	defer func() {
+		if err := session.Close(); err != nil {
+			common.LogWarn("Failed to close SSH session", map[string]interface{}{
+				"host":  client.RemoteAddr().String(),
+				"error": err.Error(),
+			})
+		}
+	}()
 
 	// Once a Session is created, you can execute a single command on
 	// the remote side using the Run method.

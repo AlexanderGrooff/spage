@@ -30,4 +30,4 @@
         that:
           - slurp_fail_result.failed
           # Check for a part of the expected error message
-          - "'source file not found' in slurp_fail_result.msg" 
+          - "'source file not found' in slurp_fail_result.msg"

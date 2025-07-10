@@ -49,4 +49,4 @@
         that:
           - my_task.rc == 0
           - my_task.attempts == 3
-          - "'succeed' in my_task.stdout" 
+          - "'succeed' in my_task.stdout"

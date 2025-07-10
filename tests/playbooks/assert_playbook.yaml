@@ -16,4 +16,4 @@
 - name: Assert failure with boolean string (should fail)
   assert:
     that:
-      - "false" # Directly asserting a false string 
+      - "false" # Directly asserting a false string

@@ -74,7 +74,7 @@ func (i FileInput) Validate() error {
 		return fmt.Errorf("missing Src input for state=link")
 	}
 	if i.State != "link" && i.Src != "" {
-		return fmt.Errorf("Src parameter is only valid for state=link")
+		return fmt.Errorf("src parameter is only valid for state=link")
 	}
 
 	return nil

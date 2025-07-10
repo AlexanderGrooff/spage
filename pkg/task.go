@@ -200,10 +200,8 @@ func (t *Task) UnmarshalYAML(node *yaml.Node) error {
 		Alias: (*Alias)(t),
 	}
 
-	if err := node.Decode(&auxTask); err != nil {
-		// This might be a partial decode if 'params' is complex and not decoded into auxTask.ParamsNode correctly by default.
-		// Let's try decoding into Alias first, then extract params node if that fails or params is empty.
-	}
+	// Decode into auxTask might fail if 'params' is complex, so we continue with the alternative approach
+	_ = node.Decode(&auxTask) // Ignore error as we use the alternative approach below
 
 	// Attempt to unmarshal everything into the Alias first
 	if err := node.Decode((*Alias)(t)); err != nil {

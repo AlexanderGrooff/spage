@@ -6,7 +6,7 @@
       copy:
         content: "This is a test file for the stat module."
         dest: /tmp/spage/spage_stat_test_file.txt
-        mode: '0644'
+        mode: "0644"
 
     - name: Create a symlink for stat test
       shell:

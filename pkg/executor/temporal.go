@@ -176,7 +176,11 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 			Error:    fmt.Sprintf("failed to initialize host context for task %s: %v", input.TaskDefinition.Name, err),
 		}, nil
 	}
-	defer hostCtx.Close()
+	defer func() {
+		if closeErr := hostCtx.Close(); closeErr != nil {
+			logger.Warn("Failed to close host context", "host", input.TargetHost.Name, "error", closeErr)
+		}
+	}()
 
 	// Load facts from workflow (these are now pre-processed by GetInitialFactsForHost)
 	if input.CurrentHostFacts != nil {
@@ -272,8 +276,7 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 	hostCtx.Facts.Range(func(key, value interface{}) bool {
 		if kStr, ok := key.(string); ok {
 			result.HostFactsSnapshot[kStr] = value
-		} else {
-			// Log or handle non-string keys if necessary, though sync.Map keys are typically strings here.
+			// Non-string keys are ignored as they shouldn't exist in our fact system
 		}
 		return true
 	})
@@ -301,7 +304,11 @@ func ExecuteSpageRunOnceLoopActivity(ctx context.Context, input SpageRunOnceLoop
 			}},
 		}, nil
 	}
-	defer hostCtx.Close()
+	defer func() {
+		if closeErr := hostCtx.Close(); closeErr != nil {
+			logger.Warn("Failed to close host context for run_once loop", "host", input.TargetHost.Name, "error", closeErr)
+		}
+	}()
 
 	// Load facts from workflow
 	if input.CurrentHostFacts != nil {
@@ -478,7 +485,7 @@ func (r *TemporalTaskRunner) ExecuteTask(execCtx workflow.Context, task pkg.Task
 	logger := workflow.GetLogger(execCtx) // Use execCtx for logger too for better context association
 
 	currentHostFacts := closure.GetFacts() // Facts from the closure, prepared by SpageTemporalWorkflow
-	loopItem, _ := closure.ExtraFacts["item"]
+	loopItem := closure.ExtraFacts["item"]
 
 	activityInput := SpageActivityInput{
 		TaskDefinition:   task,
@@ -569,7 +576,7 @@ func (r *TemporalTaskRunner) RevertTask(execCtx workflow.Context, task pkg.Task,
 	logger := workflow.GetLogger(execCtx) // Use execCtx for logger
 
 	currentHostFacts := closure.GetFacts()
-	loopItem, _ := closure.ExtraFacts["item"]
+	loopItem := closure.ExtraFacts["item"]
 
 	taskHistory := make(map[string]interface{})
 	if closure.HostContext != nil && closure.HostContext.History != nil {
@@ -682,7 +689,11 @@ func RevertSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*Sp
 			Error:    fmt.Sprintf("failed to initialize host context for revert task %s: %v", input.TaskDefinition.Name, err),
 		}, nil
 	}
-	defer hostCtx.Close()
+	defer func() {
+		if closeErr := hostCtx.Close(); closeErr != nil {
+			logger.Warn("Failed to close host context for revert", "host", input.TargetHost.Name, "error", closeErr)
+		}
+	}()
 
 	if input.CurrentHostFacts != nil {
 		for k, v := range input.CurrentHostFacts {
@@ -965,8 +976,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 
 		if countForBuffer > 0 {
 			completionCh = workflow.NewBufferedChannel(workflowCtx, countForBuffer)
-		} else {
-			// No tasks to dispatch in parallel, no need for completionCh
+			// else: No tasks to dispatch in parallel, no need for completionCh (completionCh remains nil)
 		}
 	}
 

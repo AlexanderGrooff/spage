@@ -91,7 +91,6 @@ func processIncludeRoleDirective(roleParams interface{}, currentBasePath string)
 		// Handle simple string form: include_role: my_role_name
 		if roleNameStr, okStr := roleParams.(string); okStr {
 			paramsMap = map[string]interface{}{"name": roleNameStr}
-			ok = true
 		} else {
 			return nil, fmt.Errorf("invalid 'include_role' value: expected map or string, got %T", roleParams)
 		}
@@ -124,7 +123,6 @@ func processImportRoleDirective(roleParams interface{}, currentBasePath string) 
 		// Handle simple string form: import_role: my_role_name
 		if roleNameStr, okStr := roleParams.(string); okStr {
 			paramsMap = map[string]interface{}{"name": roleNameStr}
-			ok = true
 		} else {
 			return nil, fmt.Errorf("invalid 'import_role' value: expected map or string, got %T", roleParams)
 		}

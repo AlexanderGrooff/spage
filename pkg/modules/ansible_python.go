@@ -191,7 +191,14 @@ func (m AnsiblePythonModule) executePythonModule(params AnsiblePythonInput, clos
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			common.LogWarn("Failed to remove temp directory", map[string]interface{}{
+				"tempDir": tempDir,
+				"error":   err.Error(),
+			})
+		}
+	}()
 
 	templatedArgs := params.Args
 
@@ -323,7 +330,14 @@ func (m AnsiblePythonModule) executeRemotePythonModule(params AnsiblePythonInput
 
 	// Cleanup session cache at the end if needed
 	if shouldCleanup {
-		defer closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", workingDir), runAs)
+		defer func() {
+			if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", workingDir), runAs); err != nil {
+				common.LogWarn("Failed to cleanup working directory", map[string]interface{}{
+					"workingDir": workingDir,
+					"error":      err,
+				})
+			}
+		}()
 	}
 
 	// Generate the Python execution script
@@ -418,12 +432,6 @@ func (m AnsiblePythonModule) ensureCollectionsOnRemote(moduleName string, closur
 	return nil
 }
 
-// ensureAnsibleBundleOnRemote creates and transfers ansible bundle only if not cached
-func (m AnsiblePythonModule) ensureAnsibleBundleOnRemote(remoteTempDir string, closure *pkg.Closure, runAs, hostKey string) error {
-	// This function is now only called when bundle is not cached
-	return m.transferMinimalAnsibleBundle(remoteTempDir, closure, runAs, hostKey)
-}
-
 // transferMinimalAnsibleBundle creates and transfers only the essential ansible files
 func (m AnsiblePythonModule) transferMinimalAnsibleBundle(remoteTempDir string, closure *pkg.Closure, runAs, hostKey string) error {
 	// Find local ansible installation
@@ -445,8 +453,17 @@ func (m AnsiblePythonModule) transferMinimalAnsibleBundle(remoteTempDir string, 
 		return fmt.Errorf("failed to create local temp file for tarball: %w", err)
 	}
 	localTarPath := localTarFile.Name()
-	defer os.Remove(localTarPath)
-	localTarFile.Close()
+	defer func() {
+		if err := os.Remove(localTarPath); err != nil {
+			common.LogWarn("Failed to remove local tar file", map[string]interface{}{
+				"file":  localTarPath,
+				"error": err.Error(),
+			})
+		}
+	}()
+	if err := localTarFile.Close(); err != nil {
+		return fmt.Errorf("failed to close local tar file: %w", err)
+	}
 
 	// Only include essential ansible core files (not collections)
 	tarArgs := []string{
@@ -582,12 +599,12 @@ import ansible.module_utils.basic
 class MockAnsibleModule:
     def __init__(self, argument_spec, **kwargs):
         self.params = %s
-        
+
     def exit_json(self, **kwargs):
         print(json.dumps(kwargs))
         sys.stdout.flush()
         sys.exit(0)
-        
+
     def fail_json(self, **kwargs):
         kwargs['failed'] = True
         print(json.dumps(kwargs))
@@ -620,7 +637,14 @@ func (m AnsiblePythonModule) executeRemoteScript(pythonScript, workingDir string
 	if err := closure.HostContext.WriteFile(remotePath, pythonScript, runAs); err != nil {
 		return AnsiblePythonOutput{Failed: true, Msg: fmt.Sprintf("Failed to write remote script: %v", err)}, nil
 	}
-	defer closure.HostContext.RunCommand(fmt.Sprintf("rm -f %s", remotePath), runAs)
+	defer func() {
+		if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -f %s", remotePath), runAs); err != nil {
+			common.LogWarn("Failed to cleanup remote script", map[string]interface{}{
+				"remotePath": remotePath,
+				"error":      err,
+			})
+		}
+	}()
 
 	// Build simplified PYTHONPATH command using the working directory
 	pythonPathCmd := fmt.Sprintf(`#!/bin/sh

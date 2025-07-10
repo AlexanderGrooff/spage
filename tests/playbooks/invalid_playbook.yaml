@@ -9,4 +9,4 @@
       file:
         path: /tmp/spage/test.txt
         state: invalid_state
-        mode: "invalid_mode" 
+        mode: "invalid_mode"

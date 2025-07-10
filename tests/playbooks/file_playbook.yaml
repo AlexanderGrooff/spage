@@ -1,150 +1,150 @@
 ---
 - hosts: localhost
   tasks:
-  - name: cleanup old tmpdir
-    file:
-      path: /tmp/spage
-      state: absent
+    - name: cleanup old tmpdir
+      file:
+        path: /tmp/spage
+        state: absent
 
-  - name: create tmpdir
-    file:
-      path: /tmp/spage
-      state: directory
+    - name: create tmpdir
+      file:
+        path: /tmp/spage
+        state: directory
 
-  - name: Create a test file
-    file:
-      path: /tmp/spage/spage_test_file.txt
-      state: touch
+    - name: Create a test file
+      file:
+        path: /tmp/spage/spage_test_file.txt
+        state: touch
 
-  - name: Write content to file
-    copy:
-      content: "This is a test file created by spage\n"
-      dest: /tmp/spage/spage_test_file.txt
+    - name: Write content to file
+      copy:
+        content: "This is a test file created by spage\n"
+        dest: /tmp/spage/spage_test_file.txt
 
-  - name: Set file permissions
-    file:
-      path: /tmp/spage/spage_test_file.txt
-      mode: "0644"
+    - name: Set file permissions
+      file:
+        path: /tmp/spage/spage_test_file.txt
+        mode: "0644"
 
-  - name: Create symlink
-    file:
-      src: /tmp/spage/spage_test_file.txt
-      path: /tmp/spage/spage_test_link.txt
-      state: link
+    - name: Create symlink
+      file:
+        src: /tmp/spage/spage_test_file.txt
+        path: /tmp/spage/spage_test_link.txt
+        state: link
 
-  - name: Stat the link
-    stat:
-      path: /tmp/spage/spage_test_link.txt
-      follow: no
-    register: link_stat
+    - name: Stat the link
+      stat:
+        path: /tmp/spage/spage_test_link.txt
+        follow: no
+      register: link_stat
 
-  - name: Assert link exists
-    assert:
-      that:
-        - link_stat.stat.exists
-        - link_stat.stat.islnk
+    - name: Assert link exists
+      assert:
+        that:
+          - link_stat.stat.exists
+          - link_stat.stat.islnk
 
-  - name: Change link target
-    file:
-      src: /tmp/spage/non_existent_target.txt # Change target
-      path: /tmp/spage/spage_test_link.txt   # Use path instead of dest
-      state: link
-      force: true
+    - name: Change link target
+      file:
+        src: /tmp/spage/non_existent_target.txt # Change target
+        path: /tmp/spage/spage_test_link.txt # Use path instead of dest
+        state: link
+        force: true
 
-  - name: Stat the link again
-    stat:
-      path: /tmp/spage/spage_test_link.txt
-      follow: no
-    register: link_stat_after_change
+    - name: Stat the link again
+      stat:
+        path: /tmp/spage/spage_test_link.txt
+        follow: no
+      register: link_stat_after_change
 
-  - name: Assert link target changed
-    assert:
-      that:
-        - link_stat_after_change.stat.exists
-        - link_stat_after_change.stat.islnk
-        # Need readlink in stat output or a dedicated readlink module to assert target here
+    - name: Assert link target changed
+      assert:
+        that:
+          - link_stat_after_change.stat.exists
+          - link_stat_after_change.stat.islnk
+          # Need readlink in stat output or a dedicated readlink module to assert target here
 
-  - name: Remove the link
-    file:
-      path: /tmp/spage/spage_test_link.txt
-      state: absent
+    - name: Remove the link
+      file:
+        path: /tmp/spage/spage_test_link.txt
+        state: absent
 
-  - name: Stat the link path after removal
-    stat:
-      path: /tmp/spage/spage_test_link.txt
-      follow: no
-    register: link_stat_after_removal
+    - name: Stat the link path after removal
+      stat:
+        path: /tmp/spage/spage_test_link.txt
+        follow: no
+      register: link_stat_after_removal
 
-  - name: Assert link removed
-    assert:
-      that:
-        - not link_stat_after_removal.stat.exists
+    - name: Assert link removed
+      assert:
+        that:
+          - not link_stat_after_removal.stat.exists
 
-  - name: Test 'dest' alias for path
-    file:
-      dest: /tmp/spage/spage_file_test_dest.txt # Using 'dest' alias
-      state: touch
-      mode: '0600'
+    - name: Test 'dest' alias for path
+      file:
+        dest: /tmp/spage/spage_file_test_dest.txt # Using 'dest' alias
+        state: touch
+        mode: "0600"
 
-  - name: Stat file created with 'dest' alias
-    stat:
-      path: /tmp/spage/spage_file_test_dest.txt
-    register: dest_alias_stat
+    - name: Stat file created with 'dest' alias
+      stat:
+        path: /tmp/spage/spage_file_test_dest.txt
+      register: dest_alias_stat
 
-  - name: Debug file
-    shell: stat /tmp/spage/spage_file_test_dest.txt
+    - name: Debug file
+      shell: stat /tmp/spage/spage_file_test_dest.txt
 
-  - name: Assert file created with 'dest' alias
-    assert:
-      that:
-        - dest_alias_stat.stat.exists
-        - dest_alias_stat.stat.isreg
-        - dest_alias_stat.stat.mode == '0600'
+    - name: Assert file created with 'dest' alias
+      assert:
+        that:
+          - dest_alias_stat.stat.exists
+          - dest_alias_stat.stat.isreg
+          - dest_alias_stat.stat.mode == '0600'
 
-  - name: Test 'name' alias for path
-    file:
-      name: /tmp/spage/spage_file_test_name.txt # Using 'name' alias
-      state: directory
-      mode: '0750'
+    - name: Test 'name' alias for path
+      file:
+        name: /tmp/spage/spage_file_test_name.txt # Using 'name' alias
+        state: directory
+        mode: "0750"
 
-  - name: Stat directory created with 'name' alias
-    stat:
-      path: /tmp/spage/spage_file_test_name.txt
-    register: name_alias_stat
+    - name: Stat directory created with 'name' alias
+      stat:
+        path: /tmp/spage/spage_file_test_name.txt
+      register: name_alias_stat
 
-  - name: Assert directory created with 'name' alias
-    assert:
-      that:
-        - name_alias_stat.stat.exists
-        - name_alias_stat.stat.isdir
-        - name_alias_stat.stat.mode == '0750'
+    - name: Assert directory created with 'name' alias
+      assert:
+        that:
+          - name_alias_stat.stat.exists
+          - name_alias_stat.stat.isdir
+          - name_alias_stat.stat.mode == '0750'
 
-  - name: Test 'dest' alias for link creation
-    file:
-      dest: /tmp/spage/spage_file_test_link_dest.txt # Using 'dest' alias
-      src: /tmp/spage/spage_test_file.txt
-      state: link
+    - name: Test 'dest' alias for link creation
+      file:
+        dest: /tmp/spage/spage_file_test_link_dest.txt # Using 'dest' alias
+        src: /tmp/spage/spage_test_file.txt
+        state: link
 
-  - name: Stat link created with 'dest' alias
-    stat:
-      path: /tmp/spage/spage_file_test_link_dest.txt
-      follow: no
-    register: dest_link_alias_stat
+    - name: Stat link created with 'dest' alias
+      stat:
+        path: /tmp/spage/spage_file_test_link_dest.txt
+        follow: no
+      register: dest_link_alias_stat
 
-  - name: Assert link created with 'dest' alias
-    assert:
-      that:
-        - dest_link_alias_stat.stat.exists
-        - dest_link_alias_stat.stat.islnk
+    - name: Assert link created with 'dest' alias
+      assert:
+        that:
+          - dest_link_alias_stat.stat.exists
+          - dest_link_alias_stat.stat.islnk
 
-  - name: set templating facts
-    set_fact:
-      fake_path: "/tmp/spage/testname"
-      fake_mode: "0644"
-      fake_state: "touch"
+    - name: set templating facts
+      set_fact:
+        fake_path: "/tmp/spage/testname"
+        fake_mode: "0644"
+        fake_state: "touch"
 
-  - name: test templating facts
-    file:
-      path: "{{ fake_path }}"
-      mode: "{{ fake_mode }}"
-      state: "{{ fake_state }}"
+    - name: test templating facts
+      file:
+        path: "{{ fake_path }}"
+        mode: "{{ fake_mode }}"
+        state: "{{ fake_state }}"

@@ -174,7 +174,9 @@ func init() {
 	generateCmd.Flags().StringSliceVarP(&tags, "tags", "t", []string{}, "Only include tasks with these tags (comma-separated)")
 	generateCmd.Flags().StringSliceVar(&skipTags, "skip-tags", []string{}, "Skip tasks with these tags (comma-separated)")
 
-	generateCmd.MarkFlagRequired("playbook")
+	if err := generateCmd.MarkFlagRequired("playbook"); err != nil {
+		panic(fmt.Sprintf("failed to mark playbook flag as required: %v", err))
+	}
 
 	runCmd.Flags().StringVarP(&playbookFile, "playbook", "p", "", "Playbook file (required)")
 	runCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file (required)")
@@ -184,7 +186,9 @@ func init() {
 	runCmd.Flags().BoolVar(&checkMode, "check", false, "Enable check mode (dry run)")
 	runCmd.Flags().BoolVar(&diffMode, "diff", false, "Enable diff mode")
 
-	runCmd.MarkFlagRequired("playbook")
+	if err := runCmd.MarkFlagRequired("playbook"); err != nil {
+		panic(fmt.Sprintf("failed to mark playbook flag as required: %v", err))
+	}
 
 	RootCmd.AddCommand(generateCmd)
 	RootCmd.AddCommand(runCmd)

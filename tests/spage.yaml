@@ -2,8 +2,8 @@ logging:
   level: info
   format: plain
   timestamps: false
-execution_mode: sequential  # sequential  # parallel
-executor: local  # temporal
+execution_mode: sequential # sequential  # parallel
+executor: local # temporal
 #executor: temporal
 
 temporal:

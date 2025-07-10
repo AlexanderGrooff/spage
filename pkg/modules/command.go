@@ -1,6 +1,7 @@
 package modules
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 
@@ -123,7 +124,7 @@ func (m CommandModule) templateAndExecute(command string, closure *pkg.Closure, 
 		if stderr != "" {
 			errMsg += fmt.Sprintf("\nstderr: %s", stderr)
 		}
-		return output, fmt.Errorf(errMsg)
+		return output, errors.New(errMsg)
 	}
 	return output, nil
 }

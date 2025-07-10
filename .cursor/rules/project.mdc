@@ -1,6 +1,6 @@
 ---
-description: 
-globs: 
+description:
+globs:
 alwaysApply: true
 ---
 This projects aims to function 'as' Ansible, but hugely more performant. By taking an Ansible playbook + inventory as input, it will generate a Go program that can be compiled for a specific host.

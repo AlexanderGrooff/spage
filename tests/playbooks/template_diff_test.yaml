@@ -6,18 +6,18 @@
       copy:
         content: "Initial content that will be replaced\nOld data here\n"
         dest: "{{ item }}"
-        mode: '0644'
+        mode: "0644"
       loop:
         - /tmp/spage/template_test_file_1.txt
         - /tmp/spage/template_test_base.txt
         - /tmp/spage/template_test_file_3.txt
         - /tmp/spage/template_test_file_4.txt
-      
+
     - name: Task with no diff keyword (should show diff with --diff)
       template:
         src: tests/templates/test_template.j2
         dest: /tmp/spage/template_test_file_1.txt
-        mode: '0644'
+        mode: "0644"
       vars:
         test_var: "World"
 
@@ -28,7 +28,7 @@
       template:
         src: tests/templates/test_template.j2
         dest: /tmp/spage/template_test_base.txt
-        mode: '0644'
+        mode: "0644"
       diff: yes
       vars:
         test_var: "Spage"
@@ -40,7 +40,7 @@
       template:
         src: tests/templates/test_template.j2
         dest: /tmp/spage/template_test_file_3.txt
-        mode: '0644'
+        mode: "0644"
       diff: no
       vars:
         test_var: "Test"
@@ -52,10 +52,10 @@
       template:
         src: tests/templates/test_template.j2
         dest: /tmp/spage/template_test_file_4.txt
-        mode: '0644'
+        mode: "0644"
       diff: yes
       vars:
         test_var: "Different Content"
 
     - name: Create marker for different content task
-      shell: echo "different_content_completed" > /tmp/spage/template_diff_different.txt 
+      shell: echo "different_content_completed" > /tmp/spage/template_diff_different.txt

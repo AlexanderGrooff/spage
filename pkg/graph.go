@@ -95,32 +95,52 @@ func (g Graph) SaveToFile(path string) error {
 	if err != nil {
 		return fmt.Errorf("error creating file: %v", err)
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			common.LogWarn("Failed to close file", map[string]interface{}{
+				"file":  path,
+				"error": closeErr.Error(),
+			})
+		}
+	}()
 	common.LogInfo("Compiling graph to code", map[string]interface{}{
 		"graph": g.String(),
 	})
 
-	fmt.Fprintln(f, "package main")
-	fmt.Fprintln(f)
-	fmt.Fprintln(f, "import (")
-	fmt.Fprintln(f, `    "os"`)
-	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/cmd"`)
-	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/pkg"`)
-	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/pkg/common"`)
-	fmt.Fprintln(f, `    "github.com/AlexanderGrooff/spage/pkg/modules"`)
-	fmt.Fprintln(f, ")")
-	fmt.Fprintln(f)
-	fmt.Fprint(f, g.ToCode())
-	fmt.Fprintln(f)
-	fmt.Fprintln(f, "func main() {")
-	fmt.Fprintln(f, "    err := cmd.EntrypointLocalExecutor(GeneratedGraph)")
-	fmt.Fprintln(f, "    if err != nil {")
-	fmt.Fprintln(f, "        common.LogError(\"Failed to run playbook\", map[string]interface{}{")
-	fmt.Fprintln(f, "            \"error\": err.Error(),")
-	fmt.Fprintln(f, "        })")
-	fmt.Fprintln(f, "        os.Exit(1)")
-	fmt.Fprintln(f, "    }")
-	fmt.Fprintln(f, "}")
+	graphCode := g.ToCode()
+
+	var content strings.Builder
+	content.WriteString(`package main
+
+import (
+    "os"
+    "github.com/AlexanderGrooff/spage/cmd"
+    "github.com/AlexanderGrooff/spage/pkg"
+    "github.com/AlexanderGrooff/spage/pkg/common"
+    "github.com/AlexanderGrooff/spage/pkg/modules"
+)
+
+`)
+
+	// Inject the GeneratedGraph definition
+	content.WriteString(graphCode)
+	content.WriteString("\n")
+	content.WriteString(`func main() {
+    err := cmd.EntrypointLocalExecutor(GeneratedGraph)
+    if err != nil {
+        common.LogError("Failed to run playbook", map[string]interface{}{
+            "error": err.Error(),
+        })
+        os.Exit(1)
+    }
+}
+`)
+
+	_, err = f.WriteString(content.String())
+	if err != nil {
+		return fmt.Errorf("error writing to file %s: %v", path, err)
+	}
+
 	return nil
 }
 
@@ -135,7 +155,7 @@ func (g Graph) SequentialTasks() [][]Task {
 		}
 	}
 
-	var sortedTasks [][]Task = make([][]Task, maxId+1)
+	sortedTasks := make([][]Task, maxId+1)
 	for _, nodes := range g.Tasks {
 		for _, node := range nodes {
 			sortedTasks[node.Id] = []Task{node}
@@ -577,7 +597,14 @@ func (g Graph) SaveToTemporalWorkflowFile(path string) error {
 	if err != nil {
 		return fmt.Errorf("error creating file %s: %v", path, err)
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			common.LogWarn("Failed to close file", map[string]interface{}{
+				"file":  path,
+				"error": closeErr.Error(),
+			})
+		}
+	}()
 
 	common.LogInfo("Generating Temporal workflow runner Go code", map[string]interface{}{
 		"path": path,

@@ -35,4 +35,4 @@
 # Add a failing task to test revert
 - name: Fail to trigger revert (ensure cowsay and sl removed)
   command: /bin/false
-  after: Install list of packages (cowsay, sl) 
+  after: Install list of packages (cowsay, sl)

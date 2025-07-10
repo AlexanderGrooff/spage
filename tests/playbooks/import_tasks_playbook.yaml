@@ -6,4 +6,4 @@
 
 - name: Task After Import
   shell:
-    execute: echo "After import_tasks" > /tmp/spage/import_tasks_after.txt 
+    execute: echo "After import_tasks" > /tmp/spage/import_tasks_after.txt

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
@@ -66,7 +67,14 @@ func copyLocalFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer srcFile.Close()
+	defer func() {
+		if err := srcFile.Close(); err != nil {
+			common.LogWarn("Failed to close source file", map[string]interface{}{
+				"file":  src,
+				"error": err.Error(),
+			})
+		}
+	}()
 
 	srcInfo, err := srcFile.Stat()
 	if err != nil {
@@ -77,7 +85,14 @@ func copyLocalFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer dstFile.Close()
+	defer func() {
+		if err := dstFile.Close(); err != nil {
+			common.LogWarn("Failed to close destination file", map[string]interface{}{
+				"file":  dst,
+				"error": err.Error(),
+			})
+		}
+	}()
 
 	_, err = io.Copy(dstFile, srcFile)
 	return err
@@ -137,7 +152,14 @@ func WriteRemoteFile(sshClient *ssh.Client, remotePath, data string) error {
 	if err != nil {
 		return err
 	}
-	defer sftpClient.Close()
+	defer func() {
+		if err := sftpClient.Close(); err != nil {
+			common.LogWarn("Failed to close SFTP client", map[string]interface{}{
+				"host":  sshClient.RemoteAddr().String(),
+				"error": err.Error(),
+			})
+		}
+	}()
 
 	// Ensure the directory exists
 	remoteDir := filepath.Dir(remotePath)
@@ -153,7 +175,15 @@ func WriteRemoteFile(sshClient *ssh.Client, remotePath, data string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create remote file %s on %s: %w", remotePath, sshClient.RemoteAddr(), err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			common.LogWarn("Failed to close remote file", map[string]interface{}{
+				"file":  remotePath,
+				"host":  sshClient.RemoteAddr().String(),
+				"error": err.Error(),
+			})
+		}
+	}()
 
 	// Write the data
 	if _, err := f.Write([]byte(data)); err != nil {
@@ -169,7 +199,14 @@ func ReadRemoteFileBytes(sshClient *ssh.Client, remotePath string) ([]byte, erro
 	if err != nil {
 		return nil, err
 	}
-	defer sftpClient.Close()
+	defer func() {
+		if err := sftpClient.Close(); err != nil {
+			common.LogWarn("Failed to close SFTP client", map[string]interface{}{
+				"host":  sshClient.RemoteAddr().String(),
+				"error": err.Error(),
+			})
+		}
+	}()
 
 	// Open the remote file
 	f, err := sftpClient.Open(remotePath)
@@ -179,7 +216,15 @@ func ReadRemoteFileBytes(sshClient *ssh.Client, remotePath string) ([]byte, erro
 		}
 		return nil, fmt.Errorf("failed to open remote file %s on %s: %w", remotePath, sshClient.RemoteAddr(), err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			common.LogWarn("Failed to close remote file", map[string]interface{}{
+				"file":  remotePath,
+				"host":  sshClient.RemoteAddr().String(),
+				"error": err.Error(),
+			})
+		}
+	}()
 
 	// Read all bytes from the file
 	data, err := io.ReadAll(f)
@@ -201,7 +246,14 @@ func SetRemoteFileMode(sshClient *ssh.Client, path, modeStr string) error {
 	if err != nil {
 		return err
 	}
-	defer sftpClient.Close()
+	defer func() {
+		if err := sftpClient.Close(); err != nil {
+			common.LogWarn("Failed to close SFTP client", map[string]interface{}{
+				"host":  sshClient.RemoteAddr().String(),
+				"error": err.Error(),
+			})
+		}
+	}()
 
 	// Set the mode using SFTP
 	err = sftpClient.Chmod(path, mode)
@@ -217,7 +269,14 @@ func CopyRemote(sshClient *ssh.Client, src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer sftpClient.Close()
+	defer func() {
+		if err := sftpClient.Close(); err != nil {
+			common.LogWarn("Failed to close SFTP client", map[string]interface{}{
+				"host":  sshClient.RemoteAddr().String(),
+				"error": err.Error(),
+			})
+		}
+	}()
 
 	return copyRemoteRecursive(sftpClient, src, dst)
 }
@@ -256,7 +315,14 @@ func copyRemoteRecursive(sftpClient *sftp.Client, src, dst string) error {
 		if err != nil {
 			return fmt.Errorf("failed to open remote source file %s: %w", src, err)
 		}
-		defer srcFile.Close()
+		defer func() {
+			if err := srcFile.Close(); err != nil {
+				common.LogWarn("Failed to close remote source file", map[string]interface{}{
+					"file":  src,
+					"error": err.Error(),
+				})
+			}
+		}()
 
 		// Ensure destination directory exists before creating file
 		dstDir := filepath.Dir(dst) // filepath.Dir should be okay here
@@ -268,7 +334,14 @@ func copyRemoteRecursive(sftpClient *sftp.Client, src, dst string) error {
 		if err != nil {
 			return fmt.Errorf("failed to create remote destination file %s: %w", dst, err)
 		}
-		defer dstFile.Close()
+		defer func() {
+			if err := dstFile.Close(); err != nil {
+				common.LogWarn("Failed to close remote destination file", map[string]interface{}{
+					"file":  dst,
+					"error": err.Error(),
+				})
+			}
+		}()
 
 		if _, err := io.Copy(dstFile, srcFile); err != nil {
 			return fmt.Errorf("failed to copy content from %s to %s: %w", src, dst, err)

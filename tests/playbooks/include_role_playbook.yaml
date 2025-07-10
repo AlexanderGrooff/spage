@@ -7,4 +7,4 @@
 
 - name: Task After Role Include
   shell:
-    execute: echo "After role" > /tmp/spage/include_role_after.txt 
+    execute: echo "After role" > /tmp/spage/include_role_after.txt

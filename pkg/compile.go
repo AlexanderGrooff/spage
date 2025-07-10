@@ -47,11 +47,12 @@ func parseBoolOrStringBoolValue(block map[string]interface{}, key string, taskNa
 		return v, true, nil
 	case string:
 		lowerV := strings.ToLower(v)
-		if lowerV == "true" || lowerV == "yes" {
+		switch lowerV {
+		case "true", "yes":
 			return true, true, nil
-		} else if lowerV == "false" || lowerV == "no" {
+		case "false", "no":
 			return false, true, nil
-		} else {
+		default:
 			// Invalid string value
 			err = fmt.Errorf("invalid string value (%q) for '%s' key in task %q, expected 'true'/'yes' or 'false'/'no'", v, key, taskName)
 			return false, true, err

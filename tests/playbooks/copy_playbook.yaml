@@ -21,12 +21,12 @@
   shell:
     execute: "grep 'This is a test file created by spage' /tmp/spage/spage_test_file.txt"
   after: Write content to file
-  
+
 - name: Assert file mode is 0777
   shell:
     execute: "stat /tmp/spage/spage_test_file.txt | grep '777'"
   after: Write content to file
-  
+
 - name: show file mode
   shell:
     execute: "stat /tmp/spage/spage_test_file.txt"

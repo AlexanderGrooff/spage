@@ -57,7 +57,12 @@ func ExecuteGraph(executor GraphExecutor, graph Graph, inventoryFile string, cfg
 	}
 	defer func() {
 		for _, hc := range hostContexts {
-			hc.Close()
+			if closeErr := hc.Close(); closeErr != nil {
+				common.LogWarn("Failed to close host context", map[string]interface{}{
+					"host":  hc.Host.Name,
+					"error": closeErr.Error(),
+				})
+			}
 		}
 	}()
 
@@ -85,10 +90,12 @@ func GetHostContexts(inventory *Inventory, graph Graph, cfg *config.Config) (map
 }
 
 func GetOrderedGraph(cfg *config.Config, graph Graph) ([][]Task, error) {
-	if cfg.ExecutionMode == "parallel" {
+	switch cfg.ExecutionMode {
+	case "parallel":
 		return graph.ParallelTasks(), nil
-	} else if cfg.ExecutionMode == "sequential" {
+	case "sequential":
 		return graph.SequentialTasks(), nil
+	default:
+		return nil, fmt.Errorf("unknown or unsupported execution mode: %s", cfg.ExecutionMode)
 	}
-	return nil, fmt.Errorf("unknown or unsupported execution mode: %s", cfg.ExecutionMode)
 }

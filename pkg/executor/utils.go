@@ -144,11 +144,9 @@ func ParseLoop(task pkg.Task, c *pkg.HostContext) ([]interface{}, error) {
 					for i := 0; i < val.Len(); i++ {
 						loopItems[i] = val.Index(i).Interface()
 					}
-				} else {
-					// Fall through to string templating logic below
+					// else: not a slice, fall through to string templating logic below
 				}
-			} else {
-				// Fall through to string templating logic below
+				// else: not found, fall through to string templating logic below
 			}
 		}
 
@@ -271,9 +269,7 @@ func PPrintOutput(output pkg.ModuleOutput, err error) {
 		// Attempt to get a string representation. Assumes ModuleOutput implements fmt.Stringer or can be printed directly.
 		// More sophisticated printing might involve checking specific fields or using a custom Marshal-like method.
 		fmt.Printf("%v\n", output)
-	} else if err != nil {
-		// Error is usually printed by the caller context, so no duplicate print here.
-		// fmt.Printf("Error: %v\n", err) // Avoid double printing of error message
+		// else if err != nil: Error is usually printed by the caller context, so no duplicate print here.
 	}
 }
 

@@ -36,4 +36,4 @@
 
     - name: Task with skip tag
       shell: echo "skip" > /tmp/spage/tag_test_skip.txt
-      tags: skip 
+      tags: skip

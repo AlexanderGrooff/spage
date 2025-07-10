@@ -21,4 +21,4 @@
 
 - name: Task with simple false condition
   shell: echo "This task has a simple false condition" > /tmp/spage/spage_when_test_simple_false.txt
-  when: false 
+  when: false

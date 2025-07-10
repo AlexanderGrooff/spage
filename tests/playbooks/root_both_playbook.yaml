@@ -5,4 +5,4 @@
     - test_root_role
   tasks:
     - name: Additional task in playbook with roles
-      shell: echo "Additional task" >> /tmp/spage/root_playbook_role.txt 
+      shell: echo "Additional task" >> /tmp/spage/root_playbook_role.txt

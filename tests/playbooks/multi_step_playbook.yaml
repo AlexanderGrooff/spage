@@ -20,5 +20,5 @@
         echo "All steps completed successfully"
       else
         exit 1
-      fi 
+      fi
   after: Step 2 - Create second file (depends on step 1)

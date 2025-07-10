@@ -7,4 +7,4 @@
 
 - name: Task After Role Import
   shell:
-    execute: echo "After import_role" > /tmp/spage/import_role_after.txt 
+    execute: echo "After import_role" > /tmp/spage/import_role_after.txt

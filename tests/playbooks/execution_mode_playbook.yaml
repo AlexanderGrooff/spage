@@ -9,4 +9,4 @@
 
 - name: Step 3 - Append if step 2 marker exists
   shell:
-    execute: grep "step2" /tmp/spage/exec_mode_test.txt && echo "step3" >> /tmp/spage/exec_mode_test.txt 
+    execute: grep "step2" /tmp/spage/exec_mode_test.txt && echo "step3" >> /tmp/spage/exec_mode_test.txt

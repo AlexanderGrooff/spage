@@ -31,7 +31,7 @@
       ansible.builtin.copy:
         content: "{{ delegated_to_localhost_content }}"
         dest: "{{ delegated_to_localhost_file }}"
-        mode: '0644'
+        mode: "0644"
       delegate_to: localhost
 
     # Task 2: Create a file on the inventory_hostname (target host)
@@ -39,14 +39,14 @@
       ansible.builtin.copy:
         content: "{{ on_inventory_host_content }}"
         dest: "{{ on_inventory_host_file }}"
-        mode: '0644'
+        mode: "0644"
 
     # Task 3: Create a file on inventory_hostname via delegate_to {{ inventory_hostname }}
     - name: Create file on {{ inventory_hostname }} via delegate_to
       ansible.builtin.copy:
         content: "{{ delegated_to_inventory_host_content }}"
         dest: "{{ delegated_to_inventory_host_file }}"
-        mode: '0644'
+        mode: "0644"
       delegate_to: "{{ inventory_hostname }}"
 
     # Task 4: Create a file using a fact in delegate_to field
@@ -54,7 +54,7 @@
       ansible.builtin.copy:
         content: "{{ delegated_via_fact_content }}"
         dest: "{{ delegated_via_fact_file }}"
-        mode: '0644'
+        mode: "0644"
       delegate_to: "{{ target_hostname }}"
 
     # Verification tasks (these run on inventory_hostname unless delegated)
@@ -111,4 +111,4 @@
           - stat_delegated_via_fact_file.stat.exists
           - "slurp_delegated_via_fact_file.content | b64decode | trim == delegated_via_fact_content"
         fail_msg: "FAIL: Content or existence check for {{ delegated_via_fact_file }} (delegated via fact {{ target_hostname }})"
-        success_msg: "PASS: {{ delegated_via_fact_file }} (delegated via fact {{ target_hostname }})" 
+        success_msg: "PASS: {{ delegated_via_fact_file }} (delegated via fact {{ target_hostname }})"

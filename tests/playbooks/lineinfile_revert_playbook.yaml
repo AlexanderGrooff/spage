@@ -14,4 +14,4 @@
     - name: This task will intentionally fail to trigger revert
       ansible.builtin.shell:
         cmd: "false"
-      register: revert_trigger_shell_fail 
+      register: revert_trigger_shell_fail

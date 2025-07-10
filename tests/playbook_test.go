@@ -101,8 +101,12 @@ func runPlaybookTest(t *testing.T, tc playbookTestCase) {
 				require.Fail(t, "invalid environment: %s", env.executor)
 			}
 
-			wOut.Close()
-			wErr.Close()
+			if err := wOut.Close(); err != nil {
+				t.Logf("Failed to close stdout writer: %v", err)
+			}
+			if err := wErr.Close(); err != nil {
+				t.Logf("Failed to close stderr writer: %v", err)
+			}
 			outBytes, _ := io.ReadAll(rOut)
 			errBytes, _ := io.ReadAll(rErr)
 			os.Stdout = rescueStdout
@@ -130,8 +134,12 @@ func runPlaybookTest(t *testing.T, tc playbookTestCase) {
 // cleanup removes temporary files and directories created during tests.
 func cleanup(t *testing.T) {
 	t.Helper()
-	os.Remove("generated_tasks.go")
-	os.Remove("generated_tasks")
+	if err := os.Remove("generated_tasks.go"); err != nil && !os.IsNotExist(err) {
+		t.Logf("Failed to remove generated_tasks.go: %v", err)
+	}
+	if err := os.Remove("generated_tasks"); err != nil && !os.IsNotExist(err) {
+		t.Logf("Failed to remove generated_tasks: %v", err)
+	}
 
 	err := os.RemoveAll("/tmp/spage")
 	if err != nil && !os.IsNotExist(err) {
@@ -168,7 +176,11 @@ func cleanupWithInventory(t *testing.T, inventory *pkg.Inventory) {
 		}
 
 		hostContext := createHostContextForTesting(t, host)
-		defer hostContext.Close()
+		defer func() {
+			if err := hostContext.Close(); err != nil {
+				t.Logf("Failed to close host context: %v", err)
+			}
+		}()
 
 		// Remove the /tmp/spage directory on remote host
 		if _, _, _, err := hostContext.RunCommand("rm -rf /tmp/spage", ""); err != nil {
@@ -240,9 +252,14 @@ func assertFileExistsWithInventory(t *testing.T, path string, inventory *pkg.Inv
 		host := getFirstRemoteHost(inventory)
 		if host == nil {
 			t.Fatalf("No remote host found in inventory for checking file: %s", path)
+			return
 		}
 		hostContext := createHostContextForTesting(t, host)
-		defer hostContext.Close()
+		defer func() {
+			if err := hostContext.Close(); err != nil {
+				t.Logf("Failed to close host context: %v", err)
+			}
+		}()
 
 		_, err := hostContext.Stat(path, false)
 		assert.NoError(t, err, "Expected file to exist on remote host %s: %s", host.Host, path)
@@ -258,9 +275,14 @@ func assertDirectoryExistsWithInventory(t *testing.T, path string, inventory *pk
 		host := getFirstRemoteHost(inventory)
 		if host == nil {
 			t.Fatalf("No remote host found in inventory for checking directory: %s", path)
+			return
 		}
 		hostContext := createHostContextForTesting(t, host)
-		defer hostContext.Close()
+		defer func() {
+			if err := hostContext.Close(); err != nil {
+				t.Logf("Failed to close host context: %v", err)
+			}
+		}()
 
 		info, err := hostContext.Stat(path, false)
 		require.NoError(t, err, "Expected directory to exist on remote host %s: %s", host.Host, path)
@@ -277,9 +299,14 @@ func assertFileDoesNotExistWithInventory(t *testing.T, path string, inventory *p
 		host := getFirstRemoteHost(inventory)
 		if host == nil {
 			t.Fatalf("No remote host found in inventory for checking file: %s", path)
+			return
 		}
 		hostContext := createHostContextForTesting(t, host)
-		defer hostContext.Close()
+		defer func() {
+			if err := hostContext.Close(); err != nil {
+				t.Logf("Failed to close host context: %v", err)
+			}
+		}()
 
 		_, err := hostContext.Stat(path, false)
 		assert.True(t, os.IsNotExist(err), "Expected file to not exist on remote host %s: %s", host.Host, path)
@@ -295,9 +322,14 @@ func assertFileContainsWithInventory(t *testing.T, path, expectedContent string,
 		host := getFirstRemoteHost(inventory)
 		if host == nil {
 			t.Fatalf("No remote host found in inventory for checking file content: %s", path)
+			return
 		}
 		hostContext := createHostContextForTesting(t, host)
-		defer hostContext.Close()
+		defer func() {
+			if err := hostContext.Close(); err != nil {
+				t.Logf("Failed to close host context: %v", err)
+			}
+		}()
 
 		content, err := hostContext.ReadFile(path, "")
 		require.NoError(t, err, "Failed to read file on remote host %s: %s", host.Host, path)
@@ -314,9 +346,14 @@ func assertFileDoesNotContainWithInventory(t *testing.T, path, unexpectedContent
 		host := getFirstRemoteHost(inventory)
 		if host == nil {
 			t.Fatalf("No remote host found in inventory for checking file content: %s", path)
+			return
 		}
 		hostContext := createHostContextForTesting(t, host)
-		defer hostContext.Close()
+		defer func() {
+			if err := hostContext.Close(); err != nil {
+				t.Logf("Failed to close host context: %v", err)
+			}
+		}()
 
 		content, err := hostContext.ReadFile(path, "")
 		require.NoError(t, err, "Failed to read file on remote host %s: %s", host.Host, path)
@@ -376,7 +413,9 @@ func createTestPlaybook(t *testing.T, name, content string) string {
 	err := os.WriteFile(path, []byte(content), 0644)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		os.Remove(path)
+		if err := os.Remove(path); err != nil {
+			t.Logf("Failed to remove test playbook file %s: %v", path, err)
+		}
 	})
 	return path
 }

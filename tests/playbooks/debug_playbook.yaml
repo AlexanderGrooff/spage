@@ -42,4 +42,4 @@
 
     - name: This debug task (var) should NOT run
       debug:
-        var: another_variable 
+        var: another_variable

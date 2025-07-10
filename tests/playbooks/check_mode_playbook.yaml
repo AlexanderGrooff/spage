@@ -22,7 +22,7 @@
         path: /tmp/spage/check_mode_file1.txt
       register: stat_file1
 
-    - name: Stat file2  
+    - name: Stat file2
       stat:
         path: /tmp/spage/check_mode_file2.txt
       register: stat_file2
@@ -36,15 +36,15 @@
       assert:
         that:
           - "not stat_file1.stat.exists" # file1 should not exist
-          - "stat_file2.stat.exists"     # file2 should exist
+          - "stat_file2.stat.exists" # file2 should exist
           - "not stat_file3.stat.exists" # file3 should not exist
       when: ansible_check_mode
 
     - name: Assertions for normal run
       assert:
         that:
-          - "stat_file1.stat.exists"     # file1 should exist
-          - "stat_file2.stat.exists"     # file2 should exist
+          - "stat_file1.stat.exists" # file1 should exist
+          - "stat_file2.stat.exists" # file2 should exist
           - "not stat_file3.stat.exists" # file3 should not exist
       when: not ansible_check_mode
 

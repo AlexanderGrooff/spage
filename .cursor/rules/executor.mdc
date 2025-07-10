@@ -1,5 +1,5 @@
 ---
-description: 
+description:
 globs: pkg/executor/**,pkg/executor*,pkg/config/*
 alwaysApply: false
 ---

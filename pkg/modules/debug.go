@@ -88,8 +88,7 @@ func (i DebugInput) GetVariableUsage() []string {
 	// For simplicity, let's assume if 'var' is used, its content (the variable name) might be templated if it contains '{{}}'.
 	if strings.Contains(i.Var, "{{") && strings.Contains(i.Var, "}}") {
 		vars = append(vars, pkg.GetVariableUsageFromTemplate(i.Var)...)
-	} else if i.Var != "" {
-		// If 'var' does not contain '{{}}', it's treated as a direct variable name.
+		// else if i.Var != "": If 'var' does not contain '{{}}', it's treated as a direct variable name.
 		// We don't add it to 'vars' here as GetVariableUsage is for template variables.
 		// The logic in Execute will handle resolving it from the closure.
 	}
