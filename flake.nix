@@ -20,6 +20,7 @@
             pkgs.ansible
             pkgs.python312Packages.distutils
             pkgs.python312Packages.setuptools
+            pkgs.pre-commit
             # Add other Go tools or dependencies here if needed, e.g.:
             # pkgs.gopls
             # pkgs.delve
@@ -28,8 +29,10 @@
           # Set environment variables if necessary
           shellHook = ''
             export ANSIBLE_COLLECTIONS_PATH=./.ansible
-            ansible-galaxy collection install community.general --force
+            if [ ! -d ./.ansible ]; then
+              ansible-galaxy collection install community.general --force
+            fi
           '';
         };
       });
-} 
+}

@@ -13,5 +13,8 @@ generated_tasks.go
 generated_tasks
 test.conf
 
+# pre-commit prettier hook
+node_modules
+
 /spage
 /.ansible
