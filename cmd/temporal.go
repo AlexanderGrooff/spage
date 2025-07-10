@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/AlexanderGrooff/spage/pkg"
+	"github.com/AlexanderGrooff/spage/pkg/config"
 	"github.com/AlexanderGrooff/spage/pkg/executor"
 )
 
@@ -16,7 +17,27 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func StartTemporalExecutor(graph pkg.Graph) {
+func StartTemporalExecutor(graph pkg.Graph, inventoryFile string, spageAppConfig *config.Config) error {
+	log.Printf("Preparing to run Temporal worker. Workflow trigger from config: %t", spageAppConfig.Temporal.Trigger)
+
+	// Prepare options for the Temporal worker runner
+	options := executor.RunSpageTemporalWorkerAndWorkflowOptions{
+		Graph:            &graph, // This is the graph code injected above
+		InventoryPath:    inventoryFile,
+		LoadedConfig:     spageAppConfig, // spageAppConfig now contains Temporal settings from config file, env, or defaults
+		WorkflowIDPrefix: spageAppConfig.Temporal.WorkflowIDPrefix,
+	}
+
+	// Run the worker and potentially the workflow
+	err := executor.RunSpageTemporalWorkerAndWorkflow(options)
+	if err != nil {
+		log.Printf("Error running Temporal worker: %v", err)
+		return err
+	}
+	return nil
+}
+
+func EntrypointTemporalExecutor(graph pkg.Graph) error {
 	log.Println("Starting Spage Temporal runner...")
 
 	// Define flags with environment variable fallbacks
@@ -60,14 +81,5 @@ func StartTemporalExecutor(graph pkg.Graph) {
 
 	log.Printf("Preparing to run Temporal worker. Workflow trigger from config: %t", spageAppConfig.Temporal.Trigger)
 
-	// Prepare options for the Temporal worker runner
-	options := executor.RunSpageTemporalWorkerAndWorkflowOptions{
-		Graph:            &graph, // This is the graph code injected above
-		InventoryPath:    *inventoryFile,
-		LoadedConfig:     spageAppConfig, // spageAppConfig now contains Temporal settings from config file, env, or defaults
-		WorkflowIDPrefix: spageAppConfig.Temporal.WorkflowIDPrefix,
-	}
-
-	// Run the worker and potentially the workflow
-	executor.RunSpageTemporalWorkerAndWorkflow(options)
+	return StartTemporalExecutor(graph, *inventoryFile, spageAppConfig)
 }

@@ -1,86 +1,129 @@
 # Spage
 
 This projects aims to function 'as' Ansible, but hugely more performant. By taking an Ansible playbook + inventory as input, it will generate a Go program that can be compiled for a specific host.
-The end result is a generated .go file that can be compiled and shipped to the target host.
+The end result is a generated `.go` file that can be compiled and shipped to the target host.
 
-To create such a program, this project ships the `spage` binary, with which you can target Ansible playbooks + inventories. Output looks like this:
+To create such a program, this project ships the `spage` binary, with which you can target Ansible playbooks + inventories.
 
-```bash
-$ spage generate -p playbook.yaml
-Processing node pkg.TaskNode "ensure were in arch iso" "shell": &{Execute:lsblk -f | grep "/run/archiso/bootmnt" && exit 0 || exit 1 Revert: ModuleInput:<nil>}
-Processing node pkg.TaskNode "create ssh dir" "shell": &{Execute:mkdir -p .ssh Revert: ModuleInput:<nil>}
-Processing node pkg.TaskNode "copy ssh key" "shell": &{Execute:curl -sSL https://github.com/AlexanderGrooff.keys > .ssh/authorized_keys Revert: ModuleInput:<nil>}
-Compiling graph to code:
-- Step 0:
-  - ensure were in arch iso
-  - create ssh dir
-- Step 1:
-  - copy ssh key
-Required inputs:
-Processing node pkg.TaskNode "ensure were in arch iso" "shell": &{Execute:lsblk -f | grep "/run/archiso/bootmnt" && exit 0 || exit 1 Revert: ModuleInput:<nil>}
-Processing node pkg.TaskNode "create ssh dir" "shell": &{Execute:mkdir -p .ssh Revert: ModuleInput:<nil>}
-Processing node pkg.TaskNode "copy ssh key" "shell": &{Execute:curl -sSL https://github.com/AlexanderGrooff.keys > .ssh/authorized_keys Revert: ModuleInput:<nil>}
-Compiling graph to code:
-- Step 0:
-  - ensure were in arch iso
-  - create ssh dir
-- Step 1:
-  - copy ssh key
-Required inputs:
-```
+Key benefits:
+- **(Almost full) Ansible compatibility** - Any playbook that works with Ansible works with Spage
+- **Significantly faster execution** - Compiles to native Go code instead of interpreting Python
+- **No Python dependency** - Single binary that can run anywhere
+- **Extended features** - Built-in parallel execution, automatic rollback on failure, variable usage detection, and support for external executors (like `temporal`)
+- **Same syntax, but extra keywords** - Uses identical YAML playbook format and module parameters, with extra options for parallel execution with `before`/`after`
 
-This will generate a `generated/tasks.go` file, which can be compiled for a specific host. That file looks like this:
-
-```go
-package generated
-
-import (
-    "github.com/AlexanderGrooff/spage/pkg"
-    "github.com/AlexanderGrooff/spage/pkg/modules"
-)
-
-var GeneratedGraph = pkg.Graph{
-  RequiredInputs: []string{
-  },
-  Tasks: [][]pkg.GraphNode{
-      []pkg.GraphNode{
-          pkg.Task{Name: "ensure were in arch iso", Module: "shell", Register: "", Params: modules.ShellInput{Execute: "lsblk -f | grep \"/run/archiso/bootmnt\" && exit 0 || exit 1", Revert: ""}, RunAs: "", When: ""},
-          pkg.Task{Name: "create ssh dir", Module: "shell", Register: "", Params: modules.ShellInput{Execute: "mkdir -p .ssh", Revert: ""}, RunAs: "", When: ""},
-      },
-      []pkg.GraphNode{
-          pkg.Task{Name: "copy ssh key", Module: "shell", Register: "", Params: modules.ShellInput{Execute: "curl -sSL https://github.com/AlexanderGrooff.keys > .ssh/authorized_keys", Revert: ""}, RunAs: "", When: ""},
-      },
-  },
-}
-```
-
-## Project structure
-
-`spage` makes use of modules to execute tasks, just like Ansible. Modules are located in the `pkg/modules` directory. This includes modules such as `shell`, `template`, `systemd`, etc.
-
-## Ansible vs Spage
-
-By default, Spage will generate a program that is functionally identical to Ansible. However, Spage also allows for more complex behavior, such as conditional tasks, multiple hosts, and more.
-Spage acts as a drop-in replacement for Ansible, so any playbook that can be run with Ansible can also be run with Spage. There are extra features that Spage offers:
-
-- Revert functionality: Spage will automatically revert any changes made by a task if the task fails. You can specify a revert task for each task in the playbook.
-- Parallel execution: Spage will automatically parallelize tasks across all hosts, and you can control the flow with `before`/`after`.
-- No Python dependency: Spage is a single binary that can be run on any system.
+Spage works by:
+1. Taking your existing Ansible playbooks and inventory files
+2. Generating Go code that implements the same logic
+3. Compiling this into a single binary for your target environment
+4. Executing tasks with native Go modules where possible, falling back to Python for full compatibility
 
 ## Usage
 
-```bash
-go generate
-# OR
-go run . generate -p playbook.yaml
-# OR
-go run generate_tasks.go -file playbook.yaml
+You can use Spage in two ways:
+1. Generate the Go code that you can then compile and run (using the `spage generate` command)
+2. Run directly across an inventory (using the `spage run` command)
 
-# Run across an inventory
-go run generated/tasks.go -i inventory.yaml
-# Or compile for a specific host and run
-go run generated/tasks.go -i inventory.yaml
+```bash
+# Generate the Go code that you can then compile and run
+spage generate -p playbook.yaml -o generated_tasks.go
+go build -o spage_playbook generated_tasks.go
+./spage_playbook -inventory inventory.yaml
+
+# Or run directly across an inventory
+spage run -i inventory.yaml -p playbook.yaml
 ```
+
+## FAQ
+
+### Q: What is Spage?
+
+**A: Spage is a high-performance drop-in replacement for Ansible** that compiles your
+playbooks into Go programs. You can then utilize the Golang toolchain to compile and run the playbook, either locally or on the target host.
+
+### Q: Why is it called Spage?
+
+**A: It's a reference to [Factorio: Space Age](https://www.factorio.com/space-age/buy).** I build Spage when Space Age was
+not yet released, and I wanted something to do. So while waiting for the release, I 
+found a very funny Reddit comment calling it Spage, and thus Spage was born.
+
+### Q: I have module `x.y.z` from an Ansible Galaxy collection. Is this supported in Spage?
+
+**A: Yes, absolutely!** Spage supports **any** Ansible module, including those from Ansible Galaxy collections, through its Python fallback mechanism. See the [Python Fallback Mechanism](#python-fallback-mechanism) section for more details.
+
+## Python Fallback Mechanism
+
+Spage includes a sophisticated Python fallback mechanism that allows it to execute any Ansible module, even those not natively implemented in Go. This ensures 100% compatibility with the Ansible ecosystem while maintaining performance benefits.
+
+### When Python Fallback is Used
+
+The Python fallback automatically activates when:
+- A module name is not found in Spage's native Go modules
+- You explicitly use the `ansible_python` module type
+- Community collections or custom modules are referenced (e.g., `community.general.setup`, `custom.namespace.module`)
+
+### How It Works
+
+1. **Module Detection**: Spage first attempts to find a native Go implementation of the requested module
+2. **Fallback Activation**: If no native module exists, the Python fallback mechanism engages
+3. **Collection Management**: Required Ansible collections are automatically installed on target hosts if missing
+4. **Bundle Transfer**: Essential Ansible core files (~1.4MB) are transferred to the target host
+5. **Python Execution**: The module is executed using the same Python infrastructure as standard Ansible
+
+### Performance Optimizations
+
+The Python fallback includes several performance optimizations:
+
+- **Collection Caching**: Collections are installed once per host and cached for the session
+- **Multi-Level Bundle Caching**: 
+  - **Permanent Cache**: Long-term cache at `/tmp/spage-ansible-cached` (when permissions allow)
+  - **Session Cache**: Per-session cache at `/tmp/spage-ansible-session` for repeated module calls
+  - **Fresh Transfer**: Only occurs once per session when caches are unavailable
+- **Minimal Bundles**: Only essential Ansible core files are transferred, not the entire Ansible installation
+- **Smart Collection Detection**: Existing collections are detected before attempting installation
+
+### Usage Examples
+
+```yaml
+# Explicit Python fallback
+- name: Use Python fallback for ping module
+  ansible_python:
+    module_name: ping
+    args:
+      data: pong
+
+# Community collection module (automatically uses Python fallback)
+- name: Get Python requirements info
+  community.general.python_requirements_info:
+    dependencies: []
+
+# Custom namespace module
+- name: Use custom module
+  my_company.custom_collection.special_module:
+    param1: value1
+    param2: value2
+```
+
+### Local vs Remote Execution
+
+- **Local Execution**: Uses the local Ansible installation directly with `ansible-playbook`
+- **Remote Execution**: Transfers minimal Ansible bundle and executes via Python with proper `PYTHONPATH` configuration
+
+### Limitations
+
+- Requires Python 3 and pip on target hosts for collection installation
+- Some complex Ansible plugins may have additional dependencies
+- Performance is slower than native Go modules but still benefits from caching optimizations
+- Network transfers are required for initial bundle deployment per session
+
+## Differences between Spage and Ansible
+
+Spage is a drop-in replacement for Ansible, but with some notable differences:
+
+- Playbooks are allowed to start without `- tasks:`. It assumes `hosts: localhost` and runs locally.
+- Tasks are executed in parallel by default based on variable usage.
+- New keywords `before`/`after` are available to control the flow of parallel tasks.
+- The `shell` module has two new parameters: `execute` and `revert`. If you don't specify these options and just use it as you would with Ansible, it will not do anything on revert.
 
 TODO:
 
@@ -89,13 +132,7 @@ TODO:
 - Read `ansible.cfg` variables such as `[defaults] roles_path = roles/:shared_roles/` and `[privilege_escalation] become_flags = -H -S`
 - `vars_prompt` on play
 - `gather_facts` on play
-- `vars` on play
 - Logic for `no_log`
 - Don't allow interactive commands in `temporal` executor, or define an option that allows for signals/disallows interactivity.
 - Plugin support
 - Callback support
-
-## Differences between Spage and Ansible
-
-- Playbooks are allowed to start without `- tasks:`. It assumes `hosts: localhost` and runs locally.
-- Parallel execution mode and reverts tasks by default.

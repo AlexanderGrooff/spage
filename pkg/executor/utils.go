@@ -24,6 +24,7 @@ func InitializeRecapStats(hostContexts map[string]*pkg.HostContext) map[string]m
 func CalculateExpectedResults(
 	tasksInLevel []pkg.Task,
 	hostContexts map[string]*pkg.HostContext,
+	cfg *config.Config,
 ) (int, error) {
 	numExpectedResultsOnLevel := 0
 	for _, task := range tasksInLevel {
@@ -41,7 +42,7 @@ func CalculateExpectedResults(
 			// Create a temporary closure for delegate_to resolution.
 			// The actual host context used for closure calculation depends on delegate_to.
 			resolutionClosure := pkg.ConstructClosure(hc, task)
-			effectiveHostCtx, err := GetDelegatedHostContext(task, hostContexts, resolutionClosure)
+			effectiveHostCtx, err := GetDelegatedHostContext(task, hostContexts, resolutionClosure, cfg)
 			if err != nil {
 				return 0, fmt.Errorf("failed to resolve delegate_to for count on task '%s', host '%s': %w", task.Name, hc.Host.Name, err)
 			}
@@ -63,6 +64,7 @@ func PrepareLevelHistoryAndGetCount(
 	tasksInLevel []pkg.Task,
 	hostContexts map[string]*pkg.HostContext,
 	executionLevel int,
+	cfg *config.Config,
 ) (map[string]chan pkg.Task, int, error) {
 	levelHistoryForRevert := make(map[string]chan pkg.Task)
 	for hostname := range hostContexts {
@@ -71,7 +73,7 @@ func PrepareLevelHistoryAndGetCount(
 		levelHistoryForRevert[hostname] = make(chan pkg.Task, len(tasksInLevel)*2) // Simple heuristic
 	}
 
-	numExpectedResultsOnLevel, err := CalculateExpectedResults(tasksInLevel, hostContexts)
+	numExpectedResultsOnLevel, err := CalculateExpectedResults(tasksInLevel, hostContexts, cfg)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -173,7 +175,7 @@ func ParseLoop(task pkg.Task, c *pkg.HostContext) ([]interface{}, error) {
 	return loopItems, nil
 }
 
-func GetDelegatedHostContext(task pkg.Task, hostContexts map[string]*pkg.HostContext, closure *pkg.Closure) (*pkg.HostContext, error) {
+func GetDelegatedHostContext(task pkg.Task, hostContexts map[string]*pkg.HostContext, closure *pkg.Closure, cfg *config.Config) (*pkg.HostContext, error) {
 	if task.DelegateTo != "" {
 		// Template the delegate_to value in case it contains Jinja variables
 		delegateTo, err := pkg.TemplateString(task.DelegateTo, closure)
@@ -199,7 +201,7 @@ func GetDelegatedHostContext(task pkg.Task, hostContexts map[string]*pkg.HostCon
 			}
 
 			// Initialize host context for localhost
-			localhostContext, err := pkg.InitializeHostContext(localhostHost)
+			localhostContext, err := pkg.InitializeHostContext(localhostHost, cfg)
 			if err != nil {
 				return nil, fmt.Errorf("failed to initialize context for localhost: %w", err)
 			}
@@ -325,8 +327,13 @@ func NewLocalErrorChannel(ch chan error) *LocalErrorChannel {
 }
 
 func (c *LocalErrorChannel) ReceiveError() (error, bool, error) {
-	err, ok := <-c.ch
-	return err, ok, nil
+	// Non-blocking receive to prevent deadlocks in the processing loop.
+	select {
+	case err, ok := <-c.ch:
+		return err, ok, nil
+	default:
+		return nil, true, nil // Channel is open, but no error is present.
+	}
 }
 
 func (c *LocalErrorChannel) IsClosed() bool {
@@ -615,6 +622,12 @@ func SharedProcessLevelResults(
 		}
 
 		if !ok {
+			// Channel closed. Before declaring an error, do one last non-blocking check on the error channel
+			// to catch a race condition where the dispatching goroutine errored out and closed the results channel.
+			if dispatchError, ok, _ := errCh.ReceiveError(); ok && dispatchError != nil {
+				return true, processedTasksOnLevel, fmt.Errorf("dispatch error occurred: %w", dispatchError)
+			}
+
 			// Channel closed
 			if resultsReceived < numExpectedResultsOnLevel {
 				return true, processedTasksOnLevel, fmt.Errorf("results channel closed prematurely on level %d. Expected %d, got %d", executionLevel, numExpectedResultsOnLevel, resultsReceived)

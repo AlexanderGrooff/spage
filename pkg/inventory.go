@@ -29,6 +29,60 @@ func (h Host) String() string {
 	return h.Name
 }
 
+// UnmarshalYAML implements custom YAML unmarshaling for Host to capture unknown fields into Vars
+func (h *Host) UnmarshalYAML(value *yaml.Node) error {
+	// Create a map to capture all YAML data
+	var rawData map[string]interface{}
+	if err := value.Decode(&rawData); err != nil {
+		return err
+	}
+
+	// Initialize Vars map if nil
+	if h.Vars == nil {
+		h.Vars = make(map[string]interface{})
+	}
+
+	// Process known fields
+	if host, ok := rawData["host"]; ok {
+		if hostStr, ok := host.(string); ok {
+			h.Host = hostStr
+		}
+	}
+
+	if groups, ok := rawData["groups"]; ok {
+		if groupsMap, ok := groups.(map[string]interface{}); ok {
+			if h.Groups == nil {
+				h.Groups = make(map[string]string)
+			}
+			for k, v := range groupsMap {
+				if vStr, ok := v.(string); ok {
+					h.Groups[k] = vStr
+				}
+			}
+		}
+	}
+
+	// Put all other fields into Vars (including ansible_ssh_private_key_file)
+	knownFields := map[string]bool{
+		"host":   true,
+		"groups": true,
+	}
+
+	for key, value := range rawData {
+		if !knownFields[key] {
+			h.Vars[key] = value
+		}
+	}
+
+	common.LogDebug("Processed host YAML data", map[string]interface{}{
+		"host":    h.Host,
+		"vars":    h.Vars,
+		"rawData": rawData,
+	})
+
+	return nil
+}
+
 func (h *Host) Prepare() {
 	if h.Vars == nil {
 		h.Vars = make(map[string]interface{})
@@ -110,8 +164,8 @@ func LoadInventory(path string) (*Inventory, error) {
 	return &inventory, nil
 }
 
-func (i Inventory) GetContextForHost(host *Host) (*HostContext, error) {
-	ctx, err := InitializeHostContext(host)
+func (i Inventory) GetContextForHost(host *Host, cfg *config.Config) (*HostContext, error) {
+	ctx, err := InitializeHostContext(host, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +202,7 @@ func GetContextForRun(inventory *Inventory, graph Graph, cfg *config.Config) (ma
 	contexts := make(map[string]*HostContext)
 	for _, host := range inventory.Hosts {
 		common.DebugOutput("Getting context for host %q", host.Name)
-		contexts[host.Name], err = inventory.GetContextForHost(host)
+		contexts[host.Name], err = inventory.GetContextForHost(host, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("could not get context for host '%s' (%s): %w", host.Name, host.Host, err)
 		}

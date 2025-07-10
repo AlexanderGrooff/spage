@@ -42,18 +42,6 @@ func ConstructClosure(c *HostContext, t Task) *Closure {
 	return &closure
 }
 
-func TempClosureForHost(h *Host) *Closure {
-	hostContext, err := InitializeHostContext(h)
-	if err != nil {
-		log.Fatalf("Failed to initialize host context: %v", err)
-	}
-	closure := Closure{
-		HostContext: hostContext,
-		ExtraFacts:  make(map[string]interface{}),
-	}
-	return &closure
-}
-
 func (c *Closure) GetFacts() map[string]interface{} {
 	context := make(map[string]interface{})
 

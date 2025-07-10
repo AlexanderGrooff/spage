@@ -4,44 +4,36 @@
   gather_facts: no
   tasks:
     - name: Task with no tags
-      debug:
-        msg: "This task has no tags"
+      shell: echo "no_tags" > /tmp/spage/tag_test_no_tags.txt
 
     - name: Task with single tag
-      debug:
-        msg: "This task has a single tag 'config'"
+      shell: echo "config" > /tmp/spage/tag_test_single_config.txt
       tags: config
 
     - name: Task with multiple tags
-      debug:
-        msg: "This task has tags 'database' and 'setup'"
+      shell: echo "database_setup" > /tmp/spage/tag_test_multiple_database_setup.txt
       tags:
         - database
         - setup
 
     - name: Task with always tag
-      debug:
-        msg: "This task has 'always' tag and should always run"
+      shell: echo "always" > /tmp/spage/tag_test_always.txt
       tags: always
 
     - name: Task with never tag
-      debug:
-        msg: "This task has 'never' tag and should not run by default"
+      shell: echo "never" > /tmp/spage/tag_test_never.txt
       tags: never
 
     - name: Task with deploy tag
-      debug:
-        msg: "This task has 'deploy' tag"
+      shell: echo "deploy" > /tmp/spage/tag_test_deploy.txt
       tags: deploy
 
     - name: Task with both config and deploy tags
-      debug:
-        msg: "This task has both 'config' and 'deploy' tags"
+      shell: echo "config_deploy" > /tmp/spage/tag_test_config_deploy.txt
       tags:
         - config
         - deploy
 
     - name: Task with skip tag
-      debug:
-        msg: "This task has 'skip' tag and might be skipped"
+      shell: echo "skip" > /tmp/spage/tag_test_skip.txt
       tags: skip 

@@ -21,6 +21,9 @@
       vars:
         test_var: "World"
 
+    - name: Create marker for no diff keyword task
+      shell: echo "no_diff_keyword_completed" > /tmp/spage/template_diff_no_keyword.txt
+
     - name: Task with diff yes (should always show diff)
       template:
         src: tests/templates/test_template.j2
@@ -29,6 +32,9 @@
       diff: yes
       vars:
         test_var: "Spage"
+
+    - name: Create marker for diff yes task
+      shell: echo "diff_yes_completed" > /tmp/spage/template_diff_yes.txt
 
     - name: Task with diff no (should never show diff)
       template:
@@ -39,6 +45,9 @@
       vars:
         test_var: "Test"
 
+    - name: Create marker for diff no task
+      shell: echo "diff_no_completed" > /tmp/spage/template_diff_no.txt
+
     - name: Test template with different content for diff
       template:
         src: tests/templates/test_template.j2
@@ -46,4 +55,7 @@
         mode: '0644'
       diff: yes
       vars:
-        test_var: "Different Content" 
+        test_var: "Different Content"
+
+    - name: Create marker for different content task
+      shell: echo "different_content_completed" > /tmp/spage/template_diff_different.txt 

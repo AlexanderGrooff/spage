@@ -20,6 +20,9 @@
         regexp: "initial content 1"
         line: "changed content 1"
 
+    - name: Create marker for no diff keyword task
+      shell: echo "no_diff_keyword_completed" > /tmp/spage/diff_mode_no_keyword.txt
+
     - name: Task with diff yes (should always show diff)
       lineinfile:
         path: "/tmp/spage/diff_test_file_2.txt"
@@ -27,9 +30,15 @@
         line: "changed content 2"
       diff: yes
 
+    - name: Create marker for diff yes task
+      shell: echo "diff_yes_completed" > /tmp/spage/diff_mode_yes.txt
+
     - name: Task with diff no (should never show diff)
       lineinfile:
         path: "/tmp/spage/diff_test_file_3.txt"
         regexp: "initial content 3"
         line: "changed content 3"
       diff: no
+
+    - name: Create marker for diff no task
+      shell: echo "diff_no_completed" > /tmp/spage/diff_mode_no.txt

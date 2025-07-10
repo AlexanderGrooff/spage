@@ -1,6 +1,0 @@
----
-- name: Root playbook with tasks
-  hosts: localhost
-  tasks:
-    - name: Create a test file with tasks
-      shell: echo "Created by root-level tasks section" > /tmp/spage/root_playbook_tasks.txt

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
@@ -168,7 +167,7 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 
 	activity.RecordHeartbeat(ctx, fmt.Sprintf("Starting task %s on host %s", input.TaskDefinition.Name, input.TargetHost.Name))
 
-	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost)
+	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost, input.SpageCoreConfig)
 	if err != nil {
 		logger.Error("Failed to initialize host context", "host", input.TargetHost.Name, "task", input.TaskDefinition.Name, "error", err)
 		return &SpageActivityResult{
@@ -289,7 +288,7 @@ func ExecuteSpageRunOnceLoopActivity(ctx context.Context, input SpageRunOnceLoop
 
 	activity.RecordHeartbeat(ctx, fmt.Sprintf("Starting run_once loop task %s on host %s with %d iterations", input.TaskDefinition.Name, input.TargetHost.Name, len(input.LoopItems)))
 
-	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost)
+	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost, input.SpageCoreConfig)
 	if err != nil {
 		logger.Error("Failed to initialize host context for run_once loop", "host", input.TargetHost.Name, "task", input.TaskDefinition.Name, "error", err)
 		return &SpageRunOnceLoopActivityResult{
@@ -674,7 +673,7 @@ func RevertSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*Sp
 	logger.Debug("RevertSpageTaskActivity started", "task", input.TaskDefinition.Name, "host", input.TargetHost.Name)
 	activity.RecordHeartbeat(ctx, fmt.Sprintf("Starting revert for task %s on host %s", input.TaskDefinition.Name, input.TargetHost.Name))
 
-	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost)
+	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost, input.SpageCoreConfig)
 	if err != nil {
 		logger.Error("Failed to initialize host context for revert", "host", input.TargetHost.Name, "task", input.TaskDefinition.Name, "error", err)
 		return &SpageActivityResult{
@@ -826,7 +825,7 @@ func (e *TemporalGraphExecutor) executeRunOnceWithAllLoops(
 	// Get the first closure for context, handle delegate_to
 	firstClosure := closures[0]
 	if task.DelegateTo != "" {
-		delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, firstClosure)
+		delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, firstClosure, cfg)
 		if err != nil {
 			logger.Error("Failed to resolve delegate_to for run_once task", "task", task.Name, "error", err)
 			// Create an error result and replicate it
@@ -956,7 +955,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 	actualDispatchedTasks := 0 // Renamed from numDispatchedTasks to avoid confusion in the pre-calculation loop
 
 	if isParallelDispatch {
-		countForBuffer, err := CalculateExpectedResults(tasksInLevel, hostContexts)
+		countForBuffer, err := CalculateExpectedResults(tasksInLevel, hostContexts, cfg)
 		if err != nil {
 			errMsg := fmt.Errorf("critical error during pre-count for task closures: %w", err)
 			common.LogError("Dispatch error in loadLevelTasks (pre-count)", map[string]interface{}{"error": errMsg})
@@ -1036,7 +1035,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 				closure := individualClosure
 
 				if task.DelegateTo != "" {
-					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure)
+					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure, cfg)
 					if err != nil {
 						errMsg := fmt.Errorf("failed to resolve delegate_to for task '%s': %w", task.Name, err)
 						common.LogError("Delegate resolution error in loadLevelTasks", map[string]interface{}{"error": errMsg})
@@ -1167,7 +1166,7 @@ func (e *TemporalGraphExecutor) Execute(
 			}
 		}
 
-		numExpectedResultsOnLevel, err := CalculateExpectedResults(tasksInLevel, hostContexts)
+		numExpectedResultsOnLevel, err := CalculateExpectedResults(tasksInLevel, hostContexts, cfg)
 		if err != nil {
 			return fmt.Errorf("failed to calculate expected results for level %d: %w", executionLevel, err)
 		}
@@ -1456,7 +1455,7 @@ type RunSpageTemporalWorkerAndWorkflowOptions struct {
 
 // RunSpageTemporalWorkerAndWorkflow sets up and runs a Temporal worker for Spage tasks,
 // and can optionally trigger a workflow execution.
-func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOptions) {
+func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOptions) error {
 	spageAppConfig := opts.LoadedConfig
 	if spageAppConfig == nil {
 		common.LogInfo("Warning: No Spage configuration provided to RunSpageTemporalWorkerAndWorkflow. Using a default config.", map[string]interface{}{})
@@ -1485,7 +1484,7 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 	temporalClient, err := client.Dial(clientOpts)
 	if err != nil {
 		common.LogError("Unable to create Temporal client", map[string]interface{}{"error": err})
-		return
+		return err
 	}
 	defer temporalClient.Close()
 
@@ -1506,7 +1505,7 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 	common.LogInfo("Starting Temporal worker on task queue", map[string]interface{}{"task_queue": taskQueue})
 	if err := myWorker.Start(); err != nil {
 		common.LogError("Unable to start worker", map[string]interface{}{"error": err})
-		return
+		return err
 	}
 
 	if spageAppConfig.Temporal.Trigger {
@@ -1532,7 +1531,7 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 		we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, SpageTemporalWorkflow, opts.Graph, opts.InventoryPath, spageAppConfig)
 		if err != nil {
 			common.LogError("Unable to execute SpageTemporalWorkflow", map[string]interface{}{"error": err})
-			return
+			return err
 		}
 		common.LogInfo("Successfully started SpageTemporalWorkflow", map[string]interface{}{"workflow_id": we.GetID(), "run_id": we.GetRunID()})
 
@@ -1541,7 +1540,7 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 		if err != nil {
 			common.LogError("Workflow completed with error", map[string]interface{}{"workflow_id": we.GetID(), "error": err})
 			myWorker.Stop()
-			os.Exit(1)
+			return err
 		} else {
 			common.LogInfo("Workflow completed successfully.", map[string]interface{}{"workflow_id": we.GetID()})
 			myWorker.Stop()
@@ -1553,4 +1552,5 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 		myWorker.Stop()
 		common.LogInfo("Worker stopped.", map[string]interface{}{"task_queue": taskQueue})
 	}
+	return nil
 }

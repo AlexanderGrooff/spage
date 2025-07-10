@@ -99,7 +99,7 @@ func (e *LocalGraphExecutor) Execute(hostContexts map[string]*pkg.HostContext, o
 		default:
 		}
 
-		levelHistoryForRevert, numExpectedResultsOnLevel, err := PrepareLevelHistoryAndGetCount(tasksInLevel, hostContexts, executionLevel)
+		levelHistoryForRevert, numExpectedResultsOnLevel, err := PrepareLevelHistoryAndGetCount(tasksInLevel, hostContexts, executionLevel, cfg)
 		if err != nil {
 			return fmt.Errorf("failed to prepare level history and get count: %w", err)
 		}
@@ -379,7 +379,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				closure := closures[0]
 
 				if task.DelegateTo != "" {
-					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure)
+					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure, cfg)
 					if err != nil {
 						errMsg := fmt.Errorf("failed to resolve delegate_to for run_once task '%s': %w", task.Name, err)
 						common.LogError("Delegate resolution error for run_once task", map[string]interface{}{"error": errMsg})
@@ -431,7 +431,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 			for _, closure := range closures {
 				// Resolve delegate_to if specified
 				if task.DelegateTo != "" {
-					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure)
+					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure, cfg)
 					if err != nil {
 						errMsg := fmt.Errorf("failed to resolve delegate_to for task '%s': %w", task.Name, err)
 						common.LogError("Delegate resolution error in loadLevelTasks", map[string]interface{}{"error": errMsg})
