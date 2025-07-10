@@ -9,8 +9,48 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// splitRolesPaths splits a colon-delimited roles_path string into individual paths
+func splitRolesPaths(rolesPaths string) []string {
+	if rolesPaths == "" {
+		return []string{"roles"} // Default to "roles" directory
+	}
+	paths := strings.Split(rolesPaths, ":")
+	// Filter out empty paths
+	var result []string
+	for _, path := range paths {
+		if strings.TrimSpace(path) != "" {
+			result = append(result, strings.TrimSpace(path))
+		}
+	}
+	if len(result) == 0 {
+		return []string{"roles"} // Fallback to default if all paths are empty
+	}
+	return result
+}
+
+// findRoleInPaths searches for a role in the provided roles paths
+func findRoleInPaths(roleName string, rolesPaths []string, currentBasePath string) (string, error) {
+	for _, rolesPath := range rolesPaths {
+		var rolePath string
+		if filepath.IsAbs(rolesPath) {
+			rolePath = filepath.Join(rolesPath, roleName, "tasks")
+		} else {
+			rolePath = filepath.Join(currentBasePath, rolesPath, roleName, "tasks")
+		}
+
+		// Check if main.yaml or main.yml exists
+		if _, err := os.Stat(filepath.Join(rolePath, "main.yaml")); err == nil {
+			return rolePath, nil
+		}
+		if _, err := os.Stat(filepath.Join(rolePath, "main.yml")); err == nil {
+			return rolePath, nil
+		}
+	}
+	return "", fmt.Errorf("role '%s' not found in any of the roles paths: %v", roleName, rolesPaths)
+}
+
 // processIncludeDirective handles the 'include' directive during preprocessing.
-func processIncludeDirective(includeValue interface{}, currentBasePath string) ([]map[string]interface{}, error) {
+func processIncludeDirective(includeValue interface{}, currentBasePath string, rolesPaths []string) ([]map[string]interface{}, error) {
 	if pathStr, ok := includeValue.(string); ok {
 		absPath := pathStr
 		if !filepath.IsAbs(pathStr) {
@@ -22,7 +62,7 @@ func processIncludeDirective(includeValue interface{}, currentBasePath string) (
 		}
 		// Recursively preprocess the included content, using the included file's directory as the new base path
 		nestedBasePath := filepath.Dir(absPath)
-		nestedBlocks, err := PreprocessPlaybook(includedData, nestedBasePath)
+		nestedBlocks, err := PreprocessPlaybook(includedData, nestedBasePath, rolesPaths)
 		if err != nil {
 			return nil, fmt.Errorf("failed to preprocess included file %s: %w", absPath, err)
 		}
@@ -34,7 +74,7 @@ func processIncludeDirective(includeValue interface{}, currentBasePath string) (
 
 // processImportTasksDirective handles the 'import_tasks' directive during preprocessing.
 // In this static preprocessing model, it behaves identically to processIncludeDirective.
-func processImportTasksDirective(importValue interface{}, currentBasePath string) ([]map[string]interface{}, error) {
+func processImportTasksDirective(importValue interface{}, currentBasePath string, rolesPaths []string) ([]map[string]interface{}, error) {
 	if pathStr, ok := importValue.(string); ok {
 		absPath := pathStr
 		if !filepath.IsAbs(pathStr) {
@@ -46,7 +86,7 @@ func processImportTasksDirective(importValue interface{}, currentBasePath string
 		}
 		// Recursively preprocess the imported content
 		nestedBasePath := filepath.Dir(absPath)
-		nestedBlocks, err := PreprocessPlaybook(importedData, nestedBasePath)
+		nestedBlocks, err := PreprocessPlaybook(importedData, nestedBasePath, rolesPaths)
 		if err != nil {
 			return nil, fmt.Errorf("failed to preprocess imported tasks file %s: %w", absPath, err)
 		}
@@ -85,7 +125,7 @@ func readRoleData(roleDir string) ([]byte, error) {
 }
 
 // processIncludeRoleDirective handles the 'include_role' directive during preprocessing.
-func processIncludeRoleDirective(roleParams interface{}, currentBasePath string) ([]map[string]interface{}, error) {
+func processIncludeRoleDirective(roleParams interface{}, currentBasePath string, rolesPaths []string) ([]map[string]interface{}, error) {
 	paramsMap, ok := roleParams.(map[string]interface{})
 	if !ok {
 		// Handle simple string form: include_role: my_role_name
@@ -101,14 +141,18 @@ func processIncludeRoleDirective(roleParams interface{}, currentBasePath string)
 		return nil, fmt.Errorf("missing or invalid 'name' in include_role directive")
 	}
 
-	roleTasksBasePath := filepath.Join(currentBasePath, "roles", roleName, "tasks")
+	roleTasksBasePath, err := findRoleInPaths(roleName, rolesPaths, currentBasePath)
+	if err != nil {
+		return nil, err
+	}
+
 	roleData, err := readRoleData(roleTasksBasePath)
 	if err != nil {
 		return nil, err
 	}
 
 	// Recursively preprocess the role's tasks, using the role's tasks directory as the base path
-	roleBlocks, err := PreprocessPlaybook(roleData, roleTasksBasePath)
+	roleBlocks, err := PreprocessPlaybook(roleData, roleTasksBasePath, rolesPaths)
 	if err != nil {
 		return nil, fmt.Errorf("failed to preprocess role '%s' tasks from %s: %w", roleName, roleTasksBasePath, err)
 	}
@@ -117,7 +161,7 @@ func processIncludeRoleDirective(roleParams interface{}, currentBasePath string)
 
 // processImportRoleDirective handles the 'import_role' directive during preprocessing.
 // In this static preprocessing model, it behaves identically to processIncludeRoleDirective.
-func processImportRoleDirective(roleParams interface{}, currentBasePath string) ([]map[string]interface{}, error) {
+func processImportRoleDirective(roleParams interface{}, currentBasePath string, rolesPaths []string) ([]map[string]interface{}, error) {
 	paramsMap, ok := roleParams.(map[string]interface{})
 	if !ok {
 		// Handle simple string form: import_role: my_role_name
@@ -133,30 +177,27 @@ func processImportRoleDirective(roleParams interface{}, currentBasePath string) 
 		return nil, fmt.Errorf("missing or invalid 'name' in import_role directive")
 	}
 
-	// Assume roles are in a 'roles' directory relative to the current base path.
-	roleTasksPath := filepath.Join(currentBasePath, "roles", roleName, "tasks", "main.yml")
-
-	roleData, err := os.ReadFile(roleTasksPath)
+	roleTasksBasePath, err := findRoleInPaths(roleName, rolesPaths, currentBasePath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("role tasks file not found for import: %s", roleTasksPath)
-		} else {
-			return nil, fmt.Errorf("failed to read role tasks file for import %s: %w", roleTasksPath, err)
-		}
+		return nil, err
+	}
+
+	roleData, err := readRoleData(roleTasksBasePath)
+	if err != nil {
+		return nil, err
 	}
 
 	// Recursively preprocess the role's tasks
-	roleTasksBasePath := filepath.Dir(roleTasksPath)
-	roleBlocks, err := PreprocessPlaybook(roleData, roleTasksBasePath)
+	roleBlocks, err := PreprocessPlaybook(roleData, roleTasksBasePath, rolesPaths)
 	if err != nil {
-		return nil, fmt.Errorf("failed to preprocess imported role '%s' tasks from %s: %w", roleName, roleTasksPath, err)
+		return nil, fmt.Errorf("failed to preprocess imported role '%s' tasks from %s: %w", roleName, roleTasksBasePath, err)
 	}
 	return roleBlocks, nil
 }
 
 // processPlaybookRoot handles the root level of an Ansible playbook with 'hosts' field
 // and either 'roles' or 'tasks' sections.
-func processPlaybookRoot(playbookRoot map[string]interface{}, currentBasePath string) ([]map[string]interface{}, error) {
+func processPlaybookRoot(playbookRoot map[string]interface{}, currentBasePath string, rolesPaths []string) ([]map[string]interface{}, error) {
 	// Check if this is a playbook root entry (has 'hosts' field)
 	if _, hasHosts := playbookRoot["hosts"]; !hasHosts {
 		return nil, fmt.Errorf("not a playbook root entry: missing 'hosts' field")
@@ -201,7 +242,7 @@ func processPlaybookRoot(playbookRoot map[string]interface{}, currentBasePath st
 
 			// Use the existing include_role processor to handle the role
 			roleParams := map[string]interface{}{"name": roleName}
-			roleBlocks, err := processIncludeRoleDirective(roleParams, currentBasePath)
+			roleBlocks, err := processIncludeRoleDirective(roleParams, currentBasePath, rolesPaths)
 			if err != nil {
 				return nil, fmt.Errorf("failed to process role '%s': %w", roleName, err)
 			}
@@ -267,7 +308,7 @@ func processPlaybookRoot(playbookRoot map[string]interface{}, currentBasePath st
 }
 
 // preprocessorFunc defines the signature for functions that handle meta directives.
-type preprocessorFunc func(value interface{}, basePath string) ([]map[string]interface{}, error)
+type preprocessorFunc func(value interface{}, basePath string, rolesPaths []string) ([]map[string]interface{}, error)
 
 // preprocessorRegistry maps meta directive keywords to their processing functions.
 // Declared here, populated in init() to avoid initialization cycles.
@@ -289,7 +330,7 @@ func init() {
 // preprocessPlaybook takes raw playbook YAML data and a base path,
 // recursively processes registered meta directives (include, import_tasks, etc.),
 // and returns a flattened list of raw task maps ready for parsing.
-func PreprocessPlaybook(data []byte, basePath string) ([]map[string]interface{}, error) {
+func PreprocessPlaybook(data []byte, basePath string, rolesPaths []string) ([]map[string]interface{}, error) {
 	var initialBlocks []map[string]interface{}
 	err := yaml.Unmarshal(data, &initialBlocks)
 	if err != nil {
@@ -302,7 +343,7 @@ func PreprocessPlaybook(data []byte, basePath string) ([]map[string]interface{},
 	for _, block := range initialBlocks {
 		// First check if this block is a playbook root entry (has 'hosts' field)
 		if _, hasHosts := block["hosts"]; hasHosts {
-			rootBlocks, err := processPlaybookRoot(block, basePath)
+			rootBlocks, err := processPlaybookRoot(block, basePath, rolesPaths)
 			if err != nil {
 				processErrors = append(processErrors, fmt.Errorf("error processing playbook root: %w", err))
 			} else {
@@ -315,7 +356,7 @@ func PreprocessPlaybook(data []byte, basePath string) ([]map[string]interface{},
 		processed := false
 		for key, value := range block {
 			if processor, ok := preprocessorRegistry[key]; ok {
-				nestedBlocks, err := processor(value, basePath)
+				nestedBlocks, err := processor(value, basePath, rolesPaths)
 				if err != nil {
 					// Add context to the error, e.g., which directive failed
 					processErrors = append(processErrors, fmt.Errorf("error processing '%s' directive: %w", key, err))

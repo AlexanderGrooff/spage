@@ -51,7 +51,7 @@ func TestProcessPlaybookRoot(t *testing.T) {
 		"roles": []interface{}{"testrole"},
 	}
 
-	result1, err := processPlaybookRoot(playbook1, tmpDir)
+	result1, err := processPlaybookRoot(playbook1, tmpDir, []string{"roles"})
 	if err != nil {
 		t.Errorf("processPlaybookRoot failed for roles: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestProcessPlaybookRoot(t *testing.T) {
 		},
 	}
 
-	result2, err := processPlaybookRoot(playbook2, tmpDir)
+	result2, err := processPlaybookRoot(playbook2, tmpDir, []string{"roles"})
 	if err != nil {
 		t.Errorf("processPlaybookRoot failed for tasks: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestProcessPlaybookRoot(t *testing.T) {
 		},
 	}
 
-	result3, err := processPlaybookRoot(playbook3, tmpDir)
+	result3, err := processPlaybookRoot(playbook3, tmpDir, []string{"roles"})
 	if err != nil {
 		t.Errorf("processPlaybookRoot failed for roles and tasks: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestProcessPlaybookRoot(t *testing.T) {
 		},
 	}
 
-	_, err = processPlaybookRoot(playbook4, tmpDir)
+	_, err = processPlaybookRoot(playbook4, tmpDir, []string{"roles"})
 	if err == nil {
 		t.Error("Expected error for missing hosts field, got nil")
 	}
@@ -141,7 +141,7 @@ func TestProcessPlaybookRoot(t *testing.T) {
 		},
 	}
 
-	result5, err := processPlaybookRoot(playbook5, tmpDir)
+	result5, err := processPlaybookRoot(playbook5, tmpDir, []string{"roles"})
 	if err != nil {
 		t.Errorf("processPlaybookRoot failed for pre/post tasks: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestProcessPlaybookRoot(t *testing.T) {
 		"post_tasks": []interface{}{map[string]interface{}{"name": "Post task", "shell": "echo 'Post'"}},
 	}
 
-	result6, err := processPlaybookRoot(playbook6, tmpDir)
+	result6, err := processPlaybookRoot(playbook6, tmpDir, []string{"roles"})
 	if err != nil {
 		t.Errorf("processPlaybookRoot failed for everything: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestPreprocessPlaybook(t *testing.T) {
 		t.Fatalf("Failed to read playbook: %v", err)
 	}
 
-	processedBlocks, err := PreprocessPlaybook(data, tmpDir)
+	processedBlocks, err := PreprocessPlaybook(data, tmpDir, []string{"roles"})
 	if err != nil {
 		t.Fatalf("PreprocessPlaybook failed: %v", err)
 	}

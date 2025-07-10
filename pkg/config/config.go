@@ -18,6 +18,7 @@ type Config struct {
 	Tags            TagsConfig             `mapstructure:"tags"`
 	Facts           map[string]interface{} `mapstructure:"facts"`
 	HostKeyChecking bool                   `mapstructure:"host_key_checking"`
+	RolesPath       string                 `mapstructure:"roles_path"` // Colon-delimited paths to search for roles
 }
 
 // LoggingConfig holds logging-related configuration
@@ -121,6 +122,9 @@ func setDefaults(v *viper.Viper) {
 
 	// HostKeyChecking default
 	v.SetDefault("host_key_checking", true)
+
+	// RolesPath default
+	v.SetDefault("roles_path", "") // Default to empty, SDK will use default roles
 }
 
 // isValidOutputFormat checks if the given format is supported

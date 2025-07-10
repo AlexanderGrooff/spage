@@ -169,21 +169,41 @@ func (g Graph) ParallelTasks() [][]Task {
 	return g.Tasks
 }
 
-func NewGraphFromFile(path string) (Graph, error) {
+func NewGraphFromFile(path string, rolesPaths string) (Graph, error) {
 	// Read YAML file
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Graph{}, fmt.Errorf("error reading YAML file %s: %v", path, err)
 	}
-	return NewGraphFromPlaybook(data, filepath.Dir(path))
+	return NewGraphFromPlaybook(data, filepath.Dir(path), rolesPaths)
 }
 
-func NewGraphFromPlaybook(data []byte, basePath string) (Graph, error) {
+func NewGraphFromPlaybook(data []byte, basePath string, rolesPaths string) (Graph, error) {
 	// Preprocess the playbook data with current directory as base path
 	if basePath == "" {
 		basePath = "."
 	}
-	processedNodes, err := compile.PreprocessPlaybook(data, basePath)
+
+	// Split the roles paths from the configuration
+	splitRolesPaths := func(rolesPaths string) []string {
+		if rolesPaths == "" {
+			return []string{"roles"} // Default to "roles" directory
+		}
+		paths := strings.Split(rolesPaths, ":")
+		// Filter out empty paths
+		var result []string
+		for _, path := range paths {
+			if strings.TrimSpace(path) != "" {
+				result = append(result, strings.TrimSpace(path))
+			}
+		}
+		if len(result) == 0 {
+			return []string{"roles"} // Fallback to default if all paths are empty
+		}
+		return result
+	}
+
+	processedNodes, err := compile.PreprocessPlaybook(data, basePath, splitRolesPaths(rolesPaths))
 	if err != nil {
 		return Graph{}, fmt.Errorf("error preprocessing playbook data: %w", err)
 	}

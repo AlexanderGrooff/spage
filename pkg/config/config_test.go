@@ -38,9 +38,27 @@ security:
 			configPaths: []string{},
 			want: &Config{
 				Logging: LoggingConfig{
-					Level: "info",
-					File:  "",
+					Level:      "info",
+					File:       "",
+					Format:     "plain",
+					Timestamps: true,
 				},
+				ExecutionMode: "parallel",
+				Executor:      "local",
+				Temporal: TemporalConfig{
+					Address:          "",
+					TaskQueue:        "SPAGE_DEFAULT_TASK_QUEUE",
+					WorkflowIDPrefix: "spage-workflow",
+					Trigger:          false,
+				},
+				Revert: true,
+				Tags: TagsConfig{
+					Tags:     []string{},
+					SkipTags: []string{},
+				},
+				Facts:           nil,
+				HostKeyChecking: true,
+				RolesPath:       "",
 			},
 		},
 		{
@@ -48,9 +66,27 @@ security:
 			configPaths: []string{configPath},
 			want: &Config{
 				Logging: LoggingConfig{
-					Level: "debug",
-					File:  "test.log",
+					Level:      "debug",
+					File:       "test.log",
+					Format:     "plain",
+					Timestamps: true,
 				},
+				ExecutionMode: "parallel",
+				Executor:      "local",
+				Temporal: TemporalConfig{
+					Address:          "",
+					TaskQueue:        "SPAGE_DEFAULT_TASK_QUEUE",
+					WorkflowIDPrefix: "spage-workflow",
+					Trigger:          false,
+				},
+				Revert: true,
+				Tags: TagsConfig{
+					Tags:     []string{},
+					SkipTags: []string{},
+				},
+				Facts:           nil,
+				HostKeyChecking: true,
+				RolesPath:       "",
 			},
 		},
 		{
@@ -62,9 +98,27 @@ security:
 			},
 			want: &Config{
 				Logging: LoggingConfig{
-					Level: "warn",
-					File:  "",
+					Level:      "warn",
+					File:       "",
+					Format:     "plain",
+					Timestamps: true,
 				},
+				ExecutionMode: "parallel",
+				Executor:      "local",
+				Temporal: TemporalConfig{
+					Address:          "",
+					TaskQueue:        "SPAGE_DEFAULT_TASK_QUEUE",
+					WorkflowIDPrefix: "spage-workflow",
+					Trigger:          false,
+				},
+				Revert: true,
+				Tags: TagsConfig{
+					Tags:     []string{},
+					SkipTags: []string{},
+				},
+				Facts:           nil,
+				HostKeyChecking: true,
+				RolesPath:       "",
 			},
 		},
 		{

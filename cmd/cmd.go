@@ -83,7 +83,7 @@ func GetGraph(playbookFile string, tags, skipTags []string, baseConfig *config.C
 		baseConfig.Tags.SkipTags = skipTags
 	}
 
-	graph, err := pkg.NewGraphFromFile(playbookFile)
+	graph, err := pkg.NewGraphFromFile(playbookFile, baseConfig.RolesPath)
 	if err != nil {
 		return pkg.Graph{}, fmt.Errorf("failed to generate graph from playbook: %w", err)
 	}
