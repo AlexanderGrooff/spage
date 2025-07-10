@@ -1,4 +1,20 @@
+---
+description: Whenever tests are changed, or when there is significant changes in behaviour of existing code, or new code being added
+alwaysApply: false
+---
 Tests are done in a comprehensive Go test suite [playbook_test.go](mdc:tests/playbook_test.go) that runs many kinds of playbooks with both local and temporal executors. All modules should be tested in their own playbook to thoroughly check all kinds of behaviour described in the module.
+All possible cases of a module should be tested, including:
+- All fields
+- All possible values for each field
+- All possible combinations of fields
+- All possible values for each field
+- Revert functionality
+- Parallel execution
+- Variable usage detection
+- Templating
+- Inventory file usage
+- Host file usage
+- Delegate to functionality
 
 When writing testcases, think of the following:
 - Does it work on both local and temporal executors?
