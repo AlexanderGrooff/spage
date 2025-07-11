@@ -559,91 +559,13 @@ func (e *LocalGraphExecutor) executeHandlers(
 			// Mark the handler as executed
 			hostCtx.HandlerTracker.MarkExecuted(handler.Name)
 
-			// Process the result like a regular task
-			if result.Closure == nil || result.Closure.HostContext == nil || result.Closure.HostContext.Host == nil {
-				common.LogError("Handler result has nil context", map[string]interface{}{
-					"handler": handler.Name,
-					"host":    hostname,
-				})
-				continue
+			// Process the handler result using shared logic
+			processor := &ResultProcessor{
+				ExecutionLevel: -1, // Handlers don't have execution levels
+				Logger:         NewLocalLogger(),
+				Config:         cfg,
 			}
-
-			// Update recap stats
-			if _, exists := recapStats[hostname]; !exists {
-				recapStats[hostname] = map[string]int{"ok": 0, "changed": 0, "failed": 0, "skipped": 0, "ignored": 0}
-			}
-
-			// Store handler output in history
-			if result.Closure.HostContext.History != nil {
-				result.Closure.HostContext.History.Store(handler.Name, result.Output)
-			}
-
-			// Print handler execution result
-			if cfg.Logging.Format == "plain" {
-				fmt.Printf("\nHANDLER TASK [%s] (%s) *************************************\n", handler.Name, hostname)
-			}
-
-			// Handle result and update stats
-			var ignoredErr *pkg.IgnoredTaskError
-			if result.Error != nil {
-				if errors.As(result.Error, &ignoredErr) {
-					recapStats[hostname]["ignored"]++
-					if cfg.Logging.Format == "plain" {
-						fmt.Printf("ignored: [%s] => %v\n", hostname, ignoredErr.Unwrap())
-					} else {
-						common.LogWarn("Handler task ignored", map[string]interface{}{
-							"handler": handler.Name,
-							"host":    hostname,
-							"error":   ignoredErr.Unwrap().Error(),
-						})
-					}
-				} else {
-					recapStats[hostname]["failed"]++
-					if cfg.Logging.Format == "plain" {
-						fmt.Printf("failed: [%s] => %v\n", hostname, result.Error)
-						PPrintOutput(result.Output, result.Error)
-					} else {
-						common.LogError("Handler task failed", map[string]interface{}{
-							"handler": handler.Name,
-							"host":    hostname,
-							"error":   result.Error.Error(),
-						})
-					}
-					// Continue with other handlers even if one fails
-				}
-			} else if result.Status == pkg.TaskStatusSkipped {
-				recapStats[hostname]["skipped"]++
-				if cfg.Logging.Format == "plain" {
-					fmt.Printf("skipped: [%s]\n", hostname)
-				} else {
-					common.LogInfo("Handler task skipped", map[string]interface{}{
-						"handler": handler.Name,
-						"host":    hostname,
-					})
-				}
-			} else if result.Status == pkg.TaskStatusChanged {
-				recapStats[hostname]["changed"]++
-				if cfg.Logging.Format == "plain" {
-					fmt.Printf("changed: [%s]\n", hostname)
-					PPrintOutput(result.Output, nil)
-				} else {
-					common.LogInfo("Handler task changed", map[string]interface{}{
-						"handler": handler.Name,
-						"host":    hostname,
-					})
-				}
-			} else {
-				recapStats[hostname]["ok"]++
-				if cfg.Logging.Format == "plain" {
-					fmt.Printf("ok: [%s]\n", hostname)
-					PPrintOutput(result.Output, nil)
-				} else {
-					common.LogInfo("Handler task ok", map[string]interface{}{
-						"handler": handler.Name,
-						"host":    hostname,
-					})
-				}
-			}
+			processor.ProcessHandlerResult(result, recapStats)
 		}
 	}
 

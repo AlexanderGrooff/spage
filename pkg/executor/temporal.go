@@ -1397,61 +1397,21 @@ func (e *TemporalGraphExecutor) executeHandlers(
 			// Mark the handler as executed
 			hostCtx.HandlerTracker.MarkExecuted(handler.Name)
 
-			// Process the result
-			if result.Closure == nil || result.Closure.HostContext == nil || result.Closure.HostContext.Host == nil {
-				logger.Error("Handler result has nil context", "handler", handler.Name, "host", hostname)
-				continue
-			}
-
-			// Update recap stats
-			if _, exists := recapStats[hostname]; !exists {
-				recapStats[hostname] = map[string]int{"ok": 0, "changed": 0, "failed": 0, "skipped": 0, "ignored": 0}
-			}
-
-			// Handle the result based on the ExecutionSpecificOutput (SpageActivityResult)
+			// Handle temporal-specific fact registration first
 			if activityResult, ok := result.ExecutionSpecificOutput.(SpageActivityResult); ok {
-				// Process handler result similar to regular task results
 				if errFact := processActivityResultAndRegisterFacts(workflowCtx, activityResult, handler.Name, hostname, workflowHostFacts, hostContexts); errFact != nil {
 					logger.Error("Handler task reported an error after fact registration", "handler", handler.Name, "host", hostname, "error", errFact)
-					recapStats[hostname]["failed"]++
-				} else if activityResult.Error != "" && !activityResult.Ignored {
-					logger.Error("Handler task failed", "handler", handler.Name, "host", hostname, "error", activityResult.Error)
-					recapStats[hostname]["failed"]++
-				} else if activityResult.Ignored {
-					logger.Warn("Handler task ignored", "handler", handler.Name, "host", hostname, "error", activityResult.Error)
-					recapStats[hostname]["ignored"]++
-				} else if activityResult.Skipped {
-					logger.Info("Handler task skipped", "handler", handler.Name, "host", hostname)
-					recapStats[hostname]["skipped"]++
-				} else if activityResult.Changed {
-					logger.Info("Handler task changed", "handler", handler.Name, "host", hostname)
-					recapStats[hostname]["changed"]++
-				} else {
-					logger.Info("Handler task ok", "handler", handler.Name, "host", hostname)
-					recapStats[hostname]["ok"]++
-				}
-			} else {
-				// Fallback to TaskResult analysis if no SpageActivityResult
-				if result.Error != nil {
-					var ignoredErr *pkg.IgnoredTaskError
-					if errors.As(result.Error, &ignoredErr) {
-						logger.Warn("Handler task ignored", "handler", handler.Name, "host", hostname, "error", ignoredErr.Unwrap().Error())
-						recapStats[hostname]["ignored"]++
-					} else {
-						logger.Error("Handler task failed", "handler", handler.Name, "host", hostname, "error", result.Error.Error())
-						recapStats[hostname]["failed"]++
-					}
-				} else if result.Status == pkg.TaskStatusSkipped {
-					logger.Info("Handler task skipped", "handler", handler.Name, "host", hostname)
-					recapStats[hostname]["skipped"]++
-				} else if result.Status == pkg.TaskStatusChanged {
-					logger.Info("Handler task changed", "handler", handler.Name, "host", hostname)
-					recapStats[hostname]["changed"]++
-				} else {
-					logger.Info("Handler task ok", "handler", handler.Name, "host", hostname)
-					recapStats[hostname]["ok"]++
+					// Continue processing - the shared processor will handle the result display
 				}
 			}
+
+			// Process the handler result using shared logic
+			processor := &ResultProcessor{
+				ExecutionLevel: -1, // Handlers don't have execution levels
+				Logger:         NewTemporalLogger(workflowCtx),
+				Config:         cfg,
+			}
+			processor.ProcessHandlerResult(result, recapStats)
 		}
 	}
 

@@ -454,17 +454,39 @@ type ResultProcessor struct {
 	Config         *config.Config
 }
 
-// ProcessSingleResult handles the common logic for processing a single task result
+// ProcessTaskResult handles the common logic for processing a single task result
 // Returns whether the result represents a hard error that should stop execution
-func (rp *ResultProcessor) ProcessSingleResult(
+func (rp *ResultProcessor) ProcessTaskResult(
 	result pkg.TaskResult,
 	recapStats map[string]map[string]int,
 	executionHistoryLevel map[string]chan pkg.Task,
 ) bool {
+	return rp.processResult(result, recapStats, executionHistoryLevel, "TASK", true)
+}
+
+// ProcessHandlerResult handles the common logic for processing a single handler result
+// Returns whether the result represents a hard error (always false for handlers - they continue on error)
+func (rp *ResultProcessor) ProcessHandlerResult(
+	result pkg.TaskResult,
+	recapStats map[string]map[string]int,
+) bool {
+	return rp.processResult(result, recapStats, nil, "HANDLER TASK", false)
+}
+
+// processResult handles the common logic for processing both task and handler results
+// taskType should be "TASK" or "HANDLER TASK"
+// stopOnError determines if errors should halt execution (true for tasks, false for handlers)
+func (rp *ResultProcessor) processResult(
+	result pkg.TaskResult,
+	recapStats map[string]map[string]int,
+	executionHistoryLevel map[string]chan pkg.Task,
+	taskType string,
+	stopOnError bool,
+) bool {
 	if result.Closure == nil || result.Closure.HostContext == nil || result.Closure.HostContext.Host == nil {
 		rp.Logger.Error("Received TaskResult with nil Closure/HostContext/Host",
-			"level", rp.ExecutionLevel, "result_task_name", result.Task.Name)
-		return true
+			"level", rp.ExecutionLevel, "result_task_name", result.Task.Name, "task_type", taskType)
+		return stopOnError
 	}
 
 	hostname := result.Closure.HostContext.Host.Name
@@ -475,7 +497,7 @@ func (rp *ResultProcessor) ProcessSingleResult(
 		recapStats[hostname] = map[string]int{"ok": 0, "changed": 0, "failed": 0, "skipped": 0, "ignored": 0}
 	}
 
-	// Handle task history recording for local executor
+	// Handle task history recording for local executor (only for regular tasks)
 	if executionHistoryLevel != nil {
 		if hostChan, ok := executionHistoryLevel[hostname]; ok {
 			select {
@@ -494,14 +516,15 @@ func (rp *ResultProcessor) ProcessSingleResult(
 
 	// Print task header for plain format
 	if rp.Config.Logging.Format == "plain" {
-		fmt.Printf("\nTASK [%s] (%s) ****************************************************\n", task.Name, hostname)
+		fmt.Printf("\n%s [%s] (%s) ****************************************************\n", taskType, task.Name, hostname)
 	}
 
 	logData := map[string]interface{}{
-		"host":     hostname,
-		"task":     task.Name,
-		"duration": result.Duration.String(),
-		"status":   result.Status.String(),
+		"host":      hostname,
+		"task":      task.Name,
+		"task_type": taskType,
+		"duration":  result.Duration.String(),
+		"status":    result.Status.String(),
 	}
 
 	var ignoredErrWrapper *pkg.IgnoredTaskError
@@ -521,13 +544,13 @@ func (rp *ResultProcessor) ProcessSingleResult(
 		}
 
 		if rp.Config.Logging.Format == "plain" {
-			fmt.Printf("failed: [%s] => (ignored error: %v)\n", hostname, originalErr)
+			fmt.Printf("ignored: [%s] => %v\n", hostname, originalErr)
 			PPrintOutput(result.Output, originalErr)
 		} else {
-			rp.Logger.Warn("Task failed (ignored)", logData)
+			rp.Logger.Warn(taskType+" failed (ignored)", logData)
 		}
 	} else if result.Error != nil {
-		isHardError = true
+		isHardError = stopOnError // Only consider it a hard error if we should stop on error
 		logData["error"] = result.Error.Error()
 		if result.Output != nil {
 			logData["output"] = result.Output.String()
@@ -540,7 +563,7 @@ func (rp *ResultProcessor) ProcessSingleResult(
 			fmt.Printf("failed: [%s] => (%v)\n", hostname, result.Error)
 			PPrintOutput(result.Output, result.Error)
 		} else {
-			rp.Logger.Error("Task failed", logData)
+			rp.Logger.Error(taskType+" failed", logData)
 		}
 	} else {
 		switch result.Status {
@@ -552,11 +575,15 @@ func (rp *ResultProcessor) ProcessSingleResult(
 			recapStats[hostname]["changed"]++
 			if rp.Config.Logging.Format == "plain" {
 				fmt.Printf("changed: [%s] => \n%v\n", hostname, result.Output)
+			} else {
+				rp.Logger.Info(taskType+" changed", logData)
 			}
 		case pkg.TaskStatusSkipped:
 			recapStats[hostname]["skipped"]++
 			if rp.Config.Logging.Format == "plain" {
 				fmt.Printf("skipped: [%s]\n", hostname)
+			} else {
+				rp.Logger.Info(taskType+" skipped", logData)
 			}
 		default:
 			logData["changed"] = false
@@ -566,13 +593,25 @@ func (rp *ResultProcessor) ProcessSingleResult(
 			recapStats[hostname]["ok"]++
 			if rp.Config.Logging.Format == "plain" {
 				fmt.Printf("ok: [%s]\n", hostname)
+				PPrintOutput(result.Output, nil)
 			} else {
-				rp.Logger.Info("Task ok", logData)
+				rp.Logger.Info(taskType+" ok", logData)
 			}
 		}
 	}
 
 	return isHardError
+}
+
+// ProcessSingleResult handles the common logic for processing a single task result
+// Returns whether the result represents a hard error that should stop execution
+// DEPRECATED: Use ProcessTaskResult instead
+func (rp *ResultProcessor) ProcessSingleResult(
+	result pkg.TaskResult,
+	recapStats map[string]map[string]int,
+	executionHistoryLevel map[string]chan pkg.Task,
+) bool {
+	return rp.ProcessTaskResult(result, recapStats, executionHistoryLevel)
 }
 
 // SharedProcessLevelResults contains the common logic for processing level results
@@ -644,7 +683,7 @@ func SharedProcessLevelResults(
 		}
 
 		// Process the individual result
-		if processor.ProcessSingleResult(result, recapStats, executionHistoryLevel) {
+		if processor.ProcessTaskResult(result, recapStats, executionHistoryLevel) {
 			levelHardErrored = true
 
 			// In sequential mode, stop processing further results
