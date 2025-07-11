@@ -15,7 +15,7 @@
 
     - name: Task with no diff keyword (should show diff with --diff)
       template:
-        src: tests/templates/test_template.j2
+        src: templates/test_template.j2
         dest: /tmp/spage/template_test_file_1.txt
         mode: "0644"
       vars:
@@ -26,7 +26,7 @@
 
     - name: Task with diff yes (should always show diff)
       template:
-        src: tests/templates/test_template.j2
+        src: templates/test_template.j2
         dest: /tmp/spage/template_test_base.txt
         mode: "0644"
       diff: yes
@@ -38,7 +38,7 @@
 
     - name: Task with diff no (should never show diff)
       template:
-        src: tests/templates/test_template.j2
+        src: templates/test_template.j2
         dest: /tmp/spage/template_test_file_3.txt
         mode: "0644"
       diff: no
@@ -50,7 +50,7 @@
 
     - name: Test template with different content for diff
       template:
-        src: tests/templates/test_template.j2
+        src: templates/test_template.j2
         dest: /tmp/spage/template_test_file_4.txt
         mode: "0644"
       diff: yes

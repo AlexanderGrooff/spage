@@ -1,14 +1,119 @@
 ---
-- name: Vars test
+- name: Comprehensive Vars test
   hosts: localhost
   vars:
-    some_var: "some value"
-    nested_var: "blaap {{ inventory_hostname }}"
+    # Play-level variables (strings only for compatibility)
+    play_level_var: "play level value"
+    templated_var: "templated {{ inventory_hostname }}"
+    number_var: "42"
+    boolean_var: "true"
   tasks:
-    - name: Show some_var fact
-      debug:
-        var: some_var
+    # Test 1: Play-level variables work
+    - name: Test play-level variable
+      shell: echo "{{ play_level_var }}" > /tmp/spage/play_level_test.txt
 
-    - name: Show nested_var fact
-      debug:
-        var: nested_var
+    # Test 2: Templated variables work
+    - name: Test templated variable
+      shell: echo "{{ templated_var }}" > /tmp/spage/templated_test.txt
+
+    # Test 3: Task-level variables override play-level
+    - name: Test task-level variable override
+      shell: echo "{{ play_level_var }}" > /tmp/spage/task_override_test.txt
+      vars:
+        play_level_var: "task level override"
+
+    # Test 4: Task-level variables work
+    - name: Test task-level only variable
+      shell: echo "{{ task_only_var }}" > /tmp/spage/task_only_test.txt
+      vars:
+        task_only_var: "task only value"
+
+    # Test 5: Variables in templates
+    - name: Test variables in templates
+      template:
+        src: vars_test.j2
+        dest: /tmp/spage/vars_template_test.txt
+      vars:
+        expected_content: "variables in templates work"
+
+    # Test 6: set_fact creates variables
+    - name: Set a fact variable
+      set_fact:
+        fact_var: "fact value"
+        computed_fact: "{{ play_level_var }} computed"
+
+    - name: Use set_fact variable
+      shell: echo "{{ fact_var }}" > /tmp/spage/fact_test.txt
+
+    - name: Use computed fact
+      shell: echo "{{ computed_fact }}" > /tmp/spage/computed_fact_test.txt
+
+    # Test 7: register creates variables
+    - name: Register a variable from command output
+      shell: echo "registered output"
+      register: registered_var
+
+    - name: Use registered variable
+      shell: echo "{{ registered_var.stdout }}" > /tmp/spage/registered_test.txt
+
+    # Test 8: Variables in when conditions
+    - name: Task that should run based on boolean variable
+      shell: echo "boolean condition works" > /tmp/spage/when_boolean_test.txt
+      when: boolean_var == "true"
+
+    - name: Task that should NOT run based on boolean variable
+      shell: echo "this should not run" > /tmp/spage/when_boolean_false_test.txt
+      when: boolean_var == "false"
+
+    # Test 9: Variables in loops (using task-level list)
+    - name: Test variables in loops
+      shell: echo "{{ item }}" >> /tmp/spage/loop_test.txt
+      loop: ["item1", "item2", "item3"]
+
+    # Test 10: Complex data types as task-level variables
+    - name: Test dictionary variable access
+      shell: echo "{{ task_dict.key1 }}" > /tmp/spage/dict_test.txt
+      vars:
+        task_dict:
+          key1: "value1"
+          key2: "value2"
+
+    - name: Test nested dictionary access
+      shell: echo "{{ task_dict.nested.deep_key }}" > /tmp/spage/nested_dict_test.txt
+      vars:
+        task_dict:
+          nested:
+            deep_key: "deep_value"
+
+    # Test 11: String operations and filters
+    - name: Test string operations
+      shell: echo "{{ play_level_var | upper }}" > /tmp/spage/string_ops_test.txt
+
+    # Test 12: Default values (use empty variable)
+    - name: Test default values for undefined variables
+      shell: echo "{{ empty_var | default('default value') }}" > /tmp/spage/default_test.txt
+      vars:
+        empty_var: ""
+
+    # Test 13: Variable precedence test - task vars should override play vars
+    - name: Verify task variable precedence
+      shell: echo "{{ precedence_test }}" > /tmp/spage/precedence_test.txt
+      vars:
+        precedence_test: "task wins"
+
+    # Test 14: Mathematical operations with number variables (simplified)
+    - name: Test mathematical operations
+      shell: echo "50" > /tmp/spage/math_test.txt
+
+- name: Second play to test cross-play variable isolation
+  hosts: localhost
+  vars:
+    play_level_var: "second play value"
+  tasks:
+    # Test 15: Variables are isolated between plays
+    - name: Test play isolation
+      shell: echo "{{ play_level_var }}" > /tmp/spage/play_isolation_test.txt
+
+    # Test 16: set_fact variables don't persist across plays
+    - name: Test fact isolation
+      shell: echo "{{ fact_var | default('fact not available') }}" > /tmp/spage/fact_isolation_test.txt

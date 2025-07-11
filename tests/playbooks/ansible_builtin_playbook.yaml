@@ -37,8 +37,8 @@
 
     - name: template
       ansible.builtin.template:
-        src: /tmp/spage/template_test.txt
-        dest: /tmp/spage/template_test.txt
+        src: test.conf.j2
+        dest: /tmp/spage/ansible_builtin_template_test.txt
       register: template_result
 
     - name: command

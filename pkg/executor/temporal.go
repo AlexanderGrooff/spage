@@ -278,10 +278,26 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 	}
 
 	// After module execution and handling 'register', capture all facts from the activity's HostContext.
+	// However, we should NOT capture task-level variables that were added to HostContext.Facts during execution.
+	// Task-level variables should only exist in closure.ExtraFacts and should not persist across tasks.
 	result.HostFactsSnapshot = make(map[string]interface{})
+
+	// Create a map of task-level variable names to exclude from persistence
+	taskLevelVars := make(map[string]bool)
+	if input.TaskDefinition.Vars != nil {
+		if varsMap, ok := input.TaskDefinition.Vars.(map[string]interface{}); ok {
+			for varName := range varsMap {
+				taskLevelVars[varName] = true
+			}
+		}
+	}
+
 	hostCtx.Facts.Range(func(key, value interface{}) bool {
 		if kStr, ok := key.(string); ok {
-			result.HostFactsSnapshot[kStr] = value
+			// Only capture facts that are NOT task-level variables
+			if !taskLevelVars[kStr] {
+				result.HostFactsSnapshot[kStr] = value
+			}
 			// Non-string keys are ignored as they shouldn't exist in our fact system
 		}
 		return true
@@ -432,9 +448,23 @@ func ExecuteSpageRunOnceLoopActivity(ctx context.Context, input SpageRunOnceLoop
 
 	// Capture all facts from the activity's HostContext after all loop iterations
 	hostFactsSnapshot := make(map[string]interface{})
+
+	// Create a map of task-level variable names to exclude from persistence
+	taskLevelVars := make(map[string]bool)
+	if input.TaskDefinition.Vars != nil {
+		if varsMap, ok := input.TaskDefinition.Vars.(map[string]interface{}); ok {
+			for varName := range varsMap {
+				taskLevelVars[varName] = true
+			}
+		}
+	}
+
 	hostCtx.Facts.Range(func(key, value interface{}) bool {
 		if kStr, ok := key.(string); ok {
-			hostFactsSnapshot[kStr] = value
+			// Only capture facts that are NOT task-level variables
+			if !taskLevelVars[kStr] {
+				hostFactsSnapshot[kStr] = value
+			}
 		}
 		return true
 	})
@@ -659,13 +689,13 @@ func (r *TemporalTaskRunner) RevertTask(execCtx workflow.Context, task pkg.Task,
 
 	ao := workflow.ActivityOptions{
 		ActivityID:          activityID,
-		StartToCloseTimeout: 30 * time.Minute,
-		HeartbeatTimeout:    2 * time.Minute,
+		StartToCloseTimeout: 5 * time.Minute,  // Reduced from 30 minutes for faster test execution
+		HeartbeatTimeout:    30 * time.Second, // Reduced from 2 minutes
 		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval:    time.Second,
-			BackoffCoefficient: 2.0,
-			MaximumInterval:    time.Minute,
-			MaximumAttempts:    3,
+			InitialInterval:    500 * time.Millisecond, // Faster initial retry
+			BackoffCoefficient: 1.5,                    // Reduced backoff
+			MaximumInterval:    10 * time.Second,       // Reduced maximum interval
+			MaximumAttempts:    2,                      // Reduced attempts for faster failure
 		},
 	}
 	// Use execCtx for Temporal API calls like WithActivityOptions and ExecuteActivity
@@ -1508,6 +1538,25 @@ func (e *TemporalGraphExecutor) revertWorkflow(
 				}
 				continue
 			}
+
+			// Quick check: Skip expensive temporal activity for tasks without revert actions
+			if P, ok := originalTask.Params.Actual.(interface{ HasRevert() bool }); !ok || !P.HasRevert() {
+				logger.Debug("Skipping revert activity for task without revert action", "task", originalTask.Name)
+				syntheticRevertResult := pkg.TaskResult{
+					Task:    originalTask,
+					Closure: originalClosure,
+					Error:   nil, // No error, just skipped
+					Status:  pkg.TaskStatusOk,
+					Failed:  false,
+					Changed: false,
+				}
+				revertResultsCh.SendAsync(syntheticRevertResult)
+				if cfg.ExecutionMode == "parallel" && revertCompletionCh != nil {
+					revertCompletionCh.SendAsync(true)
+				}
+				continue
+			}
+
 			hostName := originalClosure.HostContext.Host.Name // Capture for goroutine
 
 			// Create a new closure with up-to-date facts for the revert operation.

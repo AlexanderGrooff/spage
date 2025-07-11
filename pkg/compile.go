@@ -121,8 +121,14 @@ func parseShorthandParams(moduleParams interface{}, moduleName, taskName string)
 		return nil, nil // Not shorthand, return nil to indicate no conversion needed
 	}
 
+	// Don't attempt shorthand parsing for modules that typically use raw commands
+	if moduleName == "shell" || moduleName == "ansible.builtin.shell" ||
+		moduleName == "command" || moduleName == "ansible.builtin.command" {
+		return nil, nil // Let the module handle its own parsing
+	}
+
 	// Only attempt to parse as key=value pairs if the string contains '=' characters
-	// This prevents modules like shell/command that use plain string syntax from being incorrectly parsed
+	// This prevents modules that use plain string syntax from being incorrectly parsed
 	if !strings.Contains(paramStr, "=") {
 		return nil, nil // Not key=value shorthand, let the module handle it
 	}

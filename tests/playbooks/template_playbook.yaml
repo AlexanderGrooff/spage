@@ -1,19 +1,65 @@
 ---
+- hosts: all
+  vars:
+    expected_content: "some content here"
+
 - name: test absolute dst
   template:
     src: test.conf.j2
     dest: /tmp/spage/test.conf
+
+- name: slurp absolute dst content
+  slurp:
+    src: /tmp/spage/test.conf
+  register: absolute_content
+  after: test absolute dst
+
+- name: validate absolute dst content
+  assert:
+    that:
+      - absolute_content.content | b64decode == expected_content
+  after: slurp absolute dst content
 
 - name: test relative dst
   template:
     src: test.conf.j2
     dest: ./test.conf
 
+- name: slurp relative dst content
+  slurp:
+    src: ./test.conf
+  register: relative_content
+  after: test relative dst
+
+- name: validate relative dst content
+  assert:
+    that:
+      - relative_content.content | b64decode == expected_content
+  after: slurp relative dst content
+
+- name: remove relative dst file
+  file:
+    path: ./test.conf
+    state: absent
+  after: validate relative dst content
+
 - name: test template with mode
   template:
     src: test.conf.j2
     dest: /tmp/spage/test_mode.conf
     mode: "0600"
+
+- name: slurp mode file content
+  slurp:
+    src: /tmp/spage/test_mode.conf
+  register: mode_content
+  after: test template with mode
+
+- name: validate mode file content
+  assert:
+    that:
+      - mode_content.content | b64decode == expected_content
+  after: slurp mode file content
 
 - name: stat file created with mode
   stat:

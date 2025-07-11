@@ -160,10 +160,7 @@ func ReadTemplateFile(filename string) (string, error) {
 func ReadLocalFile(filename string) (string, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
-		return "", err
+		return "", fmt.Errorf("failed to read file %s: %w", filename, err)
 	}
 	return string(data), nil
 }
