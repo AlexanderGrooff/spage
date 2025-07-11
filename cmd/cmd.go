@@ -130,6 +130,11 @@ var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run a playbook by compiling & executing it",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Validate that either inventory file is provided or inventory paths are configured
+		if inventoryFile == "" && (cfg == nil || cfg.Inventory == "") {
+			return fmt.Errorf("either --inventory flag must be provided or inventory paths must be configured")
+		}
+
 		graph, err := GetGraph(playbookFile, tags, skipTags, cfg)
 		if err != nil {
 			common.LogError("Failed to generate graph", map[string]interface{}{
@@ -179,7 +184,7 @@ func init() {
 	}
 
 	runCmd.Flags().StringVarP(&playbookFile, "playbook", "p", "", "Playbook file (required)")
-	runCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file (required)")
+	runCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file (optional if inventory paths configured)")
 	runCmd.Flags().StringVarP(&outputFile, "output", "o", "generated_tasks.go", "Output file (default: generated_tasks.go)")
 	runCmd.Flags().StringSliceVarP(&tags, "tags", "t", []string{}, "Only include tasks with these tags (comma-separated)")
 	runCmd.Flags().StringSliceVar(&skipTags, "skip-tags", []string{}, "Skip tasks with these tags (comma-separated)")

@@ -4,12 +4,249 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/config"
 
 	"gopkg.in/yaml.v3"
 )
+
+// splitInventoryPaths splits a colon-delimited inventory paths string into individual paths
+func splitInventoryPaths(inventoryPaths string) []string {
+	if inventoryPaths == "" {
+		return []string{} // Default to empty list, will fall back to localhost
+	}
+	paths := strings.Split(inventoryPaths, ":")
+	// Filter out empty paths
+	var result []string
+	for _, path := range paths {
+		if strings.TrimSpace(path) != "" {
+			result = append(result, strings.TrimSpace(path))
+		}
+	}
+	return result
+}
+
+// findInventoryFile searches for inventory files in the provided paths
+// It looks for common inventory file names: inventory, inventory.yml, inventory.yaml, hosts
+func findInventoryFile(inventoryPaths []string, workingDir string) (string, error) {
+	commonNames := []string{"inventory", "inventory.yml", "inventory.yaml", "hosts"}
+
+	for _, inventoryPath := range inventoryPaths {
+		var searchPath string
+		if filepath.IsAbs(inventoryPath) {
+			searchPath = inventoryPath
+		} else {
+			searchPath = filepath.Join(workingDir, inventoryPath)
+		}
+
+		// Check if the path exists
+		info, err := os.Stat(searchPath)
+		if err != nil {
+			// Path doesn't exist, continue to next
+			continue
+		}
+
+		if info.IsDir() {
+			// If the path is a directory, check for common inventory file names
+			for _, name := range commonNames {
+				fullPath := filepath.Join(searchPath, name)
+				if _, err := os.Stat(fullPath); err == nil {
+					return fullPath, nil // Return the full path to the file, not the directory
+				}
+			}
+		} else {
+			// If the path is a file, return it directly
+			return searchPath, nil
+		}
+	}
+
+	return "", fmt.Errorf("inventory file not found in any of the inventory paths: %v", inventoryPaths)
+}
+
+// findAllInventoryFiles searches for all inventory files in the provided paths
+// When given directories, it loads ALL files in the directory like Ansible does
+func findAllInventoryFiles(inventoryPaths []string, workingDir string) ([]string, error) {
+	var foundFiles []string
+
+	for _, inventoryPath := range inventoryPaths {
+		var searchPath string
+		if filepath.IsAbs(inventoryPath) {
+			searchPath = inventoryPath
+		} else {
+			searchPath = filepath.Join(workingDir, inventoryPath)
+		}
+
+		// Check if the path exists
+		info, err := os.Stat(searchPath)
+		if err != nil {
+			// Path doesn't exist, continue to next
+			continue
+		}
+
+		if info.IsDir() {
+			// If the path is a directory, load ALL files in the directory (like Ansible does)
+			entries, err := os.ReadDir(searchPath)
+			if err != nil {
+				common.LogWarn("Failed to read inventory directory", map[string]interface{}{
+					"path":  searchPath,
+					"error": err.Error(),
+				})
+				continue
+			}
+
+			// Collect all regular files in alphabetical order (like Ansible)
+			var dirFiles []string
+			for _, entry := range entries {
+				if !entry.IsDir() {
+					dirFiles = append(dirFiles, entry.Name())
+				}
+			}
+
+			// Sort files alphabetically as Ansible does
+			sort.Strings(dirFiles)
+
+			// Convert to full paths and add to the list
+			for _, fileName := range dirFiles {
+				fullPath := filepath.Join(searchPath, fileName)
+				foundFiles = append(foundFiles, fullPath)
+			}
+		} else {
+			// If the path is a file, add it directly
+			foundFiles = append(foundFiles, searchPath)
+		}
+	}
+
+	if len(foundFiles) == 0 {
+		return nil, fmt.Errorf("no inventory files found in any of the inventory paths: %v", inventoryPaths)
+	}
+
+	return foundFiles, nil
+}
+
+// mergeInventories merges multiple inventories into a single inventory
+// Later inventories take precedence over earlier ones for conflicting keys
+func mergeInventories(inventories []*Inventory) *Inventory {
+	if len(inventories) == 0 {
+		return &Inventory{
+			Hosts:  make(map[string]*Host),
+			Vars:   make(map[string]interface{}),
+			Groups: make(map[string]*Group),
+		}
+	}
+
+	if len(inventories) == 1 {
+		return inventories[0]
+	}
+
+	merged := &Inventory{
+		Hosts:  make(map[string]*Host),
+		Vars:   make(map[string]interface{}),
+		Groups: make(map[string]*Group),
+	}
+
+	// Merge in order, later inventories override earlier ones
+	for _, inv := range inventories {
+		// Merge global vars
+		for k, v := range inv.Vars {
+			merged.Vars[k] = v
+		}
+
+		// Merge groups
+		for groupName, group := range inv.Groups {
+			if existingGroup, exists := merged.Groups[groupName]; exists {
+				// Merge group vars
+				if existingGroup.Vars == nil {
+					existingGroup.Vars = make(map[string]interface{})
+				}
+				for k, v := range group.Vars {
+					existingGroup.Vars[k] = v
+				}
+
+				// Merge group hosts
+				if existingGroup.Hosts == nil {
+					existingGroup.Hosts = make(map[string]*Host)
+				}
+				for hostName, host := range group.Hosts {
+					existingGroup.Hosts[hostName] = host
+				}
+			} else {
+				// Create new group
+				newGroup := &Group{
+					Vars:  make(map[string]interface{}),
+					Hosts: make(map[string]*Host),
+				}
+
+				// Copy vars
+				for k, v := range group.Vars {
+					newGroup.Vars[k] = v
+				}
+
+				// Copy hosts
+				for hostName, host := range group.Hosts {
+					newGroup.Hosts[hostName] = host
+				}
+
+				merged.Groups[groupName] = newGroup
+			}
+		}
+
+		// Merge hosts
+		for hostName, host := range inv.Hosts {
+			if existingHost, exists := merged.Hosts[hostName]; exists {
+				// Merge host vars - later inventory takes precedence
+				if existingHost.Vars == nil {
+					existingHost.Vars = make(map[string]interface{})
+				}
+				for k, v := range host.Vars {
+					existingHost.Vars[k] = v
+				}
+
+				// Update other host fields if they're set in the newer inventory
+				if host.Host != "" {
+					existingHost.Host = host.Host
+				}
+
+				// Merge groups
+				if existingHost.Groups == nil {
+					existingHost.Groups = make(map[string]string)
+				}
+				for k, v := range host.Groups {
+					existingHost.Groups[k] = v
+				}
+
+				// Update IsLocal flag
+				existingHost.IsLocal = host.IsLocal
+			} else {
+				// Copy the host completely
+				newHost := &Host{
+					Name:    host.Name,
+					Host:    host.Host,
+					Vars:    make(map[string]interface{}),
+					Groups:  make(map[string]string),
+					IsLocal: host.IsLocal,
+				}
+
+				// Copy vars
+				for k, v := range host.Vars {
+					newHost.Vars[k] = v
+				}
+
+				// Copy groups
+				for k, v := range host.Groups {
+					newHost.Groups[k] = v
+				}
+
+				merged.Hosts[hostName] = newHost
+			}
+		}
+	}
+
+	return merged
+}
 
 type Inventory struct {
 	Hosts  map[string]*Host       `yaml:"all"`
@@ -98,7 +335,36 @@ type Group struct {
 }
 
 func LoadInventory(path string) (*Inventory, error) {
-	if path == "" {
+	return LoadInventoryWithPaths(path, "", ".")
+}
+
+func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir string) (*Inventory, error) {
+	var filesToLoad []string
+
+	if path != "" {
+		// Explicit path provided, use it directly
+		filesToLoad = []string{path}
+	} else if inventoryPaths != "" {
+		// No explicit path but inventory paths configured, search for inventory files
+		paths := splitInventoryPaths(inventoryPaths)
+		if len(paths) > 0 {
+			foundFiles, err := findAllInventoryFiles(paths, workingDir)
+			if err != nil {
+				// If no inventory found in paths, fall back to localhost
+				common.LogDebug("No inventory files found in configured paths, using localhost", map[string]interface{}{
+					"inventoryPaths": inventoryPaths,
+					"searchPaths":    paths,
+				})
+			} else {
+				filesToLoad = foundFiles
+				common.LogDebug("Found multiple inventory files", map[string]interface{}{
+					"files": foundFiles,
+				})
+			}
+		}
+	}
+
+	if len(filesToLoad) == 0 {
 		common.LogDebug("No inventory file specified, assuming target is this machine", nil)
 		return &Inventory{
 			Hosts: map[string]*Host{
@@ -106,62 +372,89 @@ func LoadInventory(path string) (*Inventory, error) {
 			},
 		}, nil
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		log.Fatalf("Error reading YAML file: %v", err)
-	}
-	var inventory Inventory
-	inventory.Hosts = make(map[string]*Host)
-	inventory.Groups = make(map[string]*Group)
-	err = yaml.Unmarshal(data, &inventory)
-	if err != nil {
-		return nil, err
-	}
-	for name, host := range inventory.Hosts {
-		common.DebugOutput("Adding host %q to inventory", name)
-		host.Prepare()
-		host.Name = name
 
-		if host.Host == "localhost" || host.Host == "" {
-			host.IsLocal = true
+	var inventories []*Inventory
+
+	// Load all inventory files
+	for _, filePath := range filesToLoad {
+		common.LogDebug("Loading inventory file", map[string]interface{}{
+			"file": filePath,
+		})
+
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			log.Fatalf("Error reading YAML file %s: %v", filePath, err)
 		}
-		inventory.Hosts[name] = host
-	}
-	for groupName, group := range inventory.Groups {
-		for name, host := range group.Hosts {
-			common.DebugOutput("Found host %q in group %q", name, groupName)
-			var h *Host
-			if h = inventory.Hosts[name]; h != nil {
-				common.DebugOutput("Host %q already in inventory", name)
-			} else {
-				h = host
-			}
-			h.Prepare()
-			if h.Host == "" {
-				h.Host = host.Host
-			}
-			if h.Name == "" {
-				h.Name = name
-			}
 
-			if h.Host == "localhost" || h.Host == "" {
-				h.IsLocal = true
+		var inventory Inventory
+		inventory.Hosts = make(map[string]*Host)
+		inventory.Groups = make(map[string]*Group)
+		err = yaml.Unmarshal(data, &inventory)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing inventory file %s: %w", filePath, err)
+		}
+
+		// Process the loaded inventory
+		for name, host := range inventory.Hosts {
+			common.DebugOutput("Adding host %q to inventory from file %s", name, filePath)
+			host.Prepare()
+			host.Name = name
+
+			if host.Host == "localhost" || host.Host == "" {
+				host.IsLocal = true
 			}
+			inventory.Hosts[name] = host
+		}
 
-			common.DebugOutput("Adding host %q to inventory from group %q", name, groupName)
+		for groupName, group := range inventory.Groups {
+			for name, host := range group.Hosts {
+				common.DebugOutput("Found host %q in group %q from file %s", name, groupName, filePath)
+				var h *Host
+				if h = inventory.Hosts[name]; h != nil {
+					common.DebugOutput("Host %q already in inventory", name)
+				} else {
+					h = host
+				}
+				h.Prepare()
+				if h.Host == "" {
+					h.Host = host.Host
+				}
+				if h.Name == "" {
+					h.Name = name
+				}
 
-			inventory.Hosts[name] = h
-			for k, v := range group.Vars {
-				inventory.Hosts[name].Vars[k] = v
+				if h.Host == "localhost" || h.Host == "" {
+					h.IsLocal = true
+				}
+
+				common.DebugOutput("Adding host %q to inventory from group %q", name, groupName)
+
+				inventory.Hosts[name] = h
+				for k, v := range group.Vars {
+					inventory.Hosts[name].Vars[k] = v
+				}
 			}
 		}
-	}
-	for k, v := range inventory.Vars {
-		for _, host := range inventory.Hosts {
-			host.Vars[k] = v
+
+		for k, v := range inventory.Vars {
+			for _, host := range inventory.Hosts {
+				host.Vars[k] = v
+			}
 		}
+
+		inventories = append(inventories, &inventory)
 	}
-	return &inventory, nil
+
+	// Merge all inventories into one
+	mergedInventory := mergeInventories(inventories)
+
+	common.LogDebug("Merged inventory files", map[string]interface{}{
+		"total_files":  len(filesToLoad),
+		"total_hosts":  len(mergedInventory.Hosts),
+		"total_groups": len(mergedInventory.Groups),
+	})
+
+	return mergedInventory, nil
 }
 
 func (i Inventory) GetContextForHost(host *Host, cfg *config.Config) (*HostContext, error) {

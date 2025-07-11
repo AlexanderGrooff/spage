@@ -42,7 +42,20 @@ type GraphExecutor interface {
 }
 
 func ExecuteGraph(executor GraphExecutor, graph Graph, inventoryFile string, cfg *config.Config) error {
-	inventory, err := LoadInventory(inventoryFile)
+	var inventory *Inventory
+	var err error
+
+	if inventoryFile != "" {
+		// Explicit inventory file provided
+		inventory, err = LoadInventory(inventoryFile)
+	} else if cfg != nil && cfg.Inventory != "" {
+		// No explicit inventory file but inventory paths configured
+		inventory, err = LoadInventoryWithPaths("", cfg.Inventory, ".")
+	} else {
+		// No inventory file and no inventory paths, fall back to default
+		inventory, err = LoadInventory("")
+	}
+
 	if err != nil {
 		return err
 	}

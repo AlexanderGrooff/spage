@@ -19,6 +19,7 @@ type Config struct {
 	Facts           map[string]interface{} `mapstructure:"facts"`
 	HostKeyChecking bool                   `mapstructure:"host_key_checking"`
 	RolesPath       string                 `mapstructure:"roles_path"` // Colon-delimited paths to search for roles
+	Inventory       string                 `mapstructure:"inventory"`  // Colon-delimited paths to search for inventory files
 }
 
 // LoggingConfig holds logging-related configuration
@@ -125,6 +126,9 @@ func setDefaults(v *viper.Viper) {
 
 	// RolesPath default
 	v.SetDefault("roles_path", "") // Default to empty, SDK will use default roles
+
+	// Inventory default
+	v.SetDefault("inventory", "") // Default to empty, SDK will use default inventory
 }
 
 // isValidOutputFormat checks if the given format is supported

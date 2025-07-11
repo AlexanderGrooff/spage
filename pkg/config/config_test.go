@@ -59,6 +59,7 @@ security:
 				Facts:           nil,
 				HostKeyChecking: true,
 				RolesPath:       "",
+				Inventory:       "",
 			},
 		},
 		{
@@ -87,6 +88,7 @@ security:
 				Facts:           nil,
 				HostKeyChecking: true,
 				RolesPath:       "",
+				Inventory:       "",
 			},
 		},
 		{
@@ -119,6 +121,7 @@ security:
 				Facts:           nil,
 				HostKeyChecking: true,
 				RolesPath:       "",
+				Inventory:       "",
 			},
 		},
 		{
