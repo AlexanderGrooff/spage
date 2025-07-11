@@ -79,8 +79,9 @@ func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cf
 		}
 	}()
 
+	// Use logging instead of fmt.Printf to avoid deadlocks with Temporal's error handling
 	if cfg.Logging.Format == "plain" {
-		fmt.Printf("\nPLAY [] ****************************************************\n")
+		common.LogInfo("PLAY []", map[string]interface{}{})
 	} else {
 		common.LogInfo("Starting play", map[string]interface{}{})
 	}

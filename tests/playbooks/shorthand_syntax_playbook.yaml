@@ -1,0 +1,44 @@
+---
+- name: Test shorthand syntax for template module
+  template: src=test.conf.j2 dest=/tmp/spage/shorthand_template.conf
+
+- name: Test regular syntax for template module (comparison)
+  template:
+    src: test.conf.j2
+    dest: /tmp/spage/regular_template.conf
+
+- name: Test shorthand syntax for shell module
+  shell: echo "shorthand shell test" > /tmp/spage/shorthand_shell.txt
+
+- name: Test regular syntax for shell module (comparison)
+  shell: echo "regular shell test" > /tmp/spage/regular_shell.txt
+
+- name: Test shorthand syntax for command module
+  command: touch /tmp/spage/shorthand_command.txt
+
+- name: Test regular syntax for command module (comparison)
+  command: touch /tmp/spage/regular_command.txt
+
+- name: Test shorthand syntax with quoted values
+  template: src="test.conf.j2" dest="/tmp/spage/shorthand_quoted.conf" mode="0644"
+
+- name: Test shorthand syntax with multiple parameters
+  template: src=test.conf.j2 dest=/tmp/spage/shorthand_multi.conf mode=0755
+
+- name: Verify shorthand template files exist
+  stat:
+    path: /tmp/spage/shorthand_template.conf
+  register: shorthand_stat
+
+- name: Verify regular template files exist
+  stat:
+    path: /tmp/spage/regular_template.conf
+  register: regular_stat
+
+- name: Assert both template approaches work
+  assert:
+    that:
+      - shorthand_stat.stat.exists
+      - regular_stat.stat.exists
+      - shorthand_stat.stat.isreg
+      - regular_stat.stat.isreg

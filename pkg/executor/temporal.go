@@ -458,17 +458,18 @@ func processActivityResultAndRegisterFacts(
 	hostFacts map[string]map[string]interface{},
 	hostContexts map[string]*pkg.HostContext, // Add host contexts parameter
 ) error {
-	logger := workflow.GetLogger(ctx)
+	// Reduce concurrent logging to avoid deadlocks - only log and return error, don't do both
 	if activityResult.Error != "" && !activityResult.Ignored {
-		logger.Error("Task failed as reported by activity", "task", taskName, "host", hostName, "reportedError", activityResult.Error)
+		// Return error without logging to avoid concurrent access to logger mutex
 		return fmt.Errorf("task '%s' on host '%s' failed: %s", taskName, hostName, activityResult.Error)
 	}
-	if activityResult.Error != "" && activityResult.Ignored {
-		logger.Warn("Task failed but was ignored", "task", taskName, "host", hostName, "reportedError", activityResult.Error)
-	}
+
+	// Get logger only when needed for non-error cases to reduce concurrent access
+	logger := workflow.GetLogger(ctx)
 
 	// Ensure host entry exists in the workflow's main hostFacts map
 	if _, ok := hostFacts[activityResult.HostName]; !ok {
+		// Only log for missing host facts since this is less likely to cause concurrent access
 		logger.Warn("Host facts map not found for host, creating new one.", "host", activityResult.HostName)
 		hostFacts[activityResult.HostName] = make(map[string]interface{})
 	}
@@ -1609,16 +1610,23 @@ func (e *TemporalGraphExecutor) revertWorkflow(
 }
 
 func (e *TemporalGraphExecutor) printPlayRecap(cfg *config.Config, recapStats map[string]map[string]int) {
+	// Use logging instead of fmt.Printf to avoid deadlocks with Temporal's error handling
 	if cfg.Logging.Format == "plain" {
-		fmt.Printf("\nPLAY RECAP ****************************************************\n")
+		common.LogInfo("PLAY RECAP", map[string]interface{}{})
 		for hostname, stats := range recapStats {
 			okCount := stats["ok"]
 			changedCount := stats["changed"]
 			failedCount := stats["failed"]
 			skippedCount := stats["skipped"]
 			ignoredCount := stats["ignored"]
-			fmt.Printf("%s : ok=%d    changed=%d    failed=%d    skipped=%d    ignored=%d\n",
-				hostname, okCount, changedCount, failedCount, skippedCount, ignoredCount)
+			common.LogInfo("Host recap", map[string]interface{}{
+				"host":    hostname,
+				"ok":      okCount,
+				"changed": changedCount,
+				"failed":  failedCount,
+				"skipped": skippedCount,
+				"ignored": ignoredCount,
+			})
 		}
 	} else {
 		common.LogInfo("Play recap", map[string]interface{}{"stats": recapStats})

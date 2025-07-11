@@ -111,6 +111,127 @@ func ParsePlayAttributes(blocks []map[string]interface{}) (map[string]interface{
 	return attributes, nil
 }
 
+// parseShorthandParams parses Ansible shorthand parameter syntax like "src=file.j2 dest=/path/file"
+// and converts it to a map[string]interface{} structure.
+// Returns the converted map if input is shorthand, nil if input is already correct format, or error if parsing fails.
+func parseShorthandParams(moduleParams interface{}, moduleName, taskName string) (map[string]interface{}, error) {
+	// Only process if moduleParams is a string (shorthand syntax)
+	paramStr, isString := moduleParams.(string)
+	if !isString {
+		return nil, nil // Not shorthand, return nil to indicate no conversion needed
+	}
+
+	// Only attempt to parse as key=value pairs if the string contains '=' characters
+	// This prevents modules like shell/command that use plain string syntax from being incorrectly parsed
+	if !strings.Contains(paramStr, "=") {
+		return nil, nil // Not key=value shorthand, let the module handle it
+	}
+
+	// Parse the key=value pairs
+	result := make(map[string]interface{})
+
+	// Split by spaces, but handle quoted values that may contain spaces
+	pairs, err := parseKeyValuePairs(paramStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse shorthand parameters for module %s in task %q: %w", moduleName, taskName, err)
+	}
+
+	for key, value := range pairs {
+		result[key] = value
+	}
+
+	// If no key=value pairs were found, this might not be shorthand syntax
+	if len(result) == 0 {
+		return nil, fmt.Errorf("no key=value pairs found in parameter string %q for module %s in task %q", paramStr, moduleName, taskName)
+	}
+
+	return result, nil
+}
+
+// parseKeyValuePairs parses a string like "src=file.j2 dest=/path/file mode=0644"
+// and returns a map of key-value pairs. Handles quoted values.
+func parseKeyValuePairs(input string) (map[string]string, error) {
+	result := make(map[string]string)
+
+	// Trim whitespace
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return result, nil
+	}
+
+	// Use a simple state machine to parse key=value pairs
+	var currentKey, currentValue strings.Builder
+	var inValue, inQuotes bool
+	var quoteChar rune
+
+	i := 0
+	for i < len(input) {
+		char := rune(input[i])
+
+		switch {
+		case !inValue && char == '=':
+			// Found the = separator
+			inValue = true
+
+		case !inValue:
+			// Building the key
+			if char != ' ' && char != '\t' {
+				currentKey.WriteRune(char)
+			}
+
+		case inValue && !inQuotes && (char == '"' || char == '\''):
+			// Starting a quoted value
+			inQuotes = true
+			quoteChar = char
+
+		case inValue && inQuotes && char == quoteChar:
+			// Ending a quoted value
+			inQuotes = false
+
+		case inValue && !inQuotes && (char == ' ' || char == '\t'):
+			// End of this key=value pair
+			key := strings.TrimSpace(currentKey.String())
+			value := strings.TrimSpace(currentValue.String())
+
+			if key == "" {
+				return nil, fmt.Errorf("empty key found in parameter string")
+			}
+
+			result[key] = value
+
+			// Reset for next pair
+			currentKey.Reset()
+			currentValue.Reset()
+			inValue = false
+
+		case inValue:
+			// Building the value
+			currentValue.WriteRune(char)
+		}
+
+		i++
+	}
+
+	// Handle the last key=value pair
+	if currentKey.Len() > 0 {
+		key := strings.TrimSpace(currentKey.String())
+		value := strings.TrimSpace(currentValue.String())
+
+		if key == "" {
+			return nil, fmt.Errorf("empty key found in parameter string")
+		}
+
+		if inValue {
+			result[key] = value
+		} else {
+			// Key without value might be a boolean flag
+			return nil, fmt.Errorf("key %q found without value in parameter string", key)
+		}
+	}
+
+	return result, nil
+}
+
 func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 	arguments := []string{
 		"name",
@@ -436,6 +557,16 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			}
 		} // Else: module doesn't define aliases or params aren't a map
 		// *** Generic Module Alias Handling End ***
+
+		// *** Shorthand Parameter Parsing Start ***
+		// Handle Ansible shorthand syntax like "template: src=file.j2 dest=/path/file"
+		if shorthandParams, err := parseShorthandParams(moduleParams, task.Module, task.Name); err != nil {
+			errors = append(errors, err)
+			continue
+		} else if shorthandParams != nil {
+			moduleParams = shorthandParams
+		}
+		// *** Shorthand Parameter Parsing End ***
 
 		// Convert back to yaml so we can unmarshal it into the correct type
 		paramsData, err := yaml.Marshal(moduleParams)
