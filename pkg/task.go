@@ -94,8 +94,10 @@ type Task struct {
 	Retries int    `yaml:"retries,omitempty" json:"retries,omitempty"`
 	Delay   int    `yaml:"delay,omitempty" json:"delay,omitempty"`
 
-	CheckMode *bool `yaml:"check_mode,omitempty" json:"check_mode,omitempty"`
-	Diff      *bool `yaml:"diff,omitempty" json:"diff,omitempty"`
+	CheckMode *bool    `yaml:"check_mode,omitempty" json:"check_mode,omitempty"`
+	Diff      *bool    `yaml:"diff,omitempty" json:"diff,omitempty"`
+	Notify    []string `yaml:"notify,omitempty" json:"notify,omitempty"`
+	IsHandler bool     `yaml:"is_handler,omitempty" json:"is_handler,omitempty"`
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface for Task.
@@ -337,6 +339,9 @@ func (t Task) ToCode() string {
 	if t.RunOnce {
 		sb.WriteString(fmt.Sprintf(", RunOnce: %t", t.RunOnce))
 	}
+	if t.IsHandler {
+		sb.WriteString(fmt.Sprintf(", IsHandler: %t", t.IsHandler))
+	}
 	if t.Until != "" {
 		sb.WriteString(fmt.Sprintf(", Until: %q", t.Until))
 	}
@@ -354,6 +359,16 @@ func (t Task) ToCode() string {
 		for i, tag := range t.Tags {
 			sb.WriteString(fmt.Sprintf("%q", tag))
 			if i < len(t.Tags)-1 {
+				sb.WriteString(", ")
+			}
+		}
+		sb.WriteString("}")
+	}
+	if len(t.Notify) > 0 {
+		sb.WriteString(", Notify: []string{")
+		for i, handler := range t.Notify {
+			sb.WriteString(fmt.Sprintf("%q", handler))
+			if i < len(t.Notify)-1 {
 				sb.WriteString(", ")
 			}
 		}
@@ -823,6 +838,29 @@ func HandleResult(r *TaskResult, t Task, c *Closure) TaskResult {
 		} else {
 			r.Status = TaskStatusOk
 			r.Changed = false
+		}
+	}
+
+	// Notify handlers if the task changed and has notify field
+	if len(t.Notify) > 0 {
+		common.LogDebug("Evaluating handler notification", map[string]interface{}{
+			"task":                   t.Name,
+			"host":                   c.HostContext.Host.Name,
+			"handlers":               t.Notify,
+			"changed":                r.Changed,
+			"failed":                 r.Failed,
+			"handler_tracker_exists": c.HostContext.HandlerTracker != nil,
+		})
+		if r.Changed && !r.Failed {
+			if c.HostContext.HandlerTracker != nil {
+				c.HostContext.HandlerTracker.NotifyHandlers(t.Notify)
+				common.LogDebug("Notified handlers", map[string]interface{}{
+					"task":     t.Name,
+					"host":     c.HostContext.Host.Name,
+					"handlers": t.Notify,
+					"changed":  r.Changed,
+				})
+			}
 		}
 	}
 

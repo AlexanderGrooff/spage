@@ -34,6 +34,7 @@ type GraphNode interface {
 type Graph struct {
 	RequiredInputs []string
 	Tasks          [][]Task
+	Handlers       []Task
 	Vars           map[string]interface{}
 }
 
@@ -44,6 +45,10 @@ func (g Graph) String() string {
 		for _, task := range node {
 			fmt.Fprintf(&b, "  - %s\n", task.String())
 		}
+	}
+	fmt.Fprintf(&b, "Handlers:\n")
+	for _, handler := range g.Handlers {
+		fmt.Fprintf(&b, "  - %s\n", handler.String())
 	}
 	fmt.Fprintf(&b, "Required inputs:\n")
 	for _, input := range g.RequiredInputs {
@@ -80,6 +85,11 @@ func (g Graph) ToCode() string {
 		fmt.Fprintf(&f, "%s  },\n", Indent(2))
 	}
 
+	fmt.Fprintf(&f, "%s},\n", Indent(1))
+	fmt.Fprintf(&f, "%sHandlers: []pkg.Task{\n", Indent(1))
+	for _, handler := range g.Handlers {
+		fmt.Fprintf(&f, "%s  %s", Indent(2), handler.ToCode())
+	}
 	fmt.Fprintf(&f, "%s},\n", Indent(1))
 	fmt.Fprintln(&f, "}")
 	return f.String()
@@ -288,7 +298,22 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}) (Graph,
 	// 1. Flatten nodes and record original order index
 	flattenedTasks := flattenNodes(nodes)
 
-	for i, task := range flattenedTasks {
+	// 1.5. Separate handlers from regular tasks
+	var regularTasks []Task
+	var handlers []Task
+	for _, task := range flattenedTasks {
+		if task.IsHandler {
+			handlers = append(handlers, task)
+		} else {
+			regularTasks = append(regularTasks, task)
+		}
+	}
+
+	// Store handlers in the graph
+	g.Handlers = handlers
+
+	// Process only regular tasks for the main execution flow
+	for i, task := range regularTasks {
 		if _, exists := taskNameMapping[task.Name]; exists {
 			// Handle potential duplicate task names if necessary, though Ansible usually requires unique names within a play
 			common.LogWarn("Duplicate task name found during flattening", map[string]interface{}{"name": task.Name})

@@ -120,6 +120,11 @@ func (e *LocalGraphExecutor) Execute(hostContexts map[string]*pkg.HostContext, o
 		}
 
 		if levelErrored {
+			// Execute handlers before reverting, as handlers should run for any tasks that successfully notified them
+			if err := e.executeHandlers(ctx, hostContexts, recapStats, cfg); err != nil {
+				common.LogWarn("Failed to execute handlers before revert", map[string]interface{}{"error": err.Error()})
+			}
+
 			if !cfg.Revert {
 				return fmt.Errorf("run failed on level %d, revert is disabled by config", executionLevel)
 			}
@@ -133,6 +138,11 @@ func (e *LocalGraphExecutor) Execute(hostContexts map[string]*pkg.HostContext, o
 			}
 			return fmt.Errorf("run failed on level %d and tasks reverted", executionLevel)
 		}
+	}
+
+	// Execute handlers after all regular tasks complete
+	if err := e.executeHandlers(ctx, hostContexts, recapStats, cfg); err != nil {
+		return fmt.Errorf("failed to execute handlers: %w", err)
 	}
 
 	e.printPlayRecap(cfg, recapStats)
@@ -488,6 +498,156 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 	if isParallelDispatch {
 		wg.Wait()
 	}
+}
+
+// executeHandlers runs all notified handlers across all hosts
+func (e *LocalGraphExecutor) executeHandlers(
+	ctx context.Context,
+	hostContexts map[string]*pkg.HostContext,
+	recapStats map[string]map[string]int,
+	cfg *config.Config,
+) error {
+	// Check if there are any handlers to execute
+	hasHandlers := false
+	for _, hostCtx := range hostContexts {
+		if hostCtx.HandlerTracker != nil {
+			notifiedHandlers := hostCtx.HandlerTracker.GetNotifiedHandlers()
+			if len(notifiedHandlers) > 0 {
+				hasHandlers = true
+				break
+			}
+		}
+	}
+
+	if !hasHandlers {
+		common.LogDebug("No handlers to execute", map[string]interface{}{})
+		return nil
+	}
+
+	if cfg.Logging.Format == "plain" {
+		fmt.Printf("\nRUNNING HANDLERS *********************************************\n")
+	} else {
+		common.LogInfo("Running handlers", map[string]interface{}{})
+	}
+
+	// Execute handlers for each host
+	for hostname, hostCtx := range hostContexts {
+		if hostCtx.HandlerTracker == nil {
+			continue
+		}
+
+		notifiedHandlers := hostCtx.HandlerTracker.GetNotifiedHandlers()
+		if len(notifiedHandlers) == 0 {
+			continue
+		}
+
+		common.LogDebug("Executing handlers for host", map[string]interface{}{
+			"host":     hostname,
+			"handlers": len(notifiedHandlers),
+		})
+
+		for _, handler := range notifiedHandlers {
+			// Skip if already executed
+			if hostCtx.HandlerTracker.IsExecuted(handler.Name) {
+				continue
+			}
+
+			// Execute the handler
+			closure := pkg.ConstructClosure(hostCtx, handler)
+			result := e.Runner.ExecuteTask(ctx, handler, closure, cfg)
+
+			// Mark the handler as executed
+			hostCtx.HandlerTracker.MarkExecuted(handler.Name)
+
+			// Process the result like a regular task
+			if result.Closure == nil || result.Closure.HostContext == nil || result.Closure.HostContext.Host == nil {
+				common.LogError("Handler result has nil context", map[string]interface{}{
+					"handler": handler.Name,
+					"host":    hostname,
+				})
+				continue
+			}
+
+			// Update recap stats
+			if _, exists := recapStats[hostname]; !exists {
+				recapStats[hostname] = map[string]int{"ok": 0, "changed": 0, "failed": 0, "skipped": 0, "ignored": 0}
+			}
+
+			// Store handler output in history
+			if result.Closure.HostContext.History != nil {
+				result.Closure.HostContext.History.Store(handler.Name, result.Output)
+			}
+
+			// Print handler execution result
+			if cfg.Logging.Format == "plain" {
+				fmt.Printf("\nHANDLER TASK [%s] (%s) *************************************\n", handler.Name, hostname)
+			}
+
+			// Handle result and update stats
+			var ignoredErr *pkg.IgnoredTaskError
+			if result.Error != nil {
+				if errors.As(result.Error, &ignoredErr) {
+					recapStats[hostname]["ignored"]++
+					if cfg.Logging.Format == "plain" {
+						fmt.Printf("ignored: [%s] => %v\n", hostname, ignoredErr.Unwrap())
+					} else {
+						common.LogWarn("Handler task ignored", map[string]interface{}{
+							"handler": handler.Name,
+							"host":    hostname,
+							"error":   ignoredErr.Unwrap().Error(),
+						})
+					}
+				} else {
+					recapStats[hostname]["failed"]++
+					if cfg.Logging.Format == "plain" {
+						fmt.Printf("failed: [%s] => %v\n", hostname, result.Error)
+						PPrintOutput(result.Output, result.Error)
+					} else {
+						common.LogError("Handler task failed", map[string]interface{}{
+							"handler": handler.Name,
+							"host":    hostname,
+							"error":   result.Error.Error(),
+						})
+					}
+					// Continue with other handlers even if one fails
+				}
+			} else if result.Status == pkg.TaskStatusSkipped {
+				recapStats[hostname]["skipped"]++
+				if cfg.Logging.Format == "plain" {
+					fmt.Printf("skipped: [%s]\n", hostname)
+				} else {
+					common.LogInfo("Handler task skipped", map[string]interface{}{
+						"handler": handler.Name,
+						"host":    hostname,
+					})
+				}
+			} else if result.Status == pkg.TaskStatusChanged {
+				recapStats[hostname]["changed"]++
+				if cfg.Logging.Format == "plain" {
+					fmt.Printf("changed: [%s]\n", hostname)
+					PPrintOutput(result.Output, nil)
+				} else {
+					common.LogInfo("Handler task changed", map[string]interface{}{
+						"handler": handler.Name,
+						"host":    hostname,
+					})
+				}
+			} else {
+				recapStats[hostname]["ok"]++
+				if cfg.Logging.Format == "plain" {
+					fmt.Printf("ok: [%s]\n", hostname)
+					PPrintOutput(result.Output, nil)
+				} else {
+					common.LogInfo("Handler task ok", map[string]interface{}{
+						"handler": handler.Name,
+						"host":    hostname,
+					})
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 func (e *LocalGraphExecutor) processLevelResults(

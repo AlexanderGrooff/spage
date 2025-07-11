@@ -17,12 +17,12 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func StartTemporalExecutor(graph pkg.Graph, inventoryFile string, spageAppConfig *config.Config) error {
+func StartTemporalExecutor(graph *pkg.Graph, inventoryFile string, spageAppConfig *config.Config) error {
 	log.Printf("Preparing to run Temporal worker. Workflow trigger from config: %t", spageAppConfig.Temporal.Trigger)
 
 	// Prepare options for the Temporal worker runner
 	options := executor.RunSpageTemporalWorkerAndWorkflowOptions{
-		Graph:            &graph, // This is the graph code injected above
+		Graph:            graph, // This is the graph code injected above
 		InventoryPath:    inventoryFile,
 		LoadedConfig:     spageAppConfig, // spageAppConfig now contains Temporal settings from config file, env, or defaults
 		WorkflowIDPrefix: spageAppConfig.Temporal.WorkflowIDPrefix,
@@ -81,5 +81,5 @@ func EntrypointTemporalExecutor(graph pkg.Graph) error {
 
 	log.Printf("Preparing to run Temporal worker. Workflow trigger from config: %t", spageAppConfig.Temporal.Trigger)
 
-	return StartTemporalExecutor(graph, *inventoryFile, spageAppConfig)
+	return StartTemporalExecutor(&graph, *inventoryFile, spageAppConfig)
 }

@@ -94,9 +94,9 @@ func runPlaybookTest(t *testing.T, tc playbookTestCase) {
 			var runErr error
 			switch env.executor {
 			case "local":
-				runErr = cmd.StartLocalExecutor(graph, env.inventoryFile, cfg)
+				runErr = cmd.StartLocalExecutor(&graph, env.inventoryFile, cfg)
 			case "temporal":
-				runErr = cmd.StartTemporalExecutor(graph, env.inventoryFile, cfg)
+				runErr = cmd.StartTemporalExecutor(&graph, env.inventoryFile, cfg)
 			default:
 				require.Fail(t, "invalid environment: %s", env.executor)
 			}
@@ -934,6 +934,86 @@ func TestTemplateDiffMode(t *testing.T) {
 			assertFileContainsWithInventory(t, "/tmp/spage/template_diff_different.txt", "different_content_completed", inventory)
 
 			// TODO: improve testing
+		},
+	})
+}
+
+func TestHandlersPlaybook(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/handlers_playbook.yaml",
+		configFile:   "sequential.yaml",
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "handlers_playbook should succeed in env: %s, output: %s", envName, output)
+
+			// Verify that regular tasks ran
+			assertFileExistsWithInventory(t, "/tmp/spage/handlers_regular_task1.txt", inventory)
+			assertFileExistsWithInventory(t, "/tmp/spage/handlers_regular_task2.txt", inventory)
+			assertFileExistsWithInventory(t, "/tmp/spage/handlers_regular_task3.txt", inventory)
+			assertFileExistsWithInventory(t, "/tmp/spage/handlers_regular_task4.txt", inventory)
+
+			// Verify that handlers were executed after regular tasks
+			assertFileExistsWithInventory(t, "/tmp/spage/handlers_handler1.txt", inventory)
+			assertFileExistsWithInventory(t, "/tmp/spage/handlers_handler2.txt", inventory)
+
+			// Handler3 should NOT exist because it was never notified
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/handlers_handler3.txt", inventory)
+
+			// Verify that handlers ran only once (handler1 was notified twice but should only run once)
+			assertFileContainsWithInventory(t, "/tmp/spage/handlers_handler1.txt", "handler1 executed", inventory)
+			// The file should not contain multiple executions - check this inventory-aware
+			var content string
+			var err error
+			if isRemoteInventory(inventory) {
+				host := getFirstRemoteHost(inventory)
+				if host != nil {
+					hostContext := createHostContextForTesting(t, host)
+					defer func() {
+						if err := hostContext.Close(); err != nil {
+							t.Logf("Failed to close host context: %v", err)
+						}
+					}()
+					content, err = hostContext.ReadFile("/tmp/spage/handlers_handler1.txt", "")
+				}
+			} else {
+				contentBytes, readErr := os.ReadFile("/tmp/spage/handlers_handler1.txt")
+				if readErr == nil {
+					content = string(contentBytes)
+				}
+				err = readErr
+			}
+
+			if err == nil {
+				lines := strings.Split(content, "\n")
+				count := 0
+				for _, line := range lines {
+					if strings.Contains(line, "handler1 executed") {
+						count++
+					}
+				}
+				assert.Equal(t, 1, count, "Handler1 should only execute once even when notified multiple times")
+			}
+		},
+	})
+}
+
+func TestHandlersWithFailedTasksPlaybook(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/handlers_failed_tasks_playbook.yaml",
+		configFile:   "sequential.yaml",
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.NotEqual(t, 0, exitCode, "handlers_failed_tasks_playbook should fail in env: %s", envName)
+
+			// Verify that the successful task ran and its handler executed
+			assertFileExistsWithInventory(t, "/tmp/spage/handlers_success_task.txt", inventory)
+			assertFileExistsWithInventory(t, "/tmp/spage/handlers_success_handler.txt", inventory)
+
+			// Verify that the failed task created its file but its handler did NOT run
+			assertFileExistsWithInventory(t, "/tmp/spage/handlers_failed_task.txt", inventory)
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/handlers_failed_handler.txt", inventory)
+
+			// Verify that tasks after the failed task did not run
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/handlers_after_failed_task.txt", inventory)
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/handlers_after_failed_handler.txt", inventory)
 		},
 	})
 }

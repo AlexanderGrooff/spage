@@ -9,7 +9,7 @@ import (
 	"github.com/AlexanderGrooff/spage/pkg/executor"
 )
 
-func StartLocalExecutor(graph pkg.Graph, inventoryFile string, cfg *config.Config) error {
+func StartLocalExecutor(graph *pkg.Graph, inventoryFile string, cfg *config.Config) error {
 	exec := executor.NewLocalGraphExecutor(&executor.LocalTaskRunner{})
 	err := pkg.ExecuteGraph(exec, graph, inventoryFile, cfg)
 	if err != nil {
@@ -48,5 +48,5 @@ func EntrypointLocalExecutor(graph pkg.Graph) error {
 		cfg.Facts["ansible_diff"] = true
 	}
 
-	return StartLocalExecutor(graph, *inventoryFile, cfg)
+	return StartLocalExecutor(&graph, *inventoryFile, cfg)
 }

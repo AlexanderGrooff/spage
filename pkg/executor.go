@@ -41,7 +41,7 @@ type GraphExecutor interface {
 	Revert(ctx context.Context, executedTasks []map[string]chan Task, hostContexts map[string]*HostContext, cfg *config.Config) error
 }
 
-func ExecuteGraph(executor GraphExecutor, graph Graph, inventoryFile string, cfg *config.Config) error {
+func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cfg *config.Config) error {
 	var inventory *Inventory
 	var err error
 
@@ -94,7 +94,7 @@ func ExecuteGraph(executor GraphExecutor, graph Graph, inventoryFile string, cfg
 }
 
 // Execute implements the main execution loop for a Spage graph.
-func GetHostContexts(inventory *Inventory, graph Graph, cfg *config.Config) (map[string]*HostContext, error) {
+func GetHostContexts(inventory *Inventory, graph *Graph, cfg *config.Config) (map[string]*HostContext, error) {
 	contexts, err := GetContextForRun(inventory, graph, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get host contexts for run: %w", err)
@@ -102,7 +102,7 @@ func GetHostContexts(inventory *Inventory, graph Graph, cfg *config.Config) (map
 	return contexts, nil
 }
 
-func GetOrderedGraph(cfg *config.Config, graph Graph) ([][]Task, error) {
+func GetOrderedGraph(cfg *config.Config, graph *Graph) ([][]Task, error) {
 	switch cfg.ExecutionMode {
 	case "parallel":
 		return graph.ParallelTasks(), nil

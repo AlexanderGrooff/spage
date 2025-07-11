@@ -20,17 +20,19 @@ import (
 )
 
 type HostContext struct {
-	Host      *Host
-	Facts     *sync.Map
-	History   *sync.Map
-	sshClient *ssh.Client
+	Host           *Host
+	Facts          *sync.Map
+	History        *sync.Map
+	HandlerTracker *HandlerTracker
+	sshClient      *ssh.Client
 }
 
 func InitializeHostContext(host *Host, cfg *config.Config) (*HostContext, error) {
 	hc := &HostContext{
-		Host:    host,
-		Facts:   new(sync.Map),
-		History: new(sync.Map),
+		Host:           host,
+		Facts:          new(sync.Map),
+		History:        new(sync.Map),
+		HandlerTracker: nil, // Will be initialized later with handlers
 	}
 
 	if !host.IsLocal {
@@ -323,6 +325,13 @@ func GetVariableUsageFromTemplate(s string) []string {
 		return nil
 	}
 	return vars
+}
+
+// InitializeHandlerTracker initializes the HandlerTracker with the provided handlers
+func (c *HostContext) InitializeHandlerTracker(handlers []Task) {
+	if c.HandlerTracker == nil {
+		c.HandlerTracker = NewHandlerTracker(c.Host.Name, handlers)
+	}
 }
 
 func (c *HostContext) Close() error {

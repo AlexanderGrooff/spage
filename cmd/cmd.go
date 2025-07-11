@@ -156,9 +156,9 @@ var runCmd = &cobra.Command{
 		}
 
 		if cfg.Executor == "temporal" {
-			err = StartTemporalExecutor(graph, inventoryFile, cfg)
+			err = StartTemporalExecutor(&graph, inventoryFile, cfg)
 		} else {
-			err = StartLocalExecutor(graph, inventoryFile, cfg)
+			err = StartLocalExecutor(&graph, inventoryFile, cfg)
 		}
 		if err != nil {
 			common.LogError("Failed to run playbook", map[string]interface{}{
@@ -212,6 +212,7 @@ func applyTagFiltering(graph pkg.Graph, tagsConfig config.TagsConfig) (pkg.Graph
 	filteredGraph := pkg.Graph{
 		RequiredInputs: graph.RequiredInputs, // Copy required inputs
 		Tasks:          make([][]pkg.Task, 0),
+		Handlers:       graph.Handlers, // Copy handlers
 		Vars:           graph.Vars,
 	}
 

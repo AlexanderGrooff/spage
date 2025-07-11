@@ -490,7 +490,7 @@ func (i Inventory) GetContextForHost(host *Host, cfg *config.Config) (*HostConte
 	return ctx, nil
 }
 
-func GetContextForRun(inventory *Inventory, graph Graph, cfg *config.Config) (map[string]*HostContext, error) {
+func GetContextForRun(inventory *Inventory, graph *Graph, cfg *config.Config) (map[string]*HostContext, error) {
 	var err error
 	contexts := make(map[string]*HostContext)
 	for _, host := range inventory.Hosts {
@@ -499,6 +499,9 @@ func GetContextForRun(inventory *Inventory, graph Graph, cfg *config.Config) (ma
 		if err != nil {
 			return nil, fmt.Errorf("could not get context for host '%s' (%s): %w", host.Name, host.Host, err)
 		}
+
+		// Initialize the HandlerTracker with handlers from the graph
+		contexts[host.Name].InitializeHandlerTracker(graph.Handlers)
 
 		// Add graph vars to host context
 		for k, v := range graph.Vars {

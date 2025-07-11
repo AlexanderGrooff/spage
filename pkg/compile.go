@@ -97,6 +97,10 @@ func isRootBlock(block map[string]interface{}) bool {
 	return block["is_root"] == true
 }
 
+func isHandlerBlock(block map[string]interface{}) bool {
+	return block["is_handler"] == true
+}
+
 func ParsePlayAttributes(blocks []map[string]interface{}) (map[string]interface{}, error) {
 	rootBlock := blocks[0]
 	if !isRootBlock(rootBlock) {
@@ -129,9 +133,11 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"retries",
 		"delay",
 		"tags",
+		"notify",
 		"check_mode",
 		"diff",
 		"vars",
+		"is_handler",
 	}
 
 	var tasks []GraphNode
@@ -152,6 +158,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			RunAs:      getStringFromMap(block, "run_as"),
 			DelegateTo: getStringFromMap(block, "delegate_to"),
 			Until:      getStringFromMap(block, "until"),
+			IsHandler:  isHandlerBlock(block),
 			// Booleans (that might be strings like 'yes') are handled below
 		}
 
@@ -300,6 +307,27 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 				}
 			default:
 				errors = append(errors, fmt.Errorf("invalid type (%T) for 'tags' key in task %q, expected string or list of strings", tagsVal, task.Name))
+				errored = true
+			}
+		}
+
+		// Handle 'notify' field - can be a string or list of strings
+		if notifyVal, ok := block["notify"]; ok {
+			switch v := notifyVal.(type) {
+			case string:
+				task.Notify = []string{v}
+			case []interface{}:
+				for i, handlerVal := range v {
+					if handlerStr, ok := handlerVal.(string); ok {
+						task.Notify = append(task.Notify, handlerStr)
+					} else {
+						errors = append(errors, fmt.Errorf("invalid type (%T) for item %d in 'notify' list in task %q, expected string", handlerVal, i, task.Name))
+						errored = true
+						break
+					}
+				}
+			default:
+				errors = append(errors, fmt.Errorf("invalid type (%T) for 'notify' key in task %q, expected string or list of strings", notifyVal, task.Name))
 				errored = true
 			}
 		}

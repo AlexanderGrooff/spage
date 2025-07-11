@@ -30,6 +30,7 @@ type SpageActivityInput struct {
 	CurrentHostFacts map[string]interface{}
 	SpageCoreConfig  *config.Config // Pass necessary config parts
 	TaskHistory      map[string]interface{}
+	Handlers         []pkg.Task // Handlers from the graph
 }
 
 // SpageActivityResult defines the output from our generic Spage task activity.
@@ -44,6 +45,7 @@ type SpageActivityResult struct {
 	RegisteredVars    map[string]interface{}
 	HostFactsSnapshot map[string]interface{}
 	ModuleOutputMap   map[string]interface{}
+	NotifiedHandlers  []string // Handler names that were notified during this activity
 }
 
 // SpageRunOnceLoopActivityInput defines the input for run_once tasks with loops.
@@ -53,6 +55,7 @@ type SpageRunOnceLoopActivityInput struct {
 	LoopItems        []interface{} // All loop items to execute
 	CurrentHostFacts map[string]interface{}
 	SpageCoreConfig  *config.Config
+	Handlers         []pkg.Task // Handlers from the graph
 }
 
 // SpageRunOnceLoopActivityResult defines the output from run_once loop activity.
@@ -190,6 +193,9 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 	}
 	// The direct merge of input.TargetHost.Vars is removed as GetInitialFactsForHost now handles this layering.
 
+	// Initialize handler tracker with handlers from the graph
+	hostCtx.InitializeHandlerTracker(input.Handlers)
+
 	closure := pkg.ConstructClosure(hostCtx, input.TaskDefinition) // Assumes ConstructClosure is in package pkg
 
 	if input.LoopItem != nil {
@@ -281,6 +287,16 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 		return true
 	})
 
+	// Capture handler notifications from the activity's host context
+	if hostCtx.HandlerTracker != nil {
+		notifiedHandlerTasks := hostCtx.HandlerTracker.GetNotifiedHandlers()
+		result.NotifiedHandlers = make([]string, len(notifiedHandlerTasks))
+		for i, handler := range notifiedHandlerTasks {
+			result.NotifiedHandlers[i] = handler.Name
+		}
+		logger.Debug("Activity captured handler notifications", "host", input.TargetHost.Name, "task", input.TaskDefinition.Name, "notified_handlers", result.NotifiedHandlers)
+	}
+
 	return result, nil
 }
 
@@ -316,6 +332,9 @@ func ExecuteSpageRunOnceLoopActivity(ctx context.Context, input SpageRunOnceLoop
 			hostCtx.Facts.Store(k, v)
 		}
 	}
+
+	// Initialize handler tracker with handlers from the graph
+	hostCtx.InitializeHandlerTracker(input.Handlers)
 
 	var loopResults []SpageActivityResult
 
@@ -399,6 +418,15 @@ func ExecuteSpageRunOnceLoopActivity(ctx context.Context, input SpageRunOnceLoop
 			}
 		}
 
+		// Capture handler notifications for this loop iteration
+		if hostCtx.HandlerTracker != nil {
+			notifiedHandlerTasks := hostCtx.HandlerTracker.GetNotifiedHandlers()
+			result.NotifiedHandlers = make([]string, len(notifiedHandlerTasks))
+			for j, handler := range notifiedHandlerTasks {
+				result.NotifiedHandlers[j] = handler.Name
+			}
+		}
+
 		loopResults = append(loopResults, result)
 	}
 
@@ -428,6 +456,7 @@ func processActivityResultAndRegisterFacts(
 	taskName string,
 	hostName string,
 	hostFacts map[string]map[string]interface{},
+	hostContexts map[string]*pkg.HostContext, // Add host contexts parameter
 ) error {
 	logger := workflow.GetLogger(ctx)
 	if activityResult.Error != "" && !activityResult.Ignored {
@@ -459,6 +488,17 @@ func processActivityResultAndRegisterFacts(
 			hostFacts[activityResult.HostName][key] = value
 		}
 	}
+
+	// 3. Apply handler notifications from activity back to workflow context
+	if len(activityResult.NotifiedHandlers) > 0 {
+		if hostCtx, exists := hostContexts[activityResult.HostName]; exists && hostCtx.HandlerTracker != nil {
+			logger.Debug("Applying handler notifications from activity to workflow context", "host", activityResult.HostName, "task", taskName, "notified_handlers", activityResult.NotifiedHandlers)
+			for _, handlerName := range activityResult.NotifiedHandlers {
+				hostCtx.HandlerTracker.NotifyHandler(handlerName)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -487,12 +527,19 @@ func (r *TemporalTaskRunner) ExecuteTask(execCtx workflow.Context, task pkg.Task
 	currentHostFacts := closure.GetFacts() // Facts from the closure, prepared by SpageTemporalWorkflow
 	loopItem := closure.ExtraFacts["item"]
 
+	// Get handlers from the host context's handler tracker
+	var handlers []pkg.Task
+	if closure.HostContext.HandlerTracker != nil {
+		handlers = closure.HostContext.HandlerTracker.GetAllHandlers()
+	}
+
 	activityInput := SpageActivityInput{
 		TaskDefinition:   task,
 		TargetHost:       *closure.HostContext.Host,
 		LoopItem:         loopItem,
 		CurrentHostFacts: currentHostFacts,
 		SpageCoreConfig:  cfg,
+		Handlers:         handlers,
 	}
 
 	var activityOutput SpageActivityResult // Use a distinct name from the input
@@ -588,6 +635,12 @@ func (r *TemporalTaskRunner) RevertTask(execCtx workflow.Context, task pkg.Task,
 		})
 	}
 
+	// Get handlers from the host context's handler tracker
+	var handlers []pkg.Task
+	if closure.HostContext.HandlerTracker != nil {
+		handlers = closure.HostContext.HandlerTracker.GetAllHandlers()
+	}
+
 	activityInput := SpageActivityInput{
 		TaskDefinition:   task,
 		TargetHost:       *closure.HostContext.Host,
@@ -595,6 +648,7 @@ func (r *TemporalTaskRunner) RevertTask(execCtx workflow.Context, task pkg.Task,
 		CurrentHostFacts: currentHostFacts,
 		SpageCoreConfig:  cfg,
 		TaskHistory:      taskHistory,
+		Handlers:         handlers,
 	}
 
 	var activityOutput SpageActivityResult // Use a distinct name from the input
@@ -707,6 +761,9 @@ func RevertSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*Sp
 		}
 	}
 
+	// Initialize handler tracker with handlers from the graph
+	hostCtx.InitializeHandlerTracker(input.Handlers)
+
 	closure := pkg.ConstructClosure(hostCtx, input.TaskDefinition)
 
 	if input.LoopItem != nil {
@@ -801,6 +858,16 @@ func RevertSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*Sp
 		return true
 	})
 
+	// Capture handler notifications from the revert activity's host context
+	if hostCtx.HandlerTracker != nil {
+		notifiedHandlerTasks := hostCtx.HandlerTracker.GetNotifiedHandlers()
+		result.NotifiedHandlers = make([]string, len(notifiedHandlerTasks))
+		for i, handler := range notifiedHandlerTasks {
+			result.NotifiedHandlers[i] = handler.Name
+		}
+		logger.Debug("Revert activity captured handler notifications", "host", input.TargetHost.Name, "task", input.TaskDefinition.Name, "notified_handlers", result.NotifiedHandlers)
+	}
+
 	return result, nil
 }
 
@@ -820,6 +887,7 @@ func (e *TemporalGraphExecutor) executeRunOnceWithAllLoops(
 	closures []*pkg.Closure,
 	hostContexts map[string]*pkg.HostContext,
 	cfg *config.Config,
+	handlers []pkg.Task, // Add handlers parameter
 ) []pkg.TaskResult {
 	logger := workflow.GetLogger(ctx)
 
@@ -862,6 +930,7 @@ func (e *TemporalGraphExecutor) executeRunOnceWithAllLoops(
 		LoopItems:        loopItems,
 		CurrentHostFacts: firstClosure.GetFacts(),
 		SpageCoreConfig:  cfg,
+		Handlers:         handlers,
 	}
 
 	var activityResult SpageRunOnceLoopActivityResult
@@ -1007,8 +1076,14 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 			if isParallelDispatch {
 				actualDispatchedTasks++ // We'll dispatch one execution but generate results for all hosts
 				workflow.Go(workflowCtx, func(childTaskCtx workflow.Context) {
+					// Get handlers from the first host context
+					var handlers []pkg.Task
+					if firstHostCtx.HandlerTracker != nil {
+						handlers = firstHostCtx.HandlerTracker.GetAllHandlers()
+					}
+
 					// Execute all loop iterations on the first host and collect results
-					allLoopResults := e.executeRunOnceWithAllLoops(childTaskCtx, task, closures, hostContexts, cfg)
+					allLoopResults := e.executeRunOnceWithAllLoops(childTaskCtx, task, closures, hostContexts, cfg, handlers)
 
 					// Send results for all hosts
 					for _, result := range allLoopResults {
@@ -1018,8 +1093,14 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 					completionCh.SendAsync(true)
 				})
 			} else {
+				// Get handlers from the first host context
+				var handlers []pkg.Task
+				if firstHostCtx.HandlerTracker != nil {
+					handlers = firstHostCtx.HandlerTracker.GetAllHandlers()
+				}
+
 				// Execute all loop iterations on the first host and collect results
-				allLoopResults := e.executeRunOnceWithAllLoops(workflowCtx, task, closures, hostContexts, cfg)
+				allLoopResults := e.executeRunOnceWithAllLoops(workflowCtx, task, closures, hostContexts, cfg, handlers)
 
 				// Send results for all hosts
 				for _, result := range allLoopResults {
@@ -1094,6 +1175,7 @@ func (e *TemporalGraphExecutor) processLevelResults(
 	cfg *config.Config,
 	numExpectedResultsOnLevel int,
 	recapStats map[string]map[string]int,
+	hostContexts map[string]*pkg.HostContext,
 ) (bool, []pkg.TaskResult, error) {
 	ctx := e.Runner.WorkflowCtx
 
@@ -1117,7 +1199,7 @@ func (e *TemporalGraphExecutor) processLevelResults(
 			return nil // Don't fail for this, just log and continue
 		}
 
-		return processActivityResultAndRegisterFacts(ctx, activitySpecificOutput, taskName, hostname, hostFacts)
+		return processActivityResultAndRegisterFacts(ctx, activitySpecificOutput, taskName, hostname, hostFacts, hostContexts)
 	}
 
 	levelHardErrored, processedTasksOnLevel, err := SharedProcessLevelResults(
@@ -1199,8 +1281,14 @@ func (e *TemporalGraphExecutor) Execute(
 			executionLevel,
 			cfg, numExpectedResultsOnLevel,
 			recapStats,
+			hostContexts,
 		)
 		if errProcessingResults != nil {
+			// Execute handlers before reverting, as handlers should run for any tasks that successfully notified them
+			if err := e.executeHandlers(workflowCtx, hostContexts, workflowHostFacts, recapStats, cfg); err != nil {
+				logger.Warn("Failed to execute handlers before revert", "error", err.Error())
+			}
+
 			if !cfg.Revert {
 				return fmt.Errorf("error during graph execution on level %d: %w. Revert disabled", executionLevel, errProcessingResults)
 			}
@@ -1217,6 +1305,11 @@ func (e *TemporalGraphExecutor) Execute(
 		}
 
 		if levelErrored {
+			// Execute handlers before reverting, as handlers should run for any tasks that successfully notified them
+			if err := e.executeHandlers(workflowCtx, hostContexts, workflowHostFacts, recapStats, cfg); err != nil {
+				logger.Warn("Failed to execute handlers before revert", "error", err.Error())
+			}
+
 			if !cfg.Revert {
 				return fmt.Errorf("run failed on level %d, revert is disabled", executionLevel)
 			}
@@ -1227,7 +1320,141 @@ func (e *TemporalGraphExecutor) Execute(
 			return fmt.Errorf("run failed on level %d and tasks reverted", executionLevel)
 		}
 	}
+
+	// Execute handlers after all regular tasks complete
+	if err := e.executeHandlers(workflowCtx, hostContexts, workflowHostFacts, recapStats, cfg); err != nil {
+		return fmt.Errorf("failed to execute handlers: %w", err)
+	}
+
 	e.printPlayRecap(cfg, recapStats)
+	return nil
+}
+
+// executeHandlers runs all notified handlers across all hosts in the workflow context
+func (e *TemporalGraphExecutor) executeHandlers(
+	workflowCtx workflow.Context,
+	hostContexts map[string]*pkg.HostContext,
+	workflowHostFacts map[string]map[string]interface{},
+	recapStats map[string]map[string]int,
+	cfg *config.Config,
+) error {
+	logger := workflow.GetLogger(workflowCtx)
+
+	// Check if there are any handlers to execute
+	hasHandlers := false
+	for hostname, hostCtx := range hostContexts {
+		if hostCtx.HandlerTracker != nil {
+			notifiedHandlers := hostCtx.HandlerTracker.GetNotifiedHandlers()
+			logger.Debug("Checking handlers for host", "host", hostname, "notified_handlers", len(notifiedHandlers))
+			if len(notifiedHandlers) > 0 {
+				hasHandlers = true
+				break
+			}
+		}
+	}
+
+	if !hasHandlers {
+		logger.Debug("No handlers to execute", "execution_phase", "handlers")
+		return nil
+	}
+
+	logger.Info("Running handlers", "execution_phase", "handlers")
+
+	// Execute handlers for each host
+	for hostname, hostCtx := range hostContexts {
+		if hostCtx.HandlerTracker == nil {
+			continue
+		}
+
+		notifiedHandlers := hostCtx.HandlerTracker.GetNotifiedHandlers()
+		if len(notifiedHandlers) == 0 {
+			continue
+		}
+
+		logger.Debug("Executing handlers for host", "host", hostname, "handler_count", len(notifiedHandlers))
+
+		for _, handler := range notifiedHandlers {
+			// Skip if already executed
+			if hostCtx.HandlerTracker.IsExecuted(handler.Name) {
+				continue
+			}
+
+			// Update the existing host context with current facts from workflow
+			// Clear existing facts first, then load from workflow
+			hostCtx.Facts = &sync.Map{}
+			if currentFacts, ok := workflowHostFacts[hostname]; ok {
+				for k, v := range currentFacts {
+					hostCtx.Facts.Store(k, v)
+				}
+			}
+
+			// Create closure for the handler using the existing host context (which has connection info)
+			handlerClosure := pkg.ConstructClosure(hostCtx, handler)
+
+			// Execute the handler using the temporal task runner
+			result := e.Runner.ExecuteTask(workflowCtx, handler, handlerClosure, cfg)
+
+			// Mark the handler as executed
+			hostCtx.HandlerTracker.MarkExecuted(handler.Name)
+
+			// Process the result
+			if result.Closure == nil || result.Closure.HostContext == nil || result.Closure.HostContext.Host == nil {
+				logger.Error("Handler result has nil context", "handler", handler.Name, "host", hostname)
+				continue
+			}
+
+			// Update recap stats
+			if _, exists := recapStats[hostname]; !exists {
+				recapStats[hostname] = map[string]int{"ok": 0, "changed": 0, "failed": 0, "skipped": 0, "ignored": 0}
+			}
+
+			// Handle the result based on the ExecutionSpecificOutput (SpageActivityResult)
+			if activityResult, ok := result.ExecutionSpecificOutput.(SpageActivityResult); ok {
+				// Process handler result similar to regular task results
+				if errFact := processActivityResultAndRegisterFacts(workflowCtx, activityResult, handler.Name, hostname, workflowHostFacts, hostContexts); errFact != nil {
+					logger.Error("Handler task reported an error after fact registration", "handler", handler.Name, "host", hostname, "error", errFact)
+					recapStats[hostname]["failed"]++
+				} else if activityResult.Error != "" && !activityResult.Ignored {
+					logger.Error("Handler task failed", "handler", handler.Name, "host", hostname, "error", activityResult.Error)
+					recapStats[hostname]["failed"]++
+				} else if activityResult.Ignored {
+					logger.Warn("Handler task ignored", "handler", handler.Name, "host", hostname, "error", activityResult.Error)
+					recapStats[hostname]["ignored"]++
+				} else if activityResult.Skipped {
+					logger.Info("Handler task skipped", "handler", handler.Name, "host", hostname)
+					recapStats[hostname]["skipped"]++
+				} else if activityResult.Changed {
+					logger.Info("Handler task changed", "handler", handler.Name, "host", hostname)
+					recapStats[hostname]["changed"]++
+				} else {
+					logger.Info("Handler task ok", "handler", handler.Name, "host", hostname)
+					recapStats[hostname]["ok"]++
+				}
+			} else {
+				// Fallback to TaskResult analysis if no SpageActivityResult
+				if result.Error != nil {
+					var ignoredErr *pkg.IgnoredTaskError
+					if errors.As(result.Error, &ignoredErr) {
+						logger.Warn("Handler task ignored", "handler", handler.Name, "host", hostname, "error", ignoredErr.Unwrap().Error())
+						recapStats[hostname]["ignored"]++
+					} else {
+						logger.Error("Handler task failed", "handler", handler.Name, "host", hostname, "error", result.Error.Error())
+						recapStats[hostname]["failed"]++
+					}
+				} else if result.Status == pkg.TaskStatusSkipped {
+					logger.Info("Handler task skipped", "handler", handler.Name, "host", hostname)
+					recapStats[hostname]["skipped"]++
+				} else if result.Status == pkg.TaskStatusChanged {
+					logger.Info("Handler task changed", "handler", handler.Name, "host", hostname)
+					recapStats[hostname]["changed"]++
+				} else {
+					logger.Info("Handler task ok", "handler", handler.Name, "host", hostname)
+					recapStats[hostname]["ok"]++
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -1395,7 +1622,7 @@ func (e *TemporalGraphExecutor) revertWorkflow(
 				hostName := revertResult.Closure.HostContext.Host.Name
 				taskName := revertResult.Task.Name
 				if activityOutput, ok := revertResult.ExecutionSpecificOutput.(SpageActivityResult); ok {
-					if errFact := processActivityResultAndRegisterFacts(workflowCtx, activityOutput, "revert-"+taskName, hostName, workflowHostFacts); errFact != nil {
+					if errFact := processActivityResultAndRegisterFacts(workflowCtx, activityOutput, "revert-"+taskName, hostName, workflowHostFacts, hostContexts); errFact != nil {
 						logger.Error("Reverted task reported an error after fact registration", "task", taskName, "host", hostName, "original_error", errFact)
 						levelRevertHardErrored = true
 					} else if activityOutput.Error != "" && !activityOutput.Ignored { // Check activityOutput.Error even if errFact is nil, if not ignored
@@ -1445,7 +1672,7 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *pkg.Graph, inventor
 	temporalRunner := NewTemporalTaskRunner(ctx)
 	e := &TemporalGraphExecutor{Runner: *temporalRunner}
 
-	err := pkg.ExecuteGraph(e, *graphInput, inventoryFile, spageConfigInput)
+	err := pkg.ExecuteGraph(e, graphInput, inventoryFile, spageConfigInput)
 
 	if err != nil {
 		logger.Error("SpageTemporalWorkflow failed", "error", err)

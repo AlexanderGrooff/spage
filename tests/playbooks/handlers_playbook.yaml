@@ -1,0 +1,31 @@
+---
+- name: Test handlers functionality
+  hosts: localhost
+  tasks:
+    - name: Regular task 1 that notifies handler1
+      shell: echo "regular task 1 executed" > /tmp/spage/handlers_regular_task1.txt
+      notify: handler1
+
+    - name: Regular task 2 that notifies handler1 and handler2
+      shell: echo "regular task 2 executed" > /tmp/spage/handlers_regular_task2.txt
+      notify:
+        - handler1
+        - handler2
+
+    - name: Regular task 3 that doesn't notify any handlers
+      shell: echo "regular task 3 executed" > /tmp/spage/handlers_regular_task3.txt
+
+    - name: Regular task 4 that doesn't change anything (no notify)
+      shell: echo "regular task 4 executed but no change" > /tmp/spage/handlers_regular_task4.txt
+      changed_when: false
+      notify: handler1
+
+  handlers:
+    - name: handler1
+      shell: echo "handler1 executed" > /tmp/spage/handlers_handler1.txt
+
+    - name: handler2
+      shell: echo "handler2 executed" > /tmp/spage/handlers_handler2.txt
+
+    - name: handler3
+      shell: echo "handler3 executed" > /tmp/spage/handlers_handler3.txt

@@ -1,0 +1,27 @@
+---
+- name: Test handlers with failed tasks
+  hosts: localhost
+  tasks:
+    - name: Successful task that notifies handler
+      shell: echo "success task executed" > /tmp/spage/handlers_success_task.txt
+      notify: success_handler
+
+    - name: Failed task that tries to notify handler
+      shell: |
+        echo "failed task executed" > /tmp/spage/handlers_failed_task.txt
+        exit 1
+      notify: failed_handler
+
+    - name: Task after failed task (should not run)
+      shell: echo "after failed task executed" > /tmp/spage/handlers_after_failed_task.txt
+      notify: after_failed_handler
+
+  handlers:
+    - name: success_handler
+      shell: echo "success handler executed" > /tmp/spage/handlers_success_handler.txt
+
+    - name: failed_handler
+      shell: echo "failed handler executed" > /tmp/spage/handlers_failed_handler.txt
+
+    - name: after_failed_handler
+      shell: echo "after failed handler executed" > /tmp/spage/handlers_after_failed_handler.txt

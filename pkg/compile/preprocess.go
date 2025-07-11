@@ -304,6 +304,25 @@ func processPlaybookRoot(playbookRoot map[string]interface{}, currentBasePath st
 		}
 	}
 
+	// Process 'handlers' section if it exists
+	if handlers, hasHandlers := playbookRoot["handlers"]; hasHandlers {
+		handlersList, ok := handlers.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("invalid 'handlers' section: expected list, got %T", handlers)
+		}
+
+		for _, handlerEntry := range handlersList {
+			handlerMap, ok := handlerEntry.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("invalid handler entry: expected map, got %T", handlerEntry)
+			}
+
+			// Mark this task as a handler
+			handlerMap["is_handler"] = true
+			result = append(result, handlerMap)
+		}
+	}
+
 	return result, nil
 }
 
