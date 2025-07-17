@@ -80,7 +80,7 @@ type Task struct {
 	When         string      `yaml:"when" json:"when,omitempty"`
 	Register     string      `yaml:"register" json:"register,omitempty"`
 	RunAs        string      `yaml:"run_as" json:"run_as,omitempty"`
-	IgnoreErrors bool        `yaml:"ignore_errors,omitempty" json:"ignore_errors,omitempty"`
+	IgnoreErrors JinjaBool   `yaml:"ignore_errors,omitempty" json:"ignore_errors,omitempty"`
 	FailedWhen   interface{} `yaml:"failed_when,omitempty" json:"failed_when,omitempty"`
 	ChangedWhen  interface{} `yaml:"changed_when,omitempty" json:"changed_when,omitempty"`
 	Loop         interface{} `yaml:"loop,omitempty" json:"loop,omitempty"`
@@ -285,8 +285,8 @@ func (t Task) ToCode() string {
 		t.When,
 	))
 
-	if t.IgnoreErrors {
-		sb.WriteString(fmt.Sprintf(", IgnoreErrors: %t", t.IgnoreErrors))
+	if t.IgnoreErrors != "" {
+		sb.WriteString(fmt.Sprintf(", IgnoreErrors: %s", t.IgnoreErrors))
 	}
 	if t.CheckMode != nil {
 		// Create a pointer to a boolean for the generated code
@@ -816,7 +816,7 @@ func HandleResult(r *TaskResult, t Task, c *Closure) TaskResult {
 		}
 	}
 
-	if r.Error != nil && t.IgnoreErrors {
+	if r.Error != nil && t.IgnoreErrors.ToBool(c) {
 		common.LogWarn("Task failed but error ignored due to ignore_errors=true", map[string]interface{}{
 			"task":  t.Name,
 			"host":  c.HostContext.Host.Name,

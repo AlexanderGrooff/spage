@@ -345,15 +345,17 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		}
 
 		// Handle 'ignore_errors' using the helper function
-		ignoreVal, ignoreFound, ignoreErr := parseBoolOrStringBoolValue(block, "ignore_errors", task.Name)
-		if ignoreErr != nil {
-			errors = append(errors, ignoreErr)
-			errored = true
-		} else {
-			// If found, use the parsed value, otherwise default to false (handled by initial Task struct value)
-			if ignoreFound {
-				task.IgnoreErrors = ignoreVal
-			} // else task.IgnoreErrors keeps its default zero value (false)
+		ignoreErrors, ok := block["ignore_errors"]
+		if ok && ignoreErrors != "" {
+			switch v := ignoreErrors.(type) {
+			case string:
+				task.IgnoreErrors = JinjaBool(v)
+			case bool:
+				task.IgnoreErrors = JinjaBool(fmt.Sprintf("%t", v))
+			default:
+				errors = append(errors, fmt.Errorf("invalid type (%T) for 'ignore_errors' in task %q, expected string or boolean", v, task.Name))
+				task.IgnoreErrors = JinjaBool("false")
+			}
 		}
 
 		// Handle 'no_log' using the helper function

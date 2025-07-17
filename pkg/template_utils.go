@@ -7,6 +7,16 @@ import (
 	"github.com/AlexanderGrooff/jinja-go"
 )
 
+type JinjaBool string
+
+func (jb JinjaBool) ToBool(closure *Closure) bool {
+	res, err := jinja.TemplateString(string(jb), closure.GetFacts())
+	if err != nil {
+		return false
+	}
+	return jinja.IsTruthy(res) || res == "true" || res == "1" || res == "yes"
+}
+
 // ProcessRecursive is the core recursive function that creates a new reflect.Value
 // based on originalVal, with string fields templated.
 // It returns a new reflect.Value representing the copied and processed value, or an error.
