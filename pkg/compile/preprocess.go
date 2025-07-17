@@ -73,30 +73,6 @@ func processIncludeDirective(includeValue interface{}, currentBasePath string, r
 	}
 }
 
-// processImportTasksDirective handles the 'import_tasks' directive during preprocessing.
-// In this static preprocessing model, it behaves identically to processIncludeDirective.
-func processImportTasksDirective(importValue interface{}, currentBasePath string, rolesPaths []string) ([]map[string]interface{}, error) {
-	if pathStr, ok := importValue.(string); ok {
-		absPath := pathStr
-		if !filepath.IsAbs(pathStr) {
-			absPath = filepath.Join(currentBasePath, pathStr)
-		}
-		importedData, err := os.ReadFile(absPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read imported tasks file %s: %w", absPath, err)
-		}
-		// Recursively preprocess the imported content
-		nestedBasePath := filepath.Dir(absPath)
-		nestedBlocks, err := PreprocessPlaybook(importedData, nestedBasePath, rolesPaths)
-		if err != nil {
-			return nil, fmt.Errorf("failed to preprocess imported tasks file %s: %w", absPath, err)
-		}
-		return nestedBlocks, nil
-	} else {
-		return nil, fmt.Errorf("invalid 'import_tasks' value: expected string, got %T", importValue)
-	}
-}
-
 func readRoleData(roleDir string) ([]byte, error) {
 	// Assume roles are in a 'roles' directory relative to the current base path.
 	// TODO: Make roles path configurable.
@@ -156,42 +132,6 @@ func processIncludeRoleDirective(roleParams interface{}, currentBasePath string,
 	roleBlocks, err := PreprocessPlaybook(roleData, roleTasksBasePath, rolesPaths)
 	if err != nil {
 		return nil, fmt.Errorf("failed to preprocess role '%s' tasks from %s: %w", roleName, roleTasksBasePath, err)
-	}
-	return roleBlocks, nil
-}
-
-// processImportRoleDirective handles the 'import_role' directive during preprocessing.
-// In this static preprocessing model, it behaves identically to processIncludeRoleDirective.
-func processImportRoleDirective(roleParams interface{}, currentBasePath string, rolesPaths []string) ([]map[string]interface{}, error) {
-	paramsMap, ok := roleParams.(map[string]interface{})
-	if !ok {
-		// Handle simple string form: import_role: my_role_name
-		if roleNameStr, okStr := roleParams.(string); okStr {
-			paramsMap = map[string]interface{}{"name": roleNameStr}
-		} else {
-			return nil, fmt.Errorf("invalid 'import_role' value: expected map or string, got %T", roleParams)
-		}
-	}
-
-	roleName, nameOk := paramsMap["name"].(string)
-	if !nameOk || roleName == "" {
-		return nil, fmt.Errorf("missing or invalid 'name' in import_role directive")
-	}
-
-	roleTasksBasePath, err := findRoleInPaths(roleName, rolesPaths, currentBasePath)
-	if err != nil {
-		return nil, err
-	}
-
-	roleData, err := readRoleData(roleTasksBasePath)
-	if err != nil {
-		return nil, err
-	}
-
-	// Recursively preprocess the role's tasks
-	roleBlocks, err := PreprocessPlaybook(roleData, roleTasksBasePath, rolesPaths)
-	if err != nil {
-		return nil, fmt.Errorf("failed to preprocess imported role '%s' tasks from %s: %w", roleName, roleTasksBasePath, err)
 	}
 	return roleBlocks, nil
 }
@@ -339,10 +279,11 @@ func init() {
 	preprocessorRegistry = map[string]preprocessorFunc{
 		"include":          processIncludeDirective,
 		"include_playbook": processIncludeDirective,
-		"import_tasks":     processImportTasksDirective,
-		"import_playbook":  processImportTasksDirective,
+		"import_tasks":     processIncludeDirective,
+		"import_playbook":  processIncludeDirective,
+		"include_tasks":    processIncludeDirective,
 		"include_role":     processIncludeRoleDirective,
-		"import_role":      processImportRoleDirective,
+		"import_role":      processIncludeRoleDirective,
 		// Add other meta directives here in the future
 	}
 }
