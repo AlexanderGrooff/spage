@@ -25,6 +25,19 @@
 - name: Test shorthand syntax with multiple parameters
   template: src=test.conf.j2 dest=/tmp/spage/shorthand_multi.conf mode=0755
 
+- name: Test shorthand syntax with variables
+  template: src=test.conf.j2 dest={{ dirname }}/shorthand_vars.conf mode=0755
+  vars:
+    dirname: /tmp/spage
+
+- name: multiline shorthand syntax
+  template: >-
+    src=test.conf.j2
+    dest={{ dirname }}/multiline_shorthand.conf
+    mode=0755
+  vars:
+    dirname: /tmp/spage
+
 - name: Verify shorthand template files exist
   stat:
     path: /tmp/spage/shorthand_template.conf
@@ -35,6 +48,16 @@
     path: /tmp/spage/regular_template.conf
   register: regular_stat
 
+- name: Verify shorthand vars file exists
+  stat:
+    path: /tmp/spage/shorthand_vars.conf
+  register: shorthand_vars_stat
+
+- name: Verify multiline shorthand file exists
+  stat:
+    path: /tmp/spage/multiline_shorthand.conf
+  register: multiline_shorthand_stat
+
 - name: Assert both template approaches work
   assert:
     that:
@@ -42,3 +65,5 @@
       - regular_stat.stat.exists
       - shorthand_stat.stat.isreg
       - regular_stat.stat.isreg
+      - shorthand_vars_stat.stat.exists
+      - multiline_shorthand_stat.stat.exists

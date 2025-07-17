@@ -1,6 +1,7 @@
 package modules
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -32,6 +33,20 @@ type SetFactInput struct {
 type SetFactOutput struct {
 	FactsSet map[string]interface{} // Record which facts were actually set/modified
 	// No longer embedding interface
+}
+
+// MarshalJSON customizes JSON marshaling to embed facts directly at the top level
+func (o SetFactOutput) MarshalJSON() ([]byte, error) {
+	result := make(map[string]interface{})
+	result["changed"] = o.Changed()
+	result["failed"] = false
+
+	// Add the facts directly to the result map so they're accessible as top-level fields
+	for k, v := range o.FactsSet {
+		result[k] = v
+	}
+
+	return json.Marshal(result)
 }
 
 // ToCode generates Go code representation of the SetFactInput.
