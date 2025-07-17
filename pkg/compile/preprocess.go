@@ -38,6 +38,7 @@ func findRoleInPaths(roleName string, rolesPaths []string, currentBasePath strin
 			rolePath = filepath.Join(currentBasePath, rolesPath, roleName, "tasks")
 		}
 
+		fmt.Println("Checking role path:", rolePath)
 		// Check if main.yaml or main.yml exists
 		if _, err := os.Stat(filepath.Join(rolePath, "main.yaml")); err == nil {
 			return rolePath, nil

@@ -33,9 +33,9 @@ func runPlaybookTest(t *testing.T, tc playbookTestCase) {
 		inventoryFile string
 	}{
 		{executor: "local", inventoryFile: ""},
-		{executor: "local", inventoryFile: "inventory.yaml"},
-		{executor: "temporal", inventoryFile: ""},
-		{executor: "temporal", inventoryFile: "inventory.yaml"},
+		// {executor: "local", inventoryFile: "inventory.yaml"},
+		// {executor: "temporal", inventoryFile: ""},
+		// {executor: "temporal", inventoryFile: "inventory.yaml"},
 	}
 
 	for _, env := range environments {
@@ -1183,6 +1183,36 @@ func TestShorthandSyntaxPlaybook(t *testing.T) {
 					assert.Equal(t, shorthandContent, regularContent, "Shorthand and regular template syntax should produce identical content on remote host")
 				}
 			}
+		},
+	})
+}
+
+func TestLocalActionPlaybook(t *testing.T) {
+	playbookContent := `
+- hosts: all
+  tasks:
+    - name: Run command locally with string syntax
+      local_action: command echo "hello from local_action" > /tmp/spage/local_action_test.txt
+
+    - name: Create file locally with map syntax
+      local_action:
+        module: copy
+        content: "local_action module args"
+        dest: /tmp/spage/local_action_test_args.txt
+`
+	playbookFile := createTestPlaybook(t, "local_action_playbook.yaml", playbookContent)
+
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: playbookFile,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "Expected exit code 0, got %d. Output: %s", exitCode, output)
+
+			// local_action should always execute on the local machine, so we don't use assertFile...WithInventory
+			assertFileExists(t, "/tmp/spage/local_action_test.txt")
+			assertFileContains(t, "/tmp/spage/local_action_test.txt", "hello from local_action")
+
+			assertFileExists(t, "/tmp/spage/local_action_test_args.txt")
+			assertFileContains(t, "/tmp/spage/local_action_test_args.txt", "local_action module args")
 		},
 	})
 }

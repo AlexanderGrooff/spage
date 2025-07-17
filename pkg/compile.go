@@ -255,7 +255,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"loop",
 		"delegate_to",
 		"run_once",
-		"no_log",
+		"no_log", // Caught but ignored
 		"until",
 		"retries",
 		"delay",
@@ -265,6 +265,9 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"diff",
 		"vars",
 		"is_handler",
+		"with_items",
+		"throttle", // Caught but ignored
+		"local_action",
 	}
 
 	var tasks []GraphNode
@@ -482,49 +485,87 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			task.Vars = varsVal
 		}
 
-		var module Module
+		var moduleName string
 		var moduleParams interface{}
-		for k, v := range block {
-			if !containsInSlice(arguments, k) {
-				if task.Module != "" {
-					errors = append(errors, fmt.Errorf("multiple module keys found ('%s' and '%s') in task %q", task.Module, k, task.Name))
+
+		// Handle local_action by transforming it into a normal task with delegate_to: localhost
+		if localAction, ok := block["local_action"]; ok {
+			task.DelegateTo = "localhost"
+
+			switch v := localAction.(type) {
+			case string:
+				parts := strings.Fields(v)
+				if len(parts) > 0 {
+					moduleName = parts[0]
+					moduleParams = strings.Join(parts[1:], " ")
+				} else {
+					errors = append(errors, fmt.Errorf("invalid local_action format in task %q: empty string", task.Name))
 					errored = true
-					break
 				}
-				if m, ok := GetModule(k); ok {
-					task.Module = k
-					module = m
+			case map[string]interface{}:
+				if mod, exists := v["module"]; exists {
+					moduleName = mod.(string)
+					// The rest of the map is the parameters
+					delete(v, "module")
 					moduleParams = v
 				} else {
-					// Handle unknown modules with Python fallback
-					task.Module = "ansible_python" // Use the Python fallback module name
-					if pythonModule, ok := GetModule("ansible_python"); ok {
-						module = pythonModule
-
-						// Convert rawParams to map[string]interface{}
-						var paramsMap map[string]interface{}
-						if v != nil {
-							if pm, ok := v.(map[string]interface{}); ok {
-								paramsMap = pm
-							} else {
-								// Try to convert other types to a simple parameter
-								paramsMap = map[string]interface{}{"value": v}
-							}
-						} else {
-							paramsMap = make(map[string]interface{})
-						}
-
-						// Create the AnsiblePythonInput structure
-						moduleParams = map[string]interface{}{
-							"module_name": k,
-							"args":        paramsMap,
-						}
-					} else {
-						errors = append(errors, fmt.Errorf("ansible_python module not registered for unknown module %s", k))
-						errored = true
-						break
-					}
+					errors = append(errors, fmt.Errorf("invalid local_action format in task %q: 'module' key not found", task.Name))
+					errored = true
 				}
+			default:
+				errors = append(errors, fmt.Errorf("invalid type for local_action in task %q: got %T", localAction, localAction))
+				errored = true
+			}
+		} else {
+			// Default behavior: find the module as a key that is not a standard argument
+			for key, value := range block {
+				if !containsInSlice(arguments, key) {
+					moduleName = key
+					moduleParams = value
+					break
+				}
+			}
+		}
+
+		// If a module was identified, proceed with processing
+		if moduleName != "" {
+			task.Module = moduleName
+		} else if !errored {
+			// Only error if no other error has occurred for this task
+			errors = append(errors, fmt.Errorf("no module specified for task %q", task.Name))
+			errored = true
+		}
+
+		var module Module
+		if m, ok := GetModule(task.Module); ok {
+			module = m
+		} else {
+			// Handle unknown modules with Python fallback
+			task.Module = "ansible_python" // Use the Python fallback module name
+			if pythonModule, ok := GetModule("ansible_python"); ok {
+				module = pythonModule
+
+				// Convert rawParams to map[string]interface{}
+				var paramsMap map[string]interface{}
+				if moduleParams != nil {
+					if pm, ok := moduleParams.(map[string]interface{}); ok {
+						paramsMap = pm
+					} else {
+						// Try to convert other types to a simple parameter
+						paramsMap = map[string]interface{}{"value": moduleParams}
+					}
+				} else {
+					paramsMap = make(map[string]interface{})
+				}
+
+				// Create the AnsiblePythonInput structure
+				moduleParams = map[string]interface{}{
+					"module_name": moduleName,
+					"args":        paramsMap,
+				}
+			} else {
+				errors = append(errors, fmt.Errorf("ansible_python module not registered for unknown module %s", moduleName))
+				errored = true
 			}
 		}
 
@@ -537,6 +578,9 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			continue
 		}
 
+		if withItemsVal, ok := block["with_items"]; ok {
+			task.Loop = withItemsVal
+		}
 		if loopVal, ok := block["loop"]; ok {
 			task.Loop = loopVal
 		}
