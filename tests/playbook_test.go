@@ -1200,3 +1200,13 @@ func TestFailedWhenPlaybook(t *testing.T) {
 		},
 	})
 }
+
+func TestJinjaTestsPlaybook(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/jinja_tests_playbook.yaml",
+		configFile:   "sequential_no_revert.yaml",
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "jinja_tests_playbook should succeed")
+		},
+	})
+}

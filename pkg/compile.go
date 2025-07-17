@@ -155,7 +155,7 @@ func parseShorthandParams(moduleParams interface{}, moduleName, taskName string)
 }
 
 // parseKeyValuePairs parses a string like "src=file.j2 dest=/path/file mode=0644"
-// and returns a map of key-value pairs. Handles quoted values.
+// and returns a map of key-value pairs. Handles quoted values and Jinja templates.
 func parseKeyValuePairs(input string) (map[string]string, error) {
 	result := make(map[string]string)
 
@@ -167,8 +167,9 @@ func parseKeyValuePairs(input string) (map[string]string, error) {
 
 	// Use a simple state machine to parse key=value pairs
 	var currentKey, currentValue strings.Builder
-	var inValue, inQuotes bool
+	var inValue, inQuotes, inJinjaTemplate bool
 	var quoteChar rune
+	var jinjaDepth int
 
 	i := 0
 	for i < len(input) {
@@ -189,13 +190,34 @@ func parseKeyValuePairs(input string) (map[string]string, error) {
 			// Starting a quoted value
 			inQuotes = true
 			quoteChar = char
+			currentValue.WriteRune(char)
 
 		case inValue && inQuotes && char == quoteChar:
 			// Ending a quoted value
 			inQuotes = false
+			currentValue.WriteRune(char)
 
-		case inValue && !inQuotes && (char == ' ' || char == '\t'):
-			// End of this key=value pair
+		case inValue && !inQuotes && char == '{' && i+1 < len(input) && rune(input[i+1]) == '{':
+			// Starting a Jinja template {{
+			inJinjaTemplate = true
+			jinjaDepth++
+			currentValue.WriteRune(char)
+			currentValue.WriteRune(rune(input[i+1]))
+			i++ // Skip the next character since we've already processed it
+
+		case inValue && inJinjaTemplate && char == '}' && i+1 < len(input) && rune(input[i+1]) == '}':
+			// Ending a Jinja template }}
+			jinjaDepth--
+			if jinjaDepth <= 0 {
+				inJinjaTemplate = false
+				jinjaDepth = 0
+			}
+			currentValue.WriteRune(char)
+			currentValue.WriteRune(rune(input[i+1]))
+			i++ // Skip the next character since we've already processed it
+
+		case inValue && !inQuotes && !inJinjaTemplate && (char == ' ' || char == '\t'):
+			// End of this key=value pair (only if not in quotes or Jinja template)
 			key := strings.TrimSpace(currentKey.String())
 			value := strings.TrimSpace(currentValue.String())
 
@@ -209,6 +231,9 @@ func parseKeyValuePairs(input string) (map[string]string, error) {
 			currentKey.Reset()
 			currentValue.Reset()
 			inValue = false
+			inQuotes = false
+			inJinjaTemplate = false
+			jinjaDepth = 0
 
 		case inValue:
 			// Building the value
