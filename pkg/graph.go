@@ -288,7 +288,8 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}) (Graph,
 	}
 	g := Graph{RequiredInputs: []string{}, Vars: graphAttributes["vars"].(map[string]interface{})}
 	dependsOn := map[string][]string{}
-	taskNameMapping := map[string]Task{}
+	taskIdMapping := map[int]Task{}
+	lastTaskNameMapping := map[string]Task{}
 	originalIndexMap := map[string]int{} // Map task name to its original flattened index
 	dependsOnVariables := map[string][]string{}
 	variableProvidedBy := map[string]string{}
@@ -314,17 +315,18 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}) (Graph,
 
 	// Process only regular tasks for the main execution flow
 	for i, task := range regularTasks {
-		if _, exists := taskNameMapping[task.Name]; exists {
+		if _, exists := lastTaskNameMapping[task.Name]; exists {
 			// Handle potential duplicate task names if necessary, though Ansible usually requires unique names within a play
-			common.LogWarn("Duplicate task name found during flattening", map[string]interface{}{"name": task.Name})
+			common.LogWarn("Duplicate task name found during flattening", map[string]interface{}{"name": task.Name, "index": i})
 			// For now, we'll overwrite, assuming later tasks with the same name take precedence or are errors
 		}
-		taskNameMapping[task.Name] = task
+		taskIdMapping[task.Id] = task
+		lastTaskNameMapping[task.Name] = task
 		originalIndexMap[task.Name] = i
 	}
 
 	// 2. Build dependencies based on flattened tasks
-	for _, n := range taskNameMapping {
+	for _, n := range taskIdMapping {
 		common.DebugOutput("Processing node TaskNode %q %q: %+v", n.Name, n.Module, n.Params)
 		// Check if n.Params.Actual is nil, as n.Params is a struct and cannot be nil itself.
 		if n.Params.Actual == nil {
@@ -417,7 +419,7 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}) (Graph,
 	}
 
 	// 3. Check for cycles
-	for taskName := range taskNameMapping {
+	for taskName := range lastTaskNameMapping {
 		if err := checkCycle(taskName, dependsOn, visited, recStack); err != nil {
 			return Graph{}, err
 		}
@@ -456,17 +458,18 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}) (Graph,
 	}
 
 	// 5. Resolve execution levels
-	executedOnStep := map[string]int{}
-	allTaskNames := make([]string, 0, len(taskNameMapping))
-	for taskName := range taskNameMapping {
-		allTaskNames = append(allTaskNames, taskName)
+	executedOnStep := map[int]int{}
+	allTaskIds := make([]int, 0, len(taskIdMapping))
+	for taskId := range taskIdMapping {
+		allTaskIds = append(allTaskIds, taskId)
 	}
-	// Sort task names to ensure deterministic processing order for ResolveExecutionLevel
+	// Sort task IDs to ensure deterministic processing order for ResolveExecutionLevel
 	// This helps make the *level assignment* itself more stable, although the final sort step is the primary guarantee.
-	sort.Strings(allTaskNames)
-	for _, taskName := range allTaskNames {
-		if _, processed := executedOnStep[taskName]; !processed {
-			executedOnStep = ResolveExecutionLevel(taskName, dependsOn, executedOnStep)
+	sort.Ints(allTaskIds)
+	for _, taskId := range allTaskIds {
+		task := taskIdMapping[taskId]
+		if _, processed := executedOnStep[task.Id]; !processed {
+			executedOnStep = ResolveExecutionLevel(task, lastTaskNameMapping, dependsOn, executedOnStep)
 		}
 	}
 
@@ -478,7 +481,7 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}) (Graph,
 
 	// 6.5. Determine if we need to inject a gather facts task and create it
 	usedFacts := make(map[string]struct{})
-	for _, task := range taskNameMapping {
+	for _, task := range taskIdMapping {
 		vars, _ := GetVariableUsage(task)
 		for _, v := range vars {
 			if _, ok := AllowedFacts[v]; ok {
@@ -566,8 +569,8 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}) (Graph,
 	}
 
 	// Then add the regular tasks with potentially incremented IDs
-	for taskName, executionLevel := range executedOnStep {
-		task := taskNameMapping[taskName]
+	for taskId, executionLevel := range executedOnStep {
+		task := taskIdMapping[taskId]
 		// Increment task ID by 1 if we have a setup task
 		if hasSetupTask {
 			task.Id = task.Id + 1
@@ -589,14 +592,15 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}) (Graph,
 	return g, nil
 }
 
-func ResolveExecutionLevel(taskName string, dependsOn map[string][]string, executedOnStep map[string]int) map[string]int {
-	if len(dependsOn[taskName]) == 0 {
-		executedOnStep[taskName] = 0
+func ResolveExecutionLevel(task Task, taskNameMapping map[string]Task, dependsOn map[string][]string, executedOnStep map[int]int) map[int]int {
+	if len(dependsOn[task.Name]) == 0 {
+		executedOnStep[task.Id] = 0
 		return executedOnStep
 	}
-	for _, parentTaskName := range dependsOn[taskName] {
-		executedOnStep = ResolveExecutionLevel(parentTaskName, dependsOn, executedOnStep)
-		executedOnStep[taskName] = max(executedOnStep[taskName], executedOnStep[parentTaskName]+1)
+	for _, parentTaskName := range dependsOn[task.Name] {
+		parentTask := taskNameMapping[parentTaskName]
+		executedOnStep = ResolveExecutionLevel(parentTask, taskNameMapping, dependsOn, executedOnStep)
+		executedOnStep[task.Id] = max(executedOnStep[task.Id], executedOnStep[parentTask.Id]+1)
 	}
 	return executedOnStep
 }
