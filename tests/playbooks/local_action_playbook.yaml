@@ -1,0 +1,11 @@
+---
+- hosts: all
+  tasks:
+    - name: Run command locally with string syntax
+      local_action: command echo "hello from local_action" > /tmp/spage/local_action_test.txt
+
+    - name: Create file locally with map syntax
+      local_action:
+        module: copy
+        content: "local_action module args"
+        dest: /tmp/spage/local_action_test_args.txt

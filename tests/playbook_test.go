@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -413,25 +412,6 @@ func createHostContextForTesting(t *testing.T, host *pkg.Host) *pkg.HostContext 
 	return hostContext
 }
 
-func createTestPlaybook(t *testing.T, name, content string) string {
-	t.Helper()
-	// assumes the test is run from the tests directory
-	playbooksDir := "playbooks"
-	if _, err := os.Stat(playbooksDir); os.IsNotExist(err) {
-		err = os.Mkdir(playbooksDir, 0755)
-		require.NoError(t, err)
-	}
-	path := filepath.Join(playbooksDir, name)
-	err := os.WriteFile(path, []byte(content), 0644)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		if err := os.Remove(path); err != nil {
-			t.Logf("Failed to remove test playbook file %s: %v", path, err)
-		}
-	})
-	return path
-}
-
 func TestVarsPlaybook(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
 		playbookFile: "playbooks/vars_playbook.yaml",
@@ -676,15 +656,8 @@ func TestAssertPlaybook(t *testing.T) {
 
 func TestRootTasksPlaybook(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
-		playbookFile: createTestPlaybook(t, "root_tasks_playbook.yaml", `
----
-- name: Root playbook with tasks
-  hosts: localhost
-  tasks:
-    - name: Create a test file with tasks
-      shell: echo "Created by root-level tasks section" > /tmp/spage/root_playbook_tasks.txt
-`),
-		configFile: "default.yaml",
+		playbookFile: "playbooks/root_tasks_playbook.yaml",
+		configFile:   "default.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.Equal(t, 0, exitCode, "root_tasks_playbook should succeed")
 			assertFileContainsWithInventory(t, "/tmp/spage/root_playbook_tasks.txt", "Created by root-level tasks section", inventory)
@@ -1188,22 +1161,8 @@ func TestShorthandSyntaxPlaybook(t *testing.T) {
 }
 
 func TestLocalActionPlaybook(t *testing.T) {
-	playbookContent := `
-- hosts: all
-  tasks:
-    - name: Run command locally with string syntax
-      local_action: command echo "hello from local_action" > /tmp/spage/local_action_test.txt
-
-    - name: Create file locally with map syntax
-      local_action:
-        module: copy
-        content: "local_action module args"
-        dest: /tmp/spage/local_action_test_args.txt
-`
-	playbookFile := createTestPlaybook(t, "local_action_playbook.yaml", playbookContent)
-
 	runPlaybookTest(t, playbookTestCase{
-		playbookFile: playbookFile,
+		playbookFile: "playbooks/local_action_playbook.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.Equal(t, 0, exitCode, "Expected exit code 0, got %d. Output: %s", exitCode, output)
 
