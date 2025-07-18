@@ -26,14 +26,14 @@
   template: src=test.conf.j2 dest=/tmp/spage/shorthand_multi.conf mode=0755
 
 - name: Test shorthand syntax with variables
-  template: src=test.conf.j2 dest={{ dirname }}/shorthand_vars.conf mode=0755
+  template: src=test.conf.j2 dest="{{ dirname }}/shorthand_vars.conf" mode=0755
   vars:
     dirname: /tmp/spage
 
 - name: multiline shorthand syntax
   template: >-
     src=test.conf.j2
-    dest={{ dirname }}/multiline_shorthand.conf
+    dest="{{ dirname }}/multiline_shorthand.conf"
     mode=0755
   vars:
     dirname: /tmp/spage

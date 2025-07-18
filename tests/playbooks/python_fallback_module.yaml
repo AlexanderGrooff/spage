@@ -6,6 +6,16 @@
         data: "pong"
       register: ping_result
 
+    - name: Assert results are placed in result key
+      assert:
+        that:
+          - ping_result.results.ping == "pong"
+
+    - name: Assert results are placed in high-level key
+      assert:
+        that:
+          - ping_result.ping == "pong"
+
     - name: Create file to verify ping worked
       shell: echo "{{ ping_result.results.ping }}" | tee /tmp/spage/python_fallback_ping.txt
 
@@ -42,7 +52,7 @@
         some_module: "ansible-core"
       register: collection_result_jinja
 
-    - name: Verify collection result
+    - name: Verify jinja collection result
       assert:
         that:
           - not collection_result_jinja.failed

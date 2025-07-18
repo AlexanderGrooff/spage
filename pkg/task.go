@@ -1178,6 +1178,12 @@ func ConvertOutputToFactsMap(output ModuleOutput) interface{} {
 		return nil
 	}
 
+	// If the output implements FactProvider, use its AsFacts method.
+	// It means that the module has custom output requirements that it manages by itself.
+	if factProvider, ok := output.(FactProvider); ok {
+		return factProvider.AsFacts()
+	}
+
 	outputValue := reflect.ValueOf(output)
 	outputType := outputValue.Type()
 

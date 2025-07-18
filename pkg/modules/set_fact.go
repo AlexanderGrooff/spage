@@ -1,6 +1,7 @@
 package modules
 
 import (
+	"maps"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -37,14 +38,12 @@ type SetFactOutput struct {
 
 // MarshalJSON customizes JSON marshaling to embed facts directly at the top level
 func (o SetFactOutput) MarshalJSON() ([]byte, error) {
-	result := make(map[string]interface{})
+	result := make(map[string]any)
 	result["changed"] = o.Changed()
 	result["failed"] = false
 
 	// Add the facts directly to the result map so they're accessible as top-level fields
-	for k, v := range o.FactsSet {
-		result[k] = v
-	}
+	maps.Copy(result, o.FactsSet)
 
 	return json.Marshal(result)
 }

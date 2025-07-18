@@ -4,6 +4,9 @@
 .vscode
 .idea
 
+.venv
+.envrc
+
 spage.db
 tmp
 spage.log

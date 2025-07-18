@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -110,6 +111,23 @@ func (o AnsiblePythonOutput) String() string {
 
 func (o AnsiblePythonOutput) Changed() bool {
 	return o.WasChanged
+}
+
+// AsFacts implements the pkg.FactProvider interface.
+func (o AnsiblePythonOutput) AsFacts() map[string]interface{} {
+	facts := make(map[string]interface{})
+	facts["changed"] = o.Changed()
+	facts["failed"] = o.Failed
+	facts["msg"] = o.Msg
+	facts["results"] = o.Results // Keep the original nested structure
+
+	// Flatten the results into the top level
+	if o.Results != nil {
+		maps.Copy(facts, o.Results)
+	}
+
+	common.DebugOutput("added ansible python results: %v\n", facts)
+	return facts
 }
 
 // Helper functions for cache management
