@@ -1163,7 +1163,7 @@ func TestShorthandSyntaxPlaybook(t *testing.T) {
 func TestLocalActionPlaybook(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
 		playbookFile: "playbooks/local_action_playbook.yaml",
-		configFile:   "sequential.yaml",
+		configFile:   "sequential_no_revert.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.Equal(t, 0, exitCode, "Expected exit code 0, got %d. Output: %s", exitCode, output)
 

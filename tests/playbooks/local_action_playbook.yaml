@@ -12,12 +12,12 @@
         dest: /tmp/spage/local_action_test_args.txt
       register: copy_local_action
 
-    - name: Assert files exist
+    - name: Stat shell file
       stat:
         path: /tmp/spage/local_action_test.txt
       register: stat_result
 
-    - name: Assert files exist
+    - name: Stat copy files
       stat:
         path: /tmp/spage/local_action_test_args.txt
       register: stat_result
@@ -29,3 +29,11 @@
           - stat_result.stat.isreg
           - copy_local_action.contents.after == "local_action module args"
           - shell_local_action.stdout == "hello from local_action\n"
+      when: inventory_hostname == "localhost"
+
+    - name: Assert files dont exist on remote host
+      assert:
+        that:
+          - not stat_result.stat.exists
+          - not stat_result_args.stat.exists
+      when: inventory_hostname != "localhost"

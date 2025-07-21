@@ -200,10 +200,6 @@ func (m StatModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg
 	out.Stat.IsChr = mode&os.ModeCharDevice != 0
 	out.Stat.IsBlk = mode&os.ModeDevice != 0 && mode&os.ModeCharDevice == 0 // Is device but not char
 
-	common.DebugOutput("Stat: File type flags: %v", out.Stat)
-	common.DebugOutput("Stat: File info: %v", fileInfo)
-	common.DebugOutput("Stat: File mode: %v", mode)
-
 	// Access OS-specific stat data (syscall.Stat_t)
 	sysStat, ok := fileInfo.Sys().(*syscall.Stat_t)
 	if !ok {
