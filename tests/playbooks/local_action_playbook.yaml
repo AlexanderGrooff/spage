@@ -2,10 +2,30 @@
 - hosts: all
   tasks:
     - name: Run command locally with string syntax
-      local_action: command echo "hello from local_action" > /tmp/spage/local_action_test.txt
+      local_action: shell echo "hello from local_action" | tee /tmp/spage/local_action_test.txt
+      register: shell_local_action
 
     - name: Create file locally with map syntax
       local_action:
         module: copy
         content: "local_action module args"
         dest: /tmp/spage/local_action_test_args.txt
+      register: copy_local_action
+
+    - name: Assert files exist
+      stat:
+        path: /tmp/spage/local_action_test.txt
+      register: stat_result
+
+    - name: Assert files exist
+      stat:
+        path: /tmp/spage/local_action_test_args.txt
+      register: stat_result
+
+    - name: Assert files exist
+      assert:
+        that:
+          - stat_result.stat.exists
+          - stat_result.stat.isreg
+          - copy_local_action.contents.after == "local_action module args"
+          - shell_local_action.stdout == "hello from local_action\n"
