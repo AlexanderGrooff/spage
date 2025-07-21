@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/google/shlex"
@@ -51,6 +52,95 @@ func RunLocalCommand(command, username string) (int, string, string, error) {
 	}
 
 	return rc, stdout.String(), stderr.String(), nil
+}
+
+// BatchCommandExecutor allows executing multiple commands in a single SSH session
+type BatchCommandExecutor struct {
+	client *ssh.Client
+}
+
+// NewBatchCommandExecutor creates a new batch command executor
+func NewBatchCommandExecutor(client *ssh.Client) *BatchCommandExecutor {
+	return &BatchCommandExecutor{client: client}
+}
+
+// ExecuteBatch executes multiple commands in a single SSH session
+func (b *BatchCommandExecutor) ExecuteBatch(commands []string, username string) ([]CommandResult, error) {
+	if len(commands) == 0 {
+		return nil, nil
+	}
+
+	// Create a single session for all commands
+	session, err := b.client.NewSession()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ssh session to %s: %w", b.client.RemoteAddr(), err)
+	}
+	defer func() {
+		if err := session.Close(); err != nil {
+			common.LogWarn("Failed to close SSH session", map[string]interface{}{
+				"host":  b.client.RemoteAddr().String(),
+				"error": err.Error(),
+			})
+		}
+	}()
+
+	// Combine all commands into a single script
+	var scriptBuilder strings.Builder
+	for i, command := range commands {
+		if i > 0 {
+			scriptBuilder.WriteString(" && ")
+		}
+		scriptBuilder.WriteString(fmt.Sprintf("echo '=== COMMAND %d ===' && %s", i+1, command))
+	}
+
+	script := scriptBuilder.String()
+	var cmdToRun string
+	if username != "" {
+		cmdToRun = fmt.Sprintf("sudo -u %s sh -c '%s'", username, script)
+	} else {
+		cmdToRun = script
+	}
+
+	common.DebugOutput("Running batch commands on %s: %s", b.client.RemoteAddr(), cmdToRun)
+
+	var stdout, stderr bytes.Buffer
+	session.Stdout = &stdout
+	session.Stderr = &stderr
+
+	err = session.Run(cmdToRun)
+	rc := 0
+	if err != nil {
+		if exitError, ok := err.(*ssh.ExitError); ok {
+			rc = exitError.ExitStatus()
+		} else {
+			rc = -1
+		}
+	}
+
+	// Parse the output to separate individual command results
+	output := stdout.String()
+	stderrOutput := stderr.String()
+
+	// For now, return a single result for the batch
+	// In a more sophisticated implementation, we could parse the output to separate individual results
+	return []CommandResult{
+		{
+			Command:  strings.Join(commands, " && "),
+			ExitCode: rc,
+			Stdout:   output,
+			Stderr:   stderrOutput,
+			Error:    err,
+		},
+	}, nil
+}
+
+// CommandResult represents the result of a command execution
+type CommandResult struct {
+	Command  string
+	ExitCode int
+	Stdout   string
+	Stderr   string
+	Error    error
 }
 
 // RunRemoteCommand executes a command on a remote host using an existing SSH client connection.

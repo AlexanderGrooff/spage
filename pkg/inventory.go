@@ -260,6 +260,7 @@ type Host struct {
 	Vars    map[string]interface{}
 	Groups  map[string]string `yaml:"groups"`
 	IsLocal bool
+	Config  *config.Config // Store config for SSH connections
 }
 
 func (h Host) String() string {
