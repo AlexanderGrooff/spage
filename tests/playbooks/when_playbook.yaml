@@ -22,3 +22,17 @@
 - name: Task with simple false condition
   shell: echo "This task has a simple false condition" > /tmp/spage/spage_when_test_simple_false.txt
   when: false
+
+- name: Task with multiple conditions
+  shell: echo "This task has multiple conditions" > /tmp/spage/spage_when_test_multiple_conditions.txt
+  when:
+    - test_condition_variable
+    - true
+    - not false
+
+- name: Task with multiple false conditions
+  shell: echo "This task has multiple false conditions" > /tmp/spage/spage_when_test_multiple_false_conditions.txt
+  when:
+    - false
+    - true
+    - false

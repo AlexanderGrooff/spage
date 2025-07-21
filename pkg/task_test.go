@@ -21,7 +21,7 @@ register: test_result
 		t.Fatalf("Failed to unmarshal YAML: %v", err)
 	}
 
-	if !task.RunOnce {
+	if !task.RunOnce.IsTruthy(nil) {
 		t.Errorf("Expected RunOnce to be true, got %v", task.RunOnce)
 	}
 
@@ -51,7 +51,7 @@ module: shell
 		t.Fatalf("Failed to unmarshal YAML: %v", err)
 	}
 
-	if task.RunOnce {
+	if task.RunOnce.IsTruthy(nil) {
 		t.Errorf("Expected RunOnce to be false by default, got %v", task.RunOnce)
 	}
 }
@@ -62,7 +62,7 @@ func TestRunOnceToCode(t *testing.T) {
 		Id:       1,
 		Name:     "test task",
 		Module:   "shell",
-		RunOnce:  true,
+		RunOnce:  JinjaExpression("true"),
 		Register: "test_result",
 	}
 
@@ -80,7 +80,7 @@ func TestRunOnceToCodeFalse(t *testing.T) {
 		Id:       1,
 		Name:     "test task",
 		Module:   "shell",
-		RunOnce:  false,
+		RunOnce:  JinjaExpression("false"),
 		Register: "test_result",
 	}
 

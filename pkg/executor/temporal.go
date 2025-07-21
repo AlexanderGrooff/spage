@@ -1084,7 +1084,8 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 		task := taskDefinition
 
 		// Handle run_once tasks separately
-		if task.RunOnce {
+		// TODO: template the run_once condition with actual closure
+		if task.RunOnce.IsTruthy(nil) {
 			// Get the first available host
 			firstHostCtx, firstHostName := GetFirstAvailableHost(hostContexts)
 

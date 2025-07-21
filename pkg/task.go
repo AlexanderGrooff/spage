@@ -70,29 +70,29 @@ type FactProvider interface {
 }
 
 type Task struct {
-	Id           int         `yaml:"id" json:"id"`
-	Name         string      `yaml:"name" json:"name"`
-	Module       string      `yaml:"module" json:"module"`
-	Params       ModuleInput `yaml:"params" json:"params"`
-	Validate     string      `yaml:"validate" json:"validate,omitempty"`
-	Before       string      `yaml:"before" json:"before,omitempty"`
-	After        string      `yaml:"after" json:"after,omitempty"`
-	When         string      `yaml:"when" json:"when,omitempty"`
-	Register     string      `yaml:"register" json:"register,omitempty"`
-	RunAs        string      `yaml:"run_as" json:"run_as,omitempty"`
-	IgnoreErrors JinjaBool   `yaml:"ignore_errors,omitempty" json:"ignore_errors,omitempty"`
-	FailedWhen   interface{} `yaml:"failed_when,omitempty" json:"failed_when,omitempty"`
-	ChangedWhen  interface{} `yaml:"changed_when,omitempty" json:"changed_when,omitempty"`
-	Loop         interface{} `yaml:"loop,omitempty" json:"loop,omitempty"`
-	DelegateTo   string      `yaml:"delegate_to,omitempty" json:"delegate_to,omitempty"`
-	RunOnce      bool        `yaml:"run_once,omitempty" json:"run_once,omitempty"`
-	NoLog        bool        `yaml:"no_log,omitempty" json:"no_log,omitempty"`
-	Tags         []string    `yaml:"tags,omitempty" json:"tags,omitempty"`
-	Vars         interface{} `yaml:"vars,omitempty" json:"vars,omitempty"`
+	Id           int                 `yaml:"id" json:"id"`
+	Name         string              `yaml:"name" json:"name"`
+	Module       string              `yaml:"module" json:"module"`
+	Params       ModuleInput         `yaml:"params" json:"params"`
+	Validate     string              `yaml:"validate" json:"validate,omitempty"`
+	Before       string              `yaml:"before" json:"before,omitempty"`
+	After        string              `yaml:"after" json:"after,omitempty"`
+	When         JinjaExpressionList `yaml:"when" json:"when,omitempty"`
+	Register     string              `yaml:"register" json:"register,omitempty"`
+	RunAs        string              `yaml:"run_as" json:"run_as,omitempty"`
+	IgnoreErrors JinjaExpression     `yaml:"ignore_errors,omitempty" json:"ignore_errors,omitempty"`
+	FailedWhen   JinjaExpressionList `yaml:"failed_when,omitempty" json:"failed_when,omitempty"`
+	ChangedWhen  JinjaExpressionList `yaml:"changed_when,omitempty" json:"changed_when,omitempty"`
+	Loop         interface{}         `yaml:"loop,omitempty" json:"loop,omitempty"`
+	DelegateTo   string              `yaml:"delegate_to,omitempty" json:"delegate_to,omitempty"`
+	RunOnce      JinjaExpression     `yaml:"run_once,omitempty" json:"run_once,omitempty"`
+	NoLog        JinjaExpression     `yaml:"no_log,omitempty" json:"no_log,omitempty"`
+	Tags         []string            `yaml:"tags,omitempty" json:"tags,omitempty"`
+	Vars         interface{}         `yaml:"vars,omitempty" json:"vars,omitempty"`
 
-	Until   string `yaml:"until,omitempty" json:"until,omitempty"`
-	Retries int    `yaml:"retries,omitempty" json:"retries,omitempty"`
-	Delay   int    `yaml:"delay,omitempty" json:"delay,omitempty"`
+	Until   JinjaExpression `yaml:"until,omitempty" json:"until,omitempty"`
+	Retries int             `yaml:"retries,omitempty" json:"retries,omitempty"`
+	Delay   int             `yaml:"delay,omitempty" json:"delay,omitempty"`
 
 	CheckMode *bool    `yaml:"check_mode,omitempty" json:"check_mode,omitempty"`
 	Diff      *bool    `yaml:"diff,omitempty" json:"diff,omitempty"`
@@ -275,18 +275,21 @@ func (t Task) ToCode() string {
 	}
 
 	// Construct the Task literal, wrapping the actual params code in pkg.ModuleInput
-	sb.WriteString(fmt.Sprintf("pkg.Task{Id: %d, Name: %q, Module: %q, Register: %q, Params: pkg.ModuleInput{Actual: %s}, RunAs: %q, When: %q",
+	sb.WriteString(fmt.Sprintf("pkg.Task{Id: %d, Name: %q, Module: %q, Register: %q, Params: pkg.ModuleInput{Actual: %s}, RunAs: %q",
 		t.Id,
 		t.Name,
 		t.Module,
 		t.Register,
 		actualParamsCode, // Use the generated code for the Actual field
 		t.RunAs,
-		t.When,
 	))
 
+	if len(t.When) > 0 {
+		sb.WriteString(fmt.Sprintf(", When: %s", t.When.ToCode()))
+	}
+
 	if t.IgnoreErrors != "" {
-		sb.WriteString(fmt.Sprintf(", IgnoreErrors: %s", t.IgnoreErrors))
+		sb.WriteString(fmt.Sprintf(", IgnoreErrors: %s", t.IgnoreErrors.ToCode()))
 	}
 	if t.CheckMode != nil {
 		// Create a pointer to a boolean for the generated code
@@ -296,63 +299,31 @@ func (t Task) ToCode() string {
 		sb.WriteString(fmt.Sprintf(", Diff: func() *bool { b := %t; return &b }()", *t.Diff))
 	}
 	if t.FailedWhen != nil {
-		switch v := t.FailedWhen.(type) {
-		case string:
-			if v != "" {
-				sb.WriteString(fmt.Sprintf(", FailedWhen: %q", v))
-			}
-		case []interface{}:
-			if len(v) > 0 {
-				sb.WriteString(", FailedWhen: []interface{}{")
-				for i, item := range v {
-					sb.WriteString(fmt.Sprintf("%#v", item))
-					if i < len(v)-1 {
-						sb.WriteString(", ")
-					}
-				}
-				sb.WriteString("}")
-			}
-		}
+		sb.WriteString(fmt.Sprintf(", FailedWhen: %s", t.FailedWhen.ToCode()))
 	}
 	if t.ChangedWhen != nil {
-		switch v := t.ChangedWhen.(type) {
-		case string:
-			if v != "" {
-				sb.WriteString(fmt.Sprintf(", ChangedWhen: %q", v))
-			}
-		case []interface{}:
-			if len(v) > 0 {
-				sb.WriteString(", ChangedWhen: []interface{}{")
-				for i, item := range v {
-					sb.WriteString(fmt.Sprintf("%#v", item))
-					if i < len(v)-1 {
-						sb.WriteString(", ")
-					}
-				}
-				sb.WriteString("}")
-			}
-		}
+		sb.WriteString(fmt.Sprintf(", ChangedWhen: %s", t.ChangedWhen.ToCode()))
 	}
 	if t.DelegateTo != "" {
 		sb.WriteString(fmt.Sprintf(", DelegateTo: %q", t.DelegateTo))
 	}
-	if t.RunOnce {
-		sb.WriteString(fmt.Sprintf(", RunOnce: %t", t.RunOnce))
+	if t.RunOnce != "" {
+		sb.WriteString(fmt.Sprintf(", RunOnce: %s", t.RunOnce.ToCode()))
 	}
 	if t.IsHandler {
 		sb.WriteString(fmt.Sprintf(", IsHandler: %t", t.IsHandler))
 	}
+	if t.Vars != nil {
+		sb.WriteString(fmt.Sprintf(", Vars: %#v", t.Vars))
+	}
 	if t.Until != "" {
-		sb.WriteString(fmt.Sprintf(", Until: %q", t.Until))
+		sb.WriteString(fmt.Sprintf(", Until: %s", t.Until.ToCode()))
 	}
 	if t.Retries > 0 {
 		sb.WriteString(fmt.Sprintf(", Retries: %d", t.Retries))
 	}
 	if t.Delay > 0 {
 		sb.WriteString(fmt.Sprintf(", Delay: %d", t.Delay))
-	}
-	if t.Vars != nil {
-		sb.WriteString(fmt.Sprintf(", Vars: %#v", t.Vars))
 	}
 	if len(t.Tags) > 0 {
 		sb.WriteString(", Tags: []string{")
@@ -403,25 +374,12 @@ func (t Task) String() string {
 }
 
 func (t Task) ShouldExecute(closure *Closure) (bool, error) {
-	if t.When != "" {
-		templatedWhen, err := EvaluateExpression(t.When, closure)
-		if err != nil {
-			// If templating fails, we cannot evaluate the condition, so skip the task
-			common.LogWarn("Error templating when condition, skipping task", map[string]interface{}{
-				"task":      t.Name,
-				"host":      closure.HostContext.Host.Name,
-				"condition": t.When,
-				"error":     err.Error(),
-			})
-			return false, err
-		}
-
+	if len(t.When) > 0 {
 		// Evaluate truthiness using the helper function
-		conditionMet := jinja.IsTruthy(templatedWhen)
+		conditionMet := t.When.IsTruthy(closure)
 
 		// Log the evaluation result
-		common.DebugOutput("Evaluated when condition %q -> %v: %t",
-			t.When, templatedWhen, conditionMet)
+		common.DebugOutput("Evaluated when condition %q -> %t", t.When, conditionMet)
 
 		// Return the evaluated truthiness
 		return conditionMet, nil
@@ -824,7 +782,7 @@ func HandleResult(r *TaskResult, t Task, c *Closure) TaskResult {
 		}
 	}
 
-	if r.Error != nil && t.IgnoreErrors.ToBool(c) {
+	if r.Error != nil && t.IgnoreErrors.IsTruthy(c) {
 		common.LogWarn("Task failed but error ignored due to ignore_errors=true", map[string]interface{}{
 			"task":  t.Name,
 			"host":  c.HostContext.Host.Name,

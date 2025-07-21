@@ -44,6 +44,9 @@ func ConstructClosure(c *HostContext, t Task) *Closure {
 
 func (c *Closure) GetFacts() map[string]interface{} {
 	context := make(map[string]interface{})
+	if c == nil {
+		return context
+	}
 
 	// Add the host object itself, accessible via 'host' key
 	if c.HostContext != nil && c.HostContext.Host != nil {

@@ -724,6 +724,8 @@ func TestWhenPlaybook(t *testing.T) {
 			assertFileDoesNotExistWithInventory(t, "/tmp/spage/spage_when_test_should_skip.txt", inventory)
 			assertFileDoesNotExistWithInventory(t, "/tmp/spage/spage_when_test_nonexistent.txt", inventory)
 			assertFileDoesNotExistWithInventory(t, "/tmp/spage/spage_when_test_simple_false.txt", inventory)
+			assertFileExistsWithInventory(t, "/tmp/spage/spage_when_test_multiple_conditions.txt", inventory)
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/spage_when_test_multiple_false_conditions.txt", inventory)
 		},
 	})
 }

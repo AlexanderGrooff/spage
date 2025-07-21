@@ -29,7 +29,8 @@ func CalculateExpectedResults(
 	numExpectedResultsOnLevel := 0
 	for _, task := range tasksInLevel {
 		// Special handling for run_once, as it executes on one host but produces results for all.
-		if task.RunOnce {
+		// TODO: template the run_once condition with actual closure
+		if task.RunOnce.IsTruthy(nil) {
 			if len(hostContexts) > 0 {
 				// One execution (or one aggregated execution for loops) produces a result for every host.
 				numExpectedResultsOnLevel += len(hostContexts)

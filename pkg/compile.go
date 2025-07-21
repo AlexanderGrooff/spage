@@ -64,10 +64,21 @@ func parseBoolOrStringBoolValue(block map[string]interface{}, key string, taskNa
 	}
 }
 
-// parseConditionString parses a condition field (like 'when' or 'failed_when')
-// that accepts either a string condition, a boolean literal, or a list of conditions.
-// It returns the condition as an interface{} that can be a string, bool, or []interface{}.
-func parseConditionString(block map[string]interface{}, key string, taskName string) (condition interface{}, err error) {
+func parseJinjaExpression(block map[string]interface{}, key string, taskName string) (JinjaExpression, error) {
+	rawVal, keyExists := block[key]
+	if !keyExists {
+		return "", nil // Default nil, no error
+	}
+
+	switch v := rawVal.(type) {
+	case string:
+		return JinjaExpression(v), nil
+	default:
+		return "", fmt.Errorf("invalid type (%T) for '%s' key in task %q, expected string", rawVal, key, taskName)
+	}
+}
+
+func parseJinjaExpressionList(block map[string]interface{}, key string, taskName string) (JinjaExpressionList, error) {
 	rawVal, keyExists := block[key]
 	if !keyExists {
 		return nil, nil // Default nil, no error
@@ -75,21 +86,20 @@ func parseConditionString(block map[string]interface{}, key string, taskName str
 
 	switch v := rawVal.(type) {
 	case string:
-		return v, nil
-	case bool:
-		return v, nil
+		return JinjaExpressionList{JinjaExpression(v)}, nil
 	case []interface{}:
-		// Validate that all elements in the list are strings
 		for i, item := range v {
 			if _, ok := item.(string); !ok {
 				return nil, fmt.Errorf("invalid type (%T) for item %d in '%s' list in task %q, expected string", item, i, key, taskName)
 			}
 		}
-		return v, nil
+		result := make(JinjaExpressionList, len(v))
+		for i, item := range v {
+			result[i] = JinjaExpression(item.(string))
+		}
+		return result, nil
 	default:
-		// Invalid type
-		err = fmt.Errorf("invalid type (%T) for '%s' key in task %q, expected string, boolean, or list of strings", rawVal, key, taskName)
-		return nil, err
+		return nil, fmt.Errorf("invalid type (%T) for '%s' key in task %q, expected string or list of strings", rawVal, key, taskName)
 	}
 }
 
@@ -287,7 +297,6 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			Register:   getStringFromMap(block, "register"),
 			RunAs:      getStringFromMap(block, "run_as"),
 			DelegateTo: getStringFromMap(block, "delegate_to"),
-			Until:      getStringFromMap(block, "until"),
 			IsHandler:  isHandlerBlock(block),
 			// Booleans (that might be strings like 'yes') are handled below
 		}
@@ -295,32 +304,21 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		// Declare errored flag here
 		var errored bool
 
+		until, untilErr := parseJinjaExpression(block, "until", task.Name)
+		if untilErr != nil {
+			errors = append(errors, untilErr)
+			errored = true
+		} else {
+			task.Until = until
+		}
+
 		// Handle 'when' using the helper function
-		whenCond, whenErr := parseConditionString(block, "when", task.Name)
+		whenCond, whenErr := parseJinjaExpressionList(block, "when", task.Name)
 		if whenErr != nil {
 			errors = append(errors, whenErr)
 			errored = true
 		} else {
-			// Convert to string for backwards compatibility (when field is still string)
-			if whenCond == nil {
-				task.When = ""
-			} else if whenStr, ok := whenCond.(string); ok {
-				task.When = whenStr
-			} else if whenBool, ok := whenCond.(bool); ok {
-				task.When = fmt.Sprintf("%t", whenBool)
-			} else {
-				// For lists, we'd need to update the When field to interface{} too,
-				// but for now let's convert the first condition as a temporary solution
-				if whenList, ok := whenCond.([]interface{}); ok && len(whenList) > 0 {
-					if firstCond, ok := whenList[0].(string); ok {
-						task.When = firstCond
-					} else {
-						task.When = ""
-					}
-				} else {
-					task.When = ""
-				}
-			}
+			task.When = whenCond
 		}
 
 		becomeUser := getStringFromMap(block, "become_user")
@@ -345,41 +343,32 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		}
 
 		// Handle 'ignore_errors' using the helper function
-		ignoreErrors, ok := block["ignore_errors"]
-		if ok && ignoreErrors != "" {
-			switch v := ignoreErrors.(type) {
-			case string:
-				task.IgnoreErrors = JinjaBool(v)
-			case bool:
-				task.IgnoreErrors = JinjaBool(fmt.Sprintf("%t", v))
-			default:
-				errors = append(errors, fmt.Errorf("invalid type (%T) for 'ignore_errors' in task %q, expected string or boolean", v, task.Name))
-				task.IgnoreErrors = JinjaBool("false")
-			}
+		ignoreErrors, ignoreErrorsErr := parseJinjaExpression(block, "ignore_errors", task.Name)
+		if ignoreErrorsErr != nil {
+			errors = append(errors, ignoreErrorsErr)
+			errored = true
+		} else {
+			task.IgnoreErrors = ignoreErrors
 		}
 
 		// Handle 'no_log' using the helper function
-		noLogVal, noLogFound, noLogErr := parseBoolOrStringBoolValue(block, "no_log", task.Name)
+		noLog, noLogErr := parseJinjaExpression(block, "no_log", task.Name)
 		if noLogErr != nil {
 			errors = append(errors, noLogErr)
 			errored = true
 		} else {
 			// If found, use the parsed value, otherwise default to false (handled by initial Task struct value)
-			if noLogFound {
-				task.NoLog = noLogVal
-			} // else task.RunOnce keeps its default zero value (false)
+			task.NoLog = noLog
 		}
 
 		// Handle 'run_once' using the helper function
-		runOnceVal, runOnceFound, runOnceErr := parseBoolOrStringBoolValue(block, "run_once", task.Name)
+		runOnce, runOnceErr := parseJinjaExpression(block, "run_once", task.Name)
 		if runOnceErr != nil {
 			errors = append(errors, runOnceErr)
 			errored = true
 		} else {
 			// If found, use the parsed value, otherwise default to false (handled by initial Task struct value)
-			if runOnceFound {
-				task.RunOnce = runOnceVal
-			} // else task.RunOnce keeps its default zero value (false)
+			task.RunOnce = runOnce
 		}
 
 		// Handle 'check_mode' using the helper function
@@ -465,20 +454,20 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		}
 
 		// Handle 'failed_when' using the helper function
-		failedWhenCond, failedWhenErr := parseConditionString(block, "failed_when", task.Name)
+		failedWhen, failedWhenErr := parseJinjaExpressionList(block, "failed_when", task.Name)
 		if failedWhenErr != nil {
 			errors = append(errors, failedWhenErr)
 			errored = true
 		} else {
-			task.FailedWhen = failedWhenCond
+			task.FailedWhen = failedWhen
 		}
 
-		changedWhenCond, changedWhenErr := parseConditionString(block, "changed_when", task.Name)
+		changedWhen, changedWhenErr := parseJinjaExpressionList(block, "changed_when", task.Name)
 		if changedWhenErr != nil {
 			errors = append(errors, changedWhenErr)
 			errored = true
 		} else {
-			task.ChangedWhen = changedWhenCond
+			task.ChangedWhen = changedWhen
 		}
 
 		// Handle 'vars' field - can be a map of variables

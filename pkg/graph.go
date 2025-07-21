@@ -647,7 +647,7 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}) (Graph,
 				Actual: setupInputProvider,
 			},
 			RunAs: "",
-			When:  "",
+			When:  JinjaExpressionList{},
 		}
 		g.Tasks[0] = []Task{setupTask}
 

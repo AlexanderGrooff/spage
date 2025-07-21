@@ -3,18 +3,58 @@ package pkg
 import (
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/AlexanderGrooff/jinja-go"
 )
 
-type JinjaBool string
+type JinjaExpression string
+type JinjaExpressionList []JinjaExpression
 
-func (jb JinjaBool) ToBool(closure *Closure) bool {
-	res, err := jinja.TemplateString(string(jb), closure.GetFacts())
+func (e JinjaExpression) Evaluate(closure *Closure) (any, error) {
+	res, err := jinja.TemplateString(string(e), closure.GetFacts())
+	if err != nil {
+		return false, err
+	}
+	return res, nil
+}
+
+func (e JinjaExpression) IsTruthy(closure *Closure) bool {
+	res, err := e.Evaluate(closure)
 	if err != nil {
 		return false
 	}
-	return jinja.IsTruthy(res) || res == "true" || res == "1" || res == "yes"
+	return jinja.IsTruthy(res)
+}
+
+func (e JinjaExpression) ToCode() string {
+	return fmt.Sprintf("pkg.JinjaExpression{%q}", string(e))
+}
+
+func (el JinjaExpressionList) ToCode() string {
+	sb := strings.Builder{}
+	sb.WriteString("[")
+	for i, item := range el {
+		sb.WriteString(item.ToCode())
+		if i < len(el)-1 {
+			sb.WriteString(", ")
+		}
+	}
+	sb.WriteString("]")
+	return sb.String()
+}
+
+func (el JinjaExpressionList) IsTruthy(closure *Closure) bool {
+	for _, item := range el {
+		res, err := item.Evaluate(closure)
+		if err != nil {
+			return false
+		}
+		if !jinja.IsTruthy(res) {
+			return false
+		}
+	}
+	return true
 }
 
 // ProcessRecursive is the core recursive function that creates a new reflect.Value
