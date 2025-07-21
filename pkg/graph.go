@@ -19,10 +19,11 @@ var SpecialVars = []string{
 
 // Facts that can be gathered by the setup module
 var AllowedFacts = map[string]struct{}{
-	"platform":           {},
-	"user":               {},
-	"inventory_hostname": {},
-	"ssh_host_pub_keys":  {},
+	"platform":                 {},
+	"user":                     {},
+	"inventory_hostname":       {},
+	"ssh_host_pub_keys":        {},
+	"inventory_hostname_short": {},
 }
 
 // GraphNode represents either a list of tasks or a nested graph

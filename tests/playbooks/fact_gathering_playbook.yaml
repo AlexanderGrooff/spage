@@ -11,6 +11,9 @@
     - name: Show inventory_hostname fact
       debug:
         var: "{{ inventory_hostname }}"
+    - name: Show inventory_hostname_short fact
+      debug:
+        var: "{{ inventory_hostname_short }}"
     - name: Show ssh_host_pub_keys fact
       debug:
         var: "{{ ssh_host_pub_keys }}"

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 
 	"github.com/AlexanderGrooff/spage/pkg"
 )
@@ -70,6 +71,8 @@ func (m SetupModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pk
 			continue // skip facts not in the allowed list
 		}
 		var factValue interface{}
+
+		// This list is also maintained in pkg/graph.go named AllowedFacts
 		switch fact {
 		case "platform":
 			factValue = closure.HostContext.Host.Host // Host.Host is the address or platform string
@@ -81,6 +84,13 @@ func (m SetupModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pk
 			}
 		case "inventory_hostname":
 			factValue = closure.HostContext.Host.Name
+		case "inventory_hostname_short":
+			fullName := closure.HostContext.Host.Name
+			short := fullName
+			if idx := strings.Index(fullName, "."); idx != -1 {
+				short = fullName[:idx]
+			}
+			factValue = short
 		case "ssh_host_pub_keys":
 			// Placeholder: implement SSH host pub key gathering if needed
 			factValue = nil
