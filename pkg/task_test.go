@@ -69,18 +69,18 @@ func TestRunOnceToCode(t *testing.T) {
 	code := task.ToCode()
 
 	// Check that RunOnce: true appears in the generated code
-	if !contains(code, "RunOnce: true") {
+	if !contains(code, "RunOnce: pkg.JinjaExpression{Expression: \"true\"}") {
 		t.Errorf("Expected generated code to contain 'RunOnce: true', got: %s", code)
 	}
 }
 
-func TestRunOnceToCodeFalse(t *testing.T) {
+func TestRunOnceToCodeEmpty(t *testing.T) {
 	// Test that run_once field is not included when false
 	task := Task{
 		Id:       1,
 		Name:     "test task",
 		Module:   "shell",
-		RunOnce:  JinjaExpression{Expression: "false"},
+		RunOnce:  JinjaExpression{Expression: ""},
 		Register: "test_result",
 	}
 
