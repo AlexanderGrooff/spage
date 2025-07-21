@@ -5,14 +5,26 @@ import (
 	"reflect"
 	"strings"
 
+	"encoding/json"
+
 	"github.com/AlexanderGrooff/jinja-go"
 )
 
-type JinjaExpression string
+type JinjaExpression struct {
+	Expression string
+}
+
+func (e JinjaExpression) String() string {
+	return e.Expression
+}
+
 type JinjaExpressionList []JinjaExpression
 
 func (e JinjaExpression) Evaluate(closure *Closure) (any, error) {
-	res, err := jinja.TemplateString(string(e), closure.GetFacts())
+	if closure == nil {
+		return e.Expression, nil
+	}
+	res, err := EvaluateExpression(e.Expression, closure)
 	if err != nil {
 		return false, err
 	}
@@ -28,7 +40,7 @@ func (e JinjaExpression) IsTruthy(closure *Closure) bool {
 }
 
 func (e JinjaExpression) ToCode() string {
-	return fmt.Sprintf("pkg.JinjaExpression{%q}", string(e))
+	return fmt.Sprintf("pkg.JinjaExpression{Expression: %q}", e.Expression)
 }
 
 func (el JinjaExpressionList) ToCode() string {
@@ -55,6 +67,80 @@ func (el JinjaExpressionList) IsTruthy(closure *Closure) bool {
 		}
 	}
 	return true
+}
+
+// UnmarshalYAML allows JinjaExpression to be parsed from YAML as a string or bool
+func (e *JinjaExpression) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var s string
+	if err := unmarshal(&s); err == nil {
+		*e = JinjaExpression{Expression: s}
+		return nil
+	}
+	var b bool
+	if err := unmarshal(&b); err == nil {
+		*e = JinjaExpression{Expression: fmt.Sprintf("%v", b)}
+		return nil
+	}
+	// Try to unmarshal as struct
+	type alias JinjaExpression
+	var tmp alias
+	if err := unmarshal(&tmp); err == nil {
+		*e = JinjaExpression(tmp)
+		return nil
+	}
+	return fmt.Errorf("JinjaExpression must be string, bool, or object with Expression field")
+}
+
+// UnmarshalJSON allows JinjaExpression to be parsed from JSON as a string or bool
+func (e *JinjaExpression) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*e = JinjaExpression{Expression: s}
+		return nil
+	}
+	var b bool
+	if err := json.Unmarshal(data, &b); err == nil {
+		*e = JinjaExpression{Expression: fmt.Sprintf("%v", b)}
+		return nil
+	}
+	// Try to unmarshal as struct
+	type alias JinjaExpression
+	var tmp alias
+	if err := json.Unmarshal(data, &tmp); err == nil {
+		*e = JinjaExpression(tmp)
+		return nil
+	}
+	return fmt.Errorf("JinjaExpression must be string, bool, or object with Expression field")
+}
+
+// UnmarshalYAML for JinjaExpressionList supports both a single value or a list
+func (el *JinjaExpressionList) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var single JinjaExpression
+	if err := unmarshal(&single); err == nil {
+		*el = JinjaExpressionList{single}
+		return nil
+	}
+	var list []JinjaExpression
+	if err := unmarshal(&list); err == nil {
+		*el = JinjaExpressionList(list)
+		return nil
+	}
+	return fmt.Errorf("JinjaExpressionList must be a string, bool, or list of them")
+}
+
+// UnmarshalJSON for JinjaExpressionList supports both a single value or a list
+func (el *JinjaExpressionList) UnmarshalJSON(data []byte) error {
+	var single JinjaExpression
+	if err := json.Unmarshal(data, &single); err == nil {
+		*el = JinjaExpressionList{single}
+		return nil
+	}
+	var list []JinjaExpression
+	if err := json.Unmarshal(data, &list); err == nil {
+		*el = JinjaExpressionList(list)
+		return nil
+	}
+	return fmt.Errorf("JinjaExpressionList must be a string, bool, or list of them")
 }
 
 // ProcessRecursive is the core recursive function that creates a new reflect.Value

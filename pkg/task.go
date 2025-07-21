@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AlexanderGrooff/jinja-go"
 	"github.com/AlexanderGrooff/spage/pkg/common"
 
 	// Remove pongo2 import if no longer needed directly here
@@ -288,7 +287,7 @@ func (t Task) ToCode() string {
 		sb.WriteString(fmt.Sprintf(", When: %s", t.When.ToCode()))
 	}
 
-	if t.IgnoreErrors != "" {
+	if t.IgnoreErrors.Expression != "" {
 		sb.WriteString(fmt.Sprintf(", IgnoreErrors: %s", t.IgnoreErrors.ToCode()))
 	}
 	if t.CheckMode != nil {
@@ -307,7 +306,7 @@ func (t Task) ToCode() string {
 	if t.DelegateTo != "" {
 		sb.WriteString(fmt.Sprintf(", DelegateTo: %q", t.DelegateTo))
 	}
-	if t.RunOnce != "" {
+	if t.RunOnce.Expression != "" {
 		sb.WriteString(fmt.Sprintf(", RunOnce: %s", t.RunOnce.ToCode()))
 	}
 	if t.IsHandler {
@@ -316,7 +315,7 @@ func (t Task) ToCode() string {
 	if t.Vars != nil {
 		sb.WriteString(fmt.Sprintf(", Vars: %#v", t.Vars))
 	}
-	if t.Until != "" {
+	if t.Until.Expression != "" {
 		sb.WriteString(fmt.Sprintf(", Until: %s", t.Until.ToCode()))
 	}
 	if t.Retries > 0 {
@@ -449,7 +448,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	}
 
 	// If 'until' is not defined, execute once as normal.
-	if t.Until == "" {
+	if t.Until.Expression == "" {
 		return t.executeOnce(taskClosure)
 	}
 
@@ -489,16 +488,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 		// RegisterVariableIfNeeded(lastResult, t, closure)
 
 		// Now evaluate the 'until' condition.
-		conditionMet, err := evaluateConditions(t.Until, taskClosure)
-		if err != nil {
-			common.LogWarn("Error evaluating until condition, considering it false", map[string]interface{}{
-				"task":      t.Name,
-				"host":      closure.HostContext.Host.Name,
-				"condition": t.Until,
-				"error":     err.Error(),
-			})
-			conditionMet = false
-		}
+		conditionMet := t.Until.IsTruthy(taskClosure)
 
 		common.DebugOutput("Evaluated until condition %q -> %t", t.Until, conditionMet)
 
@@ -687,46 +677,6 @@ func (t Task) RevertModule(closure *Closure) TaskResult {
 	return HandleResult(&r, t, closure)
 }
 
-// evaluateConditions evaluates either a single condition string or a list of condition strings.
-// For a list, it returns true if ANY condition evaluates to true (OR logic).
-// Returns the evaluated result and any error encountered.
-func evaluateConditions(conditions interface{}, c *Closure) (bool, error) {
-	if conditions == nil {
-		return false, nil
-	}
-
-	switch v := conditions.(type) {
-	case string:
-		if v == "" {
-			return false, nil
-		}
-		templatedCondition, err := EvaluateExpression(v, c)
-		if err != nil {
-			return false, fmt.Errorf("error evaluating condition '%s': %w", v, err)
-		}
-		return jinja.IsTruthy(templatedCondition), nil
-	case bool:
-		return v, nil
-	case []interface{}:
-		for _, condition := range v {
-			if condStr, ok := condition.(string); ok {
-				templatedCondition, err := EvaluateExpression(condStr, c)
-				if err != nil {
-					return false, fmt.Errorf("error evaluating condition '%s': %w", condStr, err)
-				}
-				if jinja.IsTruthy(templatedCondition) {
-					return true, nil // Any true condition makes the whole evaluation true
-				}
-			} else {
-				return false, fmt.Errorf("condition in list is not a string: %T", condition)
-			}
-		}
-		return false, nil // All conditions were false
-	default:
-		return false, fmt.Errorf("conditions must be a string or list of strings, got %T", v)
-	}
-}
-
 // formatConditionsForError returns a string representation of conditions for error messages
 func formatConditionsForError(conditions interface{}) string {
 	switch v := conditions.(type) {
@@ -761,24 +711,14 @@ func HandleResult(r *TaskResult, t Task, c *Closure) TaskResult {
 
 	// Evaluate failed_when only if the module execution itself succeeded
 	if r.Error == nil && t.FailedWhen != nil {
-		conditionMet, err := evaluateConditions(t.FailedWhen, c)
-		if err != nil {
-			// Treat evaluation errors as task failure, as we can't determine the condition
-			r.Error = fmt.Errorf("error evaluating failed_when condition '%s': %w", formatConditionsForError(t.FailedWhen), err)
-			common.LogWarn("Error evaluating failed_when condition, marking task as failed", map[string]interface{}{
-				"task":      t.Name,
-				"host":      c.HostContext.Host.Name,
-				"condition": formatConditionsForError(t.FailedWhen),
-				"error":     err.Error(),
-			})
-			r.Failed = true
-		} else if conditionMet {
-			// Set the error if the condition is true
+		if !t.FailedWhen.IsTruthy(c) {
+			// Condition is false, do nothing
+		} else {
 			r.Error = fmt.Errorf("failed_when condition '%s' evaluated to true", formatConditionsForError(t.FailedWhen))
 			r.Status = TaskStatusFailed
 			r.Failed = true
 			common.DebugOutput("Evaluated failed_when condition %s: %t",
-				formatConditionsForError(t.FailedWhen), conditionMet)
+				formatConditionsForError(t.FailedWhen), true)
 		}
 	}
 
@@ -794,11 +734,7 @@ func HandleResult(r *TaskResult, t Task, c *Closure) TaskResult {
 	}
 
 	if t.ChangedWhen != nil && r.Status != TaskStatusFailed {
-		conditionMet, err := evaluateConditions(t.ChangedWhen, c)
-		if err != nil {
-			r.Error = fmt.Errorf("error evaluating changed_when condition '%s': %w", formatConditionsForError(t.ChangedWhen), err)
-			r.Failed = true
-		} else if conditionMet {
+		if t.ChangedWhen.IsTruthy(c) {
 			r.Status = TaskStatusChanged
 			r.Changed = true
 		} else {

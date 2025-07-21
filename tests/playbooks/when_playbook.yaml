@@ -13,7 +13,7 @@
 
 - name: Task with condition based on non-existent var (should skip)
   shell: echo "This task uses a non-existent var" > /tmp/spage/spage_when_test_nonexistent.txt
-  when: non_existent_variable is defined and non_existent_variable
+  when: test_condition_variable.non_existent_variable is defined
 
 - name: Task with simple true condition
   shell: echo "This task has a simple true condition" > /tmp/spage/spage_when_test_simple_true.txt

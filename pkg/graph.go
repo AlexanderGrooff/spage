@@ -367,7 +367,6 @@ func GetVariableUsage(task Task) ([]string, error) {
 	for k := range unique {
 		result = append(result, k)
 	}
-	common.DebugOutput("Final deduplicated variable usage for task %q: %v", task.Name, result)
 	return result, nil
 }
 

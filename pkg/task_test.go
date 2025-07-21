@@ -62,7 +62,7 @@ func TestRunOnceToCode(t *testing.T) {
 		Id:       1,
 		Name:     "test task",
 		Module:   "shell",
-		RunOnce:  JinjaExpression("true"),
+		RunOnce:  JinjaExpression{Expression: "true"},
 		Register: "test_result",
 	}
 
@@ -80,7 +80,7 @@ func TestRunOnceToCodeFalse(t *testing.T) {
 		Id:       1,
 		Name:     "test task",
 		Module:   "shell",
-		RunOnce:  JinjaExpression("false"),
+		RunOnce:  JinjaExpression{Expression: "false"},
 		Register: "test_result",
 	}
 

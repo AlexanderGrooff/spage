@@ -997,7 +997,7 @@ func TestTemplateDiffMode(t *testing.T) {
 func TestHandlersPlaybook(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
 		playbookFile: "playbooks/handlers_playbook.yaml",
-		configFile:   "sequential.yaml",
+		configFile:   "sequential_no_revert.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.Equal(t, 0, exitCode, "handlers_playbook should succeed in env: %s, output: %s", envName, output)
 

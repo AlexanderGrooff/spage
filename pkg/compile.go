@@ -67,14 +67,16 @@ func parseBoolOrStringBoolValue(block map[string]interface{}, key string, taskNa
 func parseJinjaExpression(block map[string]interface{}, key string, taskName string) (JinjaExpression, error) {
 	rawVal, keyExists := block[key]
 	if !keyExists {
-		return "", nil // Default nil, no error
+		return JinjaExpression{}, nil // Default nil, no error
 	}
 
 	switch v := rawVal.(type) {
 	case string:
-		return JinjaExpression(v), nil
+		return JinjaExpression{Expression: v}, nil
+	case bool:
+		return JinjaExpression{Expression: fmt.Sprintf("%v", v)}, nil
 	default:
-		return "", fmt.Errorf("invalid type (%T) for '%s' key in task %q, expected string", rawVal, key, taskName)
+		return JinjaExpression{}, fmt.Errorf("invalid type (%T) for '%s' key in task %q, expected string or bool", rawVal, key, taskName)
 	}
 }
 
@@ -86,20 +88,24 @@ func parseJinjaExpressionList(block map[string]interface{}, key string, taskName
 
 	switch v := rawVal.(type) {
 	case string:
-		return JinjaExpressionList{JinjaExpression(v)}, nil
+		return JinjaExpressionList{JinjaExpression{Expression: v}}, nil
+	case bool:
+		return JinjaExpressionList{JinjaExpression{Expression: fmt.Sprintf("%v", v)}}, nil
 	case []interface{}:
-		for i, item := range v {
-			if _, ok := item.(string); !ok {
-				return nil, fmt.Errorf("invalid type (%T) for item %d in '%s' list in task %q, expected string", item, i, key, taskName)
-			}
-		}
 		result := make(JinjaExpressionList, len(v))
 		for i, item := range v {
-			result[i] = JinjaExpression(item.(string))
+			switch itemTyped := item.(type) {
+			case string:
+				result[i] = JinjaExpression{Expression: itemTyped}
+			case bool:
+				result[i] = JinjaExpression{Expression: fmt.Sprintf("%v", itemTyped)}
+			default:
+				return nil, fmt.Errorf("invalid type (%T) for item %d in '%s' list in task %q, expected string or bool", item, i, key, taskName)
+			}
 		}
 		return result, nil
 	default:
-		return nil, fmt.Errorf("invalid type (%T) for '%s' key in task %q, expected string or list of strings", rawVal, key, taskName)
+		return nil, fmt.Errorf("invalid type (%T) for '%s' key in task %q, expected string, bool, or list of them", rawVal, key, taskName)
 	}
 }
 
