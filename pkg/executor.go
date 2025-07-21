@@ -60,7 +60,7 @@ func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cf
 		return err
 	}
 
-	if err := graph.CheckInventoryForRequiredInputs(inventory); err != nil {
+	if err := graph.CheckForRequiredInputs(inventory, cfg); err != nil {
 		return fmt.Errorf("failed to check inventory for required inputs: %w", err)
 	}
 

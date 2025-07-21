@@ -4,16 +4,18 @@
   tasks:
     - name: Show platform fact
       debug:
-        var: "{{ platform }}"
+        msg: "{{ platform }}"
     - name: Show user fact
       debug:
-        var: "{{ user }}"
+        msg: "{{ user }}"
     - name: Show inventory_hostname fact
       debug:
-        var: "{{ inventory_hostname }}"
+        msg: gathered inventory_hostname
+      when: inventory_hostname == "localhost"
+
     - name: Show inventory_hostname_short fact
       debug:
-        var: "{{ inventory_hostname_short }}"
+        msg: "{{ inventory_hostname_short }}"
     - name: Show ssh_host_pub_keys fact
       debug:
-        var: "{{ ssh_host_pub_keys }}"
+        msg: "{{ ssh_host_pub_keys }}"

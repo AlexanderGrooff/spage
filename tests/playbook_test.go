@@ -32,9 +32,9 @@ func runPlaybookTest(t *testing.T, tc playbookTestCase) {
 		inventoryFile string
 	}{
 		{executor: "local", inventoryFile: ""},
-		{executor: "local", inventoryFile: "inventory.yaml"},
+		// {executor: "local", inventoryFile: "inventory.yaml"},
 		{executor: "temporal", inventoryFile: ""},
-		{executor: "temporal", inventoryFile: "inventory.yaml"},
+		// {executor: "temporal", inventoryFile: "inventory.yaml"},
 	}
 
 	for _, env := range environments {

@@ -8,8 +8,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/AlexanderGrooff/jinja-go"
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/compile"
+	"github.com/AlexanderGrooff/spage/pkg/config"
 )
 
 // Don't look for dependencies for these vars
@@ -271,15 +273,102 @@ func GetVariableUsage(task Task) ([]string, error) {
 		return nil, fmt.Errorf("error getting variable usage from module: %w", err)
 	}
 
-	// Get variable usage from fields on the task itself.
-	if task.Loop != nil {
-		// TODO: change name of the variable if loopcontrol is used
-		varsUsage = common.RemoveFromSlice(varsUsage, "item")
-		if loop, ok := task.Loop.(string); ok {
-			varsUsage = append(varsUsage, GetVariableUsageFromTemplate(loop)...)
+	tVal := reflect.ValueOf(task)
+	tType := reflect.TypeOf(task)
+	for i := 0; i < tVal.NumField(); i++ {
+		field := tVal.Field(i)
+		fieldType := tType.Field(i)
+		fieldName := fieldType.Name
+
+		if fieldName == "Params" || fieldName == "Id" || fieldName == "Name" || fieldName == "Module" || fieldName == "Register" || fieldName == "IsHandler" || fieldName == "Tags" || fieldName == "Notify" {
+			continue
+		}
+
+		// TODO: shit implementation until I implement types for Jinja strings/expressions
+		isJinjaExpr := fieldName == "When" || fieldName == "FailedWhen" || fieldName == "ChangedWhen" || fieldName == "Until"
+
+		if field.Kind() == reflect.String {
+			str := field.String()
+			if str != "" {
+				var vars []string
+				if isJinjaExpr {
+					vars, _ = jinja.ParseVariablesFromExpression(str)
+				} else {
+					vars = GetVariableUsageFromTemplate(str)
+				}
+				varsUsage = append(varsUsage, vars...)
+			}
+			continue
+		}
+
+		if field.Kind() == reflect.Slice && field.Type().Elem().Kind() == reflect.String {
+			for j := 0; j < field.Len(); j++ {
+				str := field.Index(j).String()
+				if str != "" {
+					var vars []string
+					if isJinjaExpr {
+						vars, _ = jinja.ParseVariablesFromExpression(str)
+					} else {
+						vars = GetVariableUsageFromTemplate(str)
+					}
+					varsUsage = append(varsUsage, vars...)
+				}
+			}
+			continue
+		}
+
+		if field.Kind() == reflect.Interface && !field.IsNil() {
+			val := field.Interface()
+			switch v := val.(type) {
+			case string:
+				var vars []string
+				if isJinjaExpr {
+					vars, _ = jinja.ParseVariablesFromExpression(v)
+				} else {
+					vars = GetVariableUsageFromTemplate(v)
+				}
+				varsUsage = append(varsUsage, vars...)
+			case []interface{}:
+				for _, item := range v {
+					if s, ok := item.(string); ok {
+						var vars []string
+						if isJinjaExpr {
+							vars, _ = jinja.ParseVariablesFromExpression(s)
+						} else {
+							vars = GetVariableUsageFromTemplate(s)
+						}
+						varsUsage = append(varsUsage, vars...)
+					}
+				}
+			case map[string]interface{}:
+				for _, vv := range v {
+					if s, ok := vv.(string); ok {
+						var vars []string
+						if isJinjaExpr {
+							vars, _ = jinja.ParseVariablesFromExpression(s)
+						} else {
+							vars = GetVariableUsageFromTemplate(s)
+						}
+						varsUsage = append(varsUsage, vars...)
+					}
+				}
+			}
+			continue
 		}
 	}
-	return varsUsage, nil
+
+	varsUsage = common.RemoveFromSlice(varsUsage, "item")
+
+	unique := make(map[string]struct{})
+	for _, v := range varsUsage {
+		unique[v] = struct{}{}
+	}
+	result := make([]string, 0, len(unique))
+	for k := range unique {
+		result = append(result, k)
+	}
+	common.DebugOutput("Final deduplicated variable usage for task %q: %v", task.Name, result)
+	return result, nil
 }
 
 func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}) (Graph, error) {
@@ -625,11 +714,18 @@ func checkCycle(taskName string, dependsOn map[string][]string, visited, recStac
 	return nil
 }
 
-func (g Graph) CheckInventoryForRequiredInputs(inventory *Inventory) error {
+func (g Graph) CheckForRequiredInputs(inventory *Inventory, cfg *config.Config) error {
 	common.DebugOutput("Checking inventory for required inputs %+v", inventory)
 	for _, host := range inventory.Hosts {
 		for _, input := range g.RequiredInputs {
 			common.DebugOutput("Checking if required input %q is present in inventory for host %q", input, host.Name)
+
+			// Load variables from input like --check
+			if cfg.Facts[input] != nil {
+				continue
+			}
+
+			// All other required inputs should be present in the inventory
 			if _, ok := host.Vars[input]; !ok {
 				return fmt.Errorf("required input %q not found in inventory for host %q", input, host.Name)
 			}

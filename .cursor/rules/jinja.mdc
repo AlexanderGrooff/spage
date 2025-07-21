@@ -6,5 +6,7 @@ alwaysApply: false
 The Jinja templating engine is provided by jinja-go, which is provided at github.com/AlexanderGrooff/jinja-go. It's a faster version of Jinja/Pongo2, and provides two critical functions:
 - jinja.TemplateString, which can be used to render strings like `Some string with a {{ variable }}`.
 - jinja.EvaluateExpression, which can be used to render a single variable like `item.name`. Useful in places like `when` on an Ansible task.
+- jinja.ParseVariables, which can be used to parse a Jinja string into a list of variables, like `{{ item.name }}` -> `[item]`.
+- jinja.ParseVariablesFromExpression, which can be used to parse a Jinja expression into a list of variables, like `item.name` -> `[item]`.
 
 Jinja-go is a library maintained by myself, so whenever the library misbehaves we can change whatever we deem necessary.

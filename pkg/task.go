@@ -402,7 +402,7 @@ func (t Task) String() string {
 	return t.Name
 }
 
-func (t Task) ShouldExecute(closure *Closure) bool {
+func (t Task) ShouldExecute(closure *Closure) (bool, error) {
 	if t.When != "" {
 		templatedWhen, err := EvaluateExpression(t.When, closure)
 		if err != nil {
@@ -413,7 +413,7 @@ func (t Task) ShouldExecute(closure *Closure) bool {
 				"condition": t.When,
 				"error":     err.Error(),
 			})
-			return false
+			return false, err
 		}
 
 		// Evaluate truthiness using the helper function
@@ -424,16 +424,20 @@ func (t Task) ShouldExecute(closure *Closure) bool {
 			t.When, templatedWhen, conditionMet)
 
 		// Return the evaluated truthiness
-		return conditionMet
+		return conditionMet, nil
 	}
 	// If no 'when' condition, always execute
-	return true
+	return true, nil
 }
 
 func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	startTime := time.Now()
 
-	if !t.ShouldExecute(closure) {
+	shouldExecute, err := t.ShouldExecute(closure)
+	if err != nil {
+		return TaskResult{Task: t, Closure: closure, Status: TaskStatusFailed, Error: err}
+	}
+	if !shouldExecute {
 		common.LogDebug("Skipping execution of task due to 'when' condition", map[string]interface{}{
 			"task": t.Name,
 			"host": closure.HostContext.Host.Name,
@@ -640,7 +644,11 @@ func (t Task) RevertModule(closure *Closure) TaskResult {
 	startTime := time.Now()
 	r := TaskResult{Task: t, Closure: closure, Status: TaskStatusSkipped}
 
-	if !t.ShouldExecute(closure) {
+	shouldExecute, err := t.ShouldExecute(closure)
+	if err != nil {
+		return TaskResult{Task: t, Closure: closure, Status: TaskStatusFailed, Error: err}
+	}
+	if !shouldExecute {
 		common.LogDebug("Skipping revert of task", map[string]interface{}{
 			"task": t.Name,
 			"host": closure.HostContext.Host.Name,
