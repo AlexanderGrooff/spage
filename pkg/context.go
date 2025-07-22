@@ -2,73 +2,19 @@ package pkg
 
 import (
 	"fmt"
-	"net"
 	"os"
-	"os/user"
 	"regexp"
 	"slices"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/AlexanderGrooff/jinja-go"
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/config"
 	"github.com/AlexanderGrooff/spage/pkg/runtime"
-
-	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/agent"
+	"github.com/AlexanderGrooff/spage/pkg/sshpool"
+	desopssshpool "github.com/desops/sshpool"
 )
-
-// ConnectionPool manages SSH connections and SFTP clients for better performance
-type ConnectionPool struct {
-	sshClient  *ssh.Client
-	sftpClient *runtime.SftpClient
-	mu         sync.RWMutex
-	lastUsed   time.Time
-	timeout    time.Duration
-}
-
-// NewConnectionPool creates a new connection pool with timeout
-func NewConnectionPool(timeout time.Duration) *ConnectionPool {
-	return &ConnectionPool{
-		timeout: timeout,
-	}
-}
-
-// IsExpired checks if the connection pool has expired
-func (cp *ConnectionPool) IsExpired() bool {
-	cp.mu.RLock()
-	defer cp.mu.RUnlock()
-	return time.Since(cp.lastUsed) > cp.timeout
-}
-
-// Close closes all connections in the pool
-func (cp *ConnectionPool) Close() error {
-	cp.mu.Lock()
-	defer cp.mu.Unlock()
-
-	var errs []error
-
-	if cp.sftpClient != nil {
-		if err := cp.sftpClient.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("failed to close SFTP client: %w", err))
-		}
-		cp.sftpClient = nil
-	}
-
-	if cp.sshClient != nil {
-		if err := cp.sshClient.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("failed to close SSH client: %w", err))
-		}
-		cp.sshClient = nil
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("connection pool close errors: %v", errs)
-	}
-	return nil
-}
 
 // HostContext represents the context for a specific host during playbook execution.
 // It contains host-specific data like facts, variables, and SSH connections.
@@ -77,206 +23,52 @@ type HostContext struct {
 	Facts          *sync.Map
 	History        *sync.Map
 	HandlerTracker *HandlerTracker
-	connectionPool *ConnectionPool
+	sshPoolManager *sshpool.Manager
 	mu             sync.RWMutex
 }
 
-// GetOrCreateSSHClient returns an existing SSH client or creates a new one
-func (c *HostContext) GetOrCreateSSHClient() (*ssh.Client, error) {
+// GetOrCreateSSHPool returns an existing SSH pool or creates a new one
+func (c *HostContext) GetOrCreateSSHPool() (*desopssshpool.Pool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Check if we have a valid connection pool
-	if c.connectionPool != nil && c.connectionPool.sshClient != nil && !c.connectionPool.IsExpired() {
-		c.connectionPool.lastUsed = time.Now()
-		return c.connectionPool.sshClient, nil
+	if c.sshPoolManager == nil {
+		// Create SSH pool manager if it doesn't exist
+		c.sshPoolManager = sshpool.NewManager(c.Host.Config)
 	}
 
-	// Close existing connections if they exist but are expired
-	if c.connectionPool != nil {
-		err := c.connectionPool.Close()
-		if err != nil {
-			common.LogWarn("Failed to close connection pool", map[string]interface{}{
-				"host":  c.Host.Host,
-				"error": err.Error(),
-			})
-		}
-	}
-
-	// Create new SSH client
-	client, err := c.createSSHClient()
+	// Get or create pool for this host
+	pool, err := c.sshPoolManager.GetPool(c.Host.Host, c.Host.Vars)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get SSH pool for host %s: %w", c.Host.Host, err)
 	}
 
-	if c.connectionPool == nil {
-		c.connectionPool = NewConnectionPool(5 * time.Minute) // 5 minute timeout
-	}
-	c.connectionPool.sshClient = client
-	c.connectionPool.lastUsed = time.Now()
-
-	return client, nil
+	return pool, nil
 }
 
-// GetOrCreateSftpClient returns an existing SFTP client or creates a new one
+// GetOrCreateSftpClient returns an existing SFTP client or creates a new one using the SSH pool
 func (c *HostContext) GetOrCreateSftpClient() (*runtime.SftpClient, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Check if we have a valid connection pool
-	if c.connectionPool != nil && c.connectionPool.sftpClient != nil && !c.connectionPool.IsExpired() {
-		c.connectionPool.lastUsed = time.Now()
-		return c.connectionPool.sftpClient, nil
-	}
-
-	// Close existing connections if they exist but are expired
-	if c.connectionPool != nil {
-		err := c.connectionPool.Close()
-		if err != nil {
-			common.LogWarn("Failed to close connection pool", map[string]interface{}{
-				"host":  c.Host.Host,
-				"error": err.Error(),
-			})
-		}
-	}
-
-	// Create new SSH client first (without holding the lock)
-	sshClient, err := c.createSSHClient()
+	// Get SSH pool
+	pool, err := c.GetOrCreateSSHPool()
 	if err != nil {
 		return nil, err
 	}
 
-	// Create new SFTP client
-	sftpClient, err := runtime.NewSftpClient(sshClient)
+	// Get SFTP session from pool
+	sftpSession, err := pool.GetSFTP(c.Host.Host)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get SFTP session from pool for host %s: %w", c.Host.Host, err)
 	}
 
-	if c.connectionPool == nil {
-		c.connectionPool = NewConnectionPool(5 * time.Minute) // 5 minute timeout
+	// Create SftpClient wrapper that works with the sshpool SFTPSession
+	// Note: The sshpool SFTPSession embeds *sftp.Client, so we can access it directly
+	// For now, we'll create a minimal SftpClient without the sshClient field
+	// since it's only used for error reporting and we can get the host info from context
+	sftpClient := &runtime.SftpClient{
+		Client: sftpSession.Client, // Access the embedded sftp.Client
 	}
-	c.connectionPool.sshClient = sshClient
-	c.connectionPool.sftpClient = sftpClient
-	c.connectionPool.lastUsed = time.Now()
 
 	return sftpClient, nil
-}
-
-// createSSHClient creates a new SSH client connection
-func (c *HostContext) createSSHClient() (*ssh.Client, error) {
-	host := c.Host
-
-	// Check if ansible_ssh_private_key_file is provided in host variables
-	var hasPrivateKeyFile bool
-	var privateKeyAuthMethod ssh.AuthMethod
-	if host.Vars != nil {
-		if privateKeyPath, exists := host.Vars["ansible_ssh_private_key_file"]; exists {
-			if keyPath, ok := privateKeyPath.(string); ok && keyPath != "" {
-				// Expand ~ to home directory if needed
-				if strings.HasPrefix(keyPath, "~/") {
-					if homeDir, err := os.UserHomeDir(); err == nil {
-						keyPath = strings.Replace(keyPath, "~", homeDir, 1)
-					}
-				}
-
-				// Load private key from file
-				keyBytes, err := os.ReadFile(keyPath)
-				if err != nil {
-					common.LogWarn("Failed to read SSH private key file specified in ansible_ssh_private_key_file", map[string]interface{}{
-						"host":     host.Host,
-						"key_path": keyPath,
-						"error":    err.Error(),
-					})
-				} else {
-					// Try to parse the private key
-					signer, err := ssh.ParsePrivateKey(keyBytes)
-					if err != nil {
-						common.LogWarn("Failed to parse SSH private key file", map[string]interface{}{
-							"host":     host.Host,
-							"key_path": keyPath,
-							"error":    err.Error(),
-						})
-					} else {
-						privateKeyAuthMethod = ssh.PublicKeys(signer)
-						hasPrivateKeyFile = true
-					}
-				}
-			} else {
-				common.LogWarn("ansible_ssh_private_key_file is not a string or is empty", map[string]interface{}{
-					"host":  host.Host,
-					"value": privateKeyPath,
-				})
-			}
-		}
-	}
-
-	// Prepare SSH auth methods
-	var authMethods []ssh.AuthMethod
-
-	// Add private key file auth method first if available
-	if hasPrivateKeyFile {
-		authMethods = append(authMethods, privateKeyAuthMethod)
-	}
-
-	// Try to add SSH agent auth method if available
-	socket := os.Getenv("SSH_AUTH_SOCK")
-	if socket != "" {
-		conn, err := net.Dial("unix", socket)
-		if err != nil {
-			common.LogWarn("Failed to connect to SSH agent, continuing with other auth methods", map[string]interface{}{
-				"host":  host.Host,
-				"error": err.Error(),
-			})
-		} else {
-			agentClient := agent.NewClient(conn)
-			authMethods = append(authMethods, ssh.PublicKeysCallback(agentClient.Signers))
-		}
-	}
-
-	// Check if we have any auth methods
-	if len(authMethods) == 0 {
-		if hasPrivateKeyFile {
-			return nil, fmt.Errorf("SSH private key file specified but failed to load, and SSH_AUTH_SOCK not available for host %s", host.Host)
-		} else {
-			return nil, fmt.Errorf("no SSH authentication methods available for host %s: SSH_AUTH_SOCK environment variable not set and no ansible_ssh_private_key_file specified", host.Host)
-		}
-	}
-
-	currentUser, err := user.Current() // Consider making username configurable
-	if err != nil {
-		// We might not want to fail initialization just because we can't get the current user
-		// Log a warning and proceed? Or require explicit user configuration?
-		// For now, return error.
-		return nil, fmt.Errorf("failed to get current user for SSH connection to %s: %v", host.Host, err)
-	}
-
-	// Configure host key checking based on config
-	var hostKeyCallback ssh.HostKeyCallback
-	if c.Host.Config != nil && c.Host.Config.HostKeyChecking {
-		// TODO: Implement proper host key checking with known_hosts file
-		// For now, this will accept any host key but warn about it
-		hostKeyCallback = ssh.InsecureIgnoreHostKey()
-		common.LogWarn("Host key checking is enabled but not fully implemented, using insecure host key verification", map[string]interface{}{"host": host.Host})
-	} else {
-		hostKeyCallback = ssh.InsecureIgnoreHostKey()
-	}
-
-	config := &ssh.ClientConfig{
-		User:            currentUser.Username, // Use current user's username
-		Auth:            authMethods,
-		HostKeyCallback: hostKeyCallback,
-		// Add connection timeout
-		Timeout: 30 * time.Second,
-	}
-
-	// TODO: Make SSH port configurable
-	addr := net.JoinHostPort(host.Host, "22")
-	client, err := ssh.Dial("tcp", addr, config)
-	if err != nil {
-		// Ensure conn is closed if Dial fails? The Dial usually handles underlying connection closure on error.
-		return nil, fmt.Errorf("failed to dial SSH host %s: %w", host.Host, err)
-	}
-	return client, nil
 }
 
 func InitializeHostContext(host *Host, cfg *config.Config) (*HostContext, error) {
@@ -293,7 +85,7 @@ func InitializeHostContext(host *Host, cfg *config.Config) (*HostContext, error)
 	// For local hosts, we don't need SSH connection
 	if !host.IsLocal {
 		// Test SSH connection during initialization
-		_, err := hc.GetOrCreateSSHClient()
+		_, err := hc.GetOrCreateSSHPool()
 		if err != nil {
 			return nil, err
 		}
@@ -336,7 +128,7 @@ func (c *HostContext) ReadFileBytes(filename string, username string) ([]byte, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to get SFTP client for remote host %s: %w", c.Host.Host, err)
 	}
-	return runtime.ReadRemoteFileBytesWithPooledClient(sftpClient, filename)
+	return runtime.ReadRemoteFileBytes(sftpClient, filename)
 }
 
 func (c *HostContext) WriteFile(filename, contents, username string) error {
@@ -350,7 +142,7 @@ func (c *HostContext) WriteFile(filename, contents, username string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get SFTP client for remote host %s: %w", c.Host.Host, err)
 	}
-	return runtime.WriteRemoteFileWithPooledClient(sftpClient, filename, contents)
+	return runtime.WriteRemoteFile(sftpClient, filename, contents)
 }
 
 func (c *HostContext) Copy(src, dst string) error {
@@ -362,7 +154,7 @@ func (c *HostContext) Copy(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get SFTP client for remote host %s: %w", c.Host.Host, err)
 	}
-	return runtime.CopyRemoteWithPooledClient(sftpClient, src, dst)
+	return runtime.CopyRemote(sftpClient, src, dst)
 }
 
 func (c *HostContext) SetFileMode(path, mode, username string) error {
@@ -374,7 +166,7 @@ func (c *HostContext) SetFileMode(path, mode, username string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get SFTP client for remote host %s: %w", c.Host.Host, err)
 	}
-	return runtime.SetRemoteFileModeWithPooledClient(sftpClient, path, mode)
+	return runtime.SetRemoteFileMode(sftpClient, path, mode)
 }
 
 func (c *HostContext) Stat(path string, follow bool) (os.FileInfo, error) {
@@ -389,7 +181,7 @@ func (c *HostContext) Stat(path string, follow bool) (os.FileInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get SFTP client for remote host %s: %w", c.Host.Host, err)
 	}
-	return runtime.StatRemoteWithPooledClient(sftpClient, path)
+	return runtime.StatRemote(sftpClient, path)
 }
 
 func (c *HostContext) RunCommand(command, username string) (int, string, string, error) {
@@ -397,11 +189,13 @@ func (c *HostContext) RunCommand(command, username string) (int, string, string,
 		return runtime.RunLocalCommand(command, username)
 	}
 
-	sshClient, err := c.GetOrCreateSSHClient()
+	// Get SSH pool
+	pool, err := c.GetOrCreateSSHPool()
 	if err != nil {
-		return -1, "", "", fmt.Errorf("ssh client not initialized for remote host %s: %w", c.Host.Host, err)
+		return -1, "", "", fmt.Errorf("failed to get SSH pool for remote host %s: %w", c.Host.Host, err)
 	}
-	return runtime.RunRemoteCommand(sshClient, command, username)
+
+	return runtime.RunRemoteCommand(pool, c.Host.Host, command, username)
 }
 
 func EvaluateExpression(s string, closure *Closure) (interface{}, error) {
@@ -481,8 +275,8 @@ func (c *HostContext) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.connectionPool != nil {
-		return c.connectionPool.Close()
+	if c.sshPoolManager != nil {
+		return c.sshPoolManager.Close()
 	}
 	return nil
 }

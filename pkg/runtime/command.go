@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
+	desopssshpool "github.com/desops/sshpool"
 	"github.com/google/shlex"
 	"golang.org/x/crypto/ssh"
 )
@@ -56,33 +57,30 @@ func RunLocalCommand(command, username string) (int, string, string, error) {
 
 // BatchCommandExecutor allows executing multiple commands in a single SSH session
 type BatchCommandExecutor struct {
-	client *ssh.Client
+	pool *desopssshpool.Pool
+	host string
 }
 
-// NewBatchCommandExecutor creates a new batch command executor
-func NewBatchCommandExecutor(client *ssh.Client) *BatchCommandExecutor {
-	return &BatchCommandExecutor{client: client}
+// NewBatchCommandExecutor creates a new batch command executor using SSH pool
+func NewBatchCommandExecutor(pool *desopssshpool.Pool, host string) *BatchCommandExecutor {
+	return &BatchCommandExecutor{
+		pool: pool,
+		host: host,
+	}
 }
 
-// ExecuteBatch executes multiple commands in a single SSH session
+// ExecuteBatch executes multiple commands in a single SSH session using the pool
 func (b *BatchCommandExecutor) ExecuteBatch(commands []string, username string) ([]CommandResult, error) {
 	if len(commands) == 0 {
 		return nil, nil
 	}
 
-	// Create a single session for all commands
-	session, err := b.client.NewSession()
+	// Get a session from the pool
+	session, err := b.pool.Get(b.host)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create ssh session to %s: %w", b.client.RemoteAddr(), err)
+		return nil, fmt.Errorf("failed to get SSH session from pool for host %s: %w", b.host, err)
 	}
-	defer func() {
-		if err := session.Close(); err != nil {
-			common.LogWarn("Failed to close SSH session", map[string]interface{}{
-				"host":  b.client.RemoteAddr().String(),
-				"error": err.Error(),
-			})
-		}
-	}()
+	defer session.Put() // Important: return session to pool
 
 	// Combine all commands into a single script
 	var scriptBuilder strings.Builder
@@ -101,7 +99,7 @@ func (b *BatchCommandExecutor) ExecuteBatch(commands []string, username string) 
 		cmdToRun = script
 	}
 
-	common.DebugOutput("Running batch commands on %s: %s", b.client.RemoteAddr(), cmdToRun)
+	common.DebugOutput("Running batch commands on %s: %s", b.host, cmdToRun)
 
 	var stdout, stderr bytes.Buffer
 	session.Stdout = &stdout
@@ -143,23 +141,14 @@ type CommandResult struct {
 	Error    error
 }
 
-// RunRemoteCommand executes a command on a remote host using an existing SSH client connection.
-func RunRemoteCommand(client *ssh.Client, command, username string) (int, string, string, error) {
-	// Each ClientConn can support multiple interactive sessions,
-	// represented by a Session. It's one session per command.
-	session, err := client.NewSession()
+// RunRemoteCommand executes a command on a remote host using SSH pool
+func RunRemoteCommand(pool *desopssshpool.Pool, host, command, username string) (int, string, string, error) {
+	// Get a session from the pool
+	session, err := pool.Get(host)
 	if err != nil {
-		// Include the host address in the error if possible. client.RemoteAddr()
-		return -1, "", "", fmt.Errorf("failed to create ssh session to %s: %w", client.RemoteAddr(), err)
+		return -1, "", "", fmt.Errorf("failed to get SSH session from pool for host %s: %w", host, err)
 	}
-	defer func() {
-		if err := session.Close(); err != nil {
-			common.LogWarn("Failed to close SSH session", map[string]interface{}{
-				"host":  client.RemoteAddr().String(),
-				"error": err.Error(),
-			})
-		}
-	}()
+	defer session.Put() // Important: return session to pool
 
 	// Once a Session is created, you can execute a single command on
 	// the remote side using the Run method.
@@ -175,7 +164,7 @@ func RunRemoteCommand(client *ssh.Client, command, username string) (int, string
 		cmdToRun = command
 	}
 
-	common.DebugOutput("Running remote command on %s: %s", client.RemoteAddr(), cmdToRun)
+	common.DebugOutput("Running remote command on %s: %s", host, cmdToRun)
 	err = session.Run(cmdToRun)
 	rc := 0
 	if err != nil {
@@ -185,7 +174,7 @@ func RunRemoteCommand(client *ssh.Client, command, username string) (int, string
 			rc = -1 // Indicate a non-exit-related error
 		}
 		// Include more context in the error message
-		return rc, stdout.String(), stderr.String(), fmt.Errorf("failed to run remote command '%s' (original: '%s') on host %s: %w, stderr: %s", cmdToRun, command, client.RemoteAddr(), err, stderr.String())
+		return rc, stdout.String(), stderr.String(), fmt.Errorf("failed to run remote command '%s' (original: '%s') on host %s: %w, stderr: %s", cmdToRun, command, host, err, stderr.String())
 	}
 	return rc, stdout.String(), stderr.String(), nil
 }
