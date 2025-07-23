@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
+	"gopkg.in/yaml.v3"
 
 	"github.com/spf13/cobra"
 
@@ -23,6 +26,7 @@ var (
 	cfg           *config.Config // Store the loaded config
 	checkMode     bool
 	diffMode      bool
+	extraVars     []string
 )
 
 // LoadConfig loads the configuration and applies settings
@@ -150,6 +154,22 @@ var runCmd = &cobra.Command{
 			cfg.Facts["ansible_diff"] = true
 		}
 
+		// Parse and merge extra variables
+		if len(extraVars) > 0 {
+			if cfg.Facts == nil {
+				cfg.Facts = make(map[string]interface{})
+			}
+			extraFacts, err := parseExtraVars(extraVars)
+			if err != nil {
+				return fmt.Errorf("failed to parse extra variables: %w", err)
+			}
+			// Merge extra facts into cfg.Facts (extra vars take precedence)
+			for k, v := range extraFacts {
+				cfg.Facts[k] = v
+			}
+
+		}
+
 		if cfg.Executor == "temporal" {
 			err = StartTemporalExecutor(&graph, inventoryFile, cfg)
 		} else {
@@ -185,6 +205,7 @@ func init() {
 	runCmd.Flags().StringSliceVar(&skipTags, "skip-tags", []string{}, "Skip tasks with these tags (comma-separated)")
 	runCmd.Flags().BoolVar(&checkMode, "check", false, "Enable check mode (dry run)")
 	runCmd.Flags().BoolVar(&diffMode, "diff", false, "Enable diff mode")
+	runCmd.Flags().StringSliceVarP(&extraVars, "extra-vars", "e", []string{}, "Set additional variables as key=value or YAML/JSON, i.e. -e 'key1=value1' -e 'key2=value2' or -e '{\"key1\": \"value1\", \"key2\": \"value2\"}'")
 
 	if err := runCmd.MarkFlagRequired("playbook"); err != nil {
 		panic(fmt.Sprintf("failed to mark playbook flag as required: %v", err))
@@ -299,4 +320,52 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// parseExtraVars parses extra variables from command line arguments.
+// Supports both key=value format and JSON/YAML format.
+func parseExtraVars(extraVars []string) (map[string]interface{}, error) {
+	result := make(map[string]interface{})
+
+	for _, extraVar := range extraVars {
+		// Check if it's a key=value format
+		if strings.Contains(extraVar, "=") {
+			parts := strings.SplitN(extraVar, "=", 2)
+			if len(parts) != 2 {
+				return nil, fmt.Errorf("invalid key=value format: %s", extraVar)
+			}
+			key := parts[0]
+			value := parts[1]
+
+			// Try to parse as JSON first, then as string
+			var parsedValue interface{}
+			if err := json.Unmarshal([]byte(value), &parsedValue); err == nil {
+				result[key] = parsedValue
+			} else {
+				// If not valid JSON, treat as string
+				result[key] = value
+			}
+		} else {
+			// Try to parse as JSON/YAML object
+			var parsedMap map[string]interface{}
+			if err := json.Unmarshal([]byte(extraVar), &parsedMap); err == nil {
+				// Merge the parsed map into result
+				for k, v := range parsedMap {
+					result[k] = v
+				}
+			} else {
+				// Try YAML parsing
+				if err := yaml.Unmarshal([]byte(extraVar), &parsedMap); err == nil {
+					// Merge the parsed map into result
+					for k, v := range parsedMap {
+						result[k] = v
+					}
+				} else {
+					return nil, fmt.Errorf("invalid extra variable format: %s (expected key=value or JSON/YAML object)", extraVar)
+				}
+			}
+		}
+	}
+
+	return result, nil
 }
