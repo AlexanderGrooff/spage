@@ -24,3 +24,5 @@ When writing testcases, think of the following:
 - Test assertions should check for actual file creation/modification rather than relying on log output for resilience.
 - Each test should use the `runPlaybookTest` helper function which automatically tests both executor types.
 - Use helper functions like `assertFileExists`, `assertFileContains`, `assertFileDoesNotExist` for consistent test validation.
+
+When running tests, don't use the `spage` command directly. Instead `go test` or `go run main.go` should be used.

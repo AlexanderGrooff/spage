@@ -1,0 +1,39 @@
+---
+- name: Test Yum Module
+  hosts: localhost
+  tasks:
+    - name: Update yum cache
+      yum:
+        update_cache: true
+
+    - name: Install a package (present)
+      yum:
+        name: curl
+        state: present
+
+    - name: Install multiple packages
+      yum:
+        name: [wget, vim]
+        state: present
+
+    - name: Install package with latest state
+      yum:
+        name: bash
+        state: latest
+
+    - name: Remove a package
+      yum:
+        name: wget
+        state: absent
+
+    - name: Install package with repository options
+      yum:
+        name: epel-release
+        state: present
+        enablerepo: [epel]
+        disablerepo: [updates]
+
+    - name: Install package with dnf
+      dnf:
+        name: git
+        state: present
