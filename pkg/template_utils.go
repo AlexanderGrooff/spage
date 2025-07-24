@@ -43,6 +43,10 @@ func (e JinjaExpression) ToCode() string {
 	return fmt.Sprintf("pkg.JinjaExpression{Expression: %q}", e.Expression)
 }
 
+func (e JinjaExpression) IsEmpty() bool {
+	return e.Expression == ""
+}
+
 func (el JinjaExpressionList) ToCode() string {
 	sb := strings.Builder{}
 	sb.WriteString("[")
@@ -63,6 +67,18 @@ func (el JinjaExpressionList) IsTruthy(closure *Closure) bool {
 			return false
 		}
 		if !jinja.IsTruthy(res) {
+			return false
+		}
+	}
+	return true
+}
+
+func (el JinjaExpressionList) IsEmpty() bool {
+	if len(el) == 0 {
+		return true
+	}
+	for _, item := range el {
+		if !item.IsEmpty() {
 			return false
 		}
 	}

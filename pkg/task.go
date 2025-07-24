@@ -376,7 +376,7 @@ func (t Task) String() string {
 func (t Task) ShouldExecute(closure *Closure) (bool, error) {
 	if len(t.When) > 0 {
 		// Evaluate truthiness using the helper function
-		conditionMet := t.When.IsTruthy(closure)
+		conditionMet := t.When.IsEmpty() || t.When.IsTruthy(closure)
 
 		// Log the evaluation result
 		common.DebugOutput("Evaluated when condition %q -> %t", t.When, conditionMet)
@@ -489,7 +489,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 		// RegisterVariableIfNeeded(lastResult, t, closure)
 
 		// Now evaluate the 'until' condition.
-		conditionMet := t.Until.IsTruthy(taskClosure)
+		conditionMet := t.Until.IsEmpty() || t.Until.IsTruthy(taskClosure)
 
 		common.DebugOutput("Evaluated until condition %q -> %t", t.Until, conditionMet)
 
@@ -711,7 +711,7 @@ func HandleResult(r *TaskResult, t Task, c *Closure) TaskResult {
 	RegisterVariableIfNeeded(*r, t, c)
 
 	// Evaluate failed_when only if the module execution itself succeeded
-	if r.Error == nil && t.FailedWhen != nil {
+	if r.Error == nil && !t.FailedWhen.IsEmpty() {
 		if !t.FailedWhen.IsTruthy(c) {
 			// Condition is false, do nothing
 		} else {
@@ -723,7 +723,7 @@ func HandleResult(r *TaskResult, t Task, c *Closure) TaskResult {
 		}
 	}
 
-	if r.Error != nil && t.IgnoreErrors.IsTruthy(c) {
+	if r.Error != nil && !t.IgnoreErrors.IsEmpty() && t.IgnoreErrors.IsTruthy(c) {
 		common.LogWarn("Task failed but error ignored due to ignore_errors=true", map[string]interface{}{
 			"task":  t.Name,
 			"host":  c.HostContext.Host.Name,
@@ -734,8 +734,8 @@ func HandleResult(r *TaskResult, t Task, c *Closure) TaskResult {
 		r.Failed = true
 	}
 
-	if t.ChangedWhen != nil && r.Status != TaskStatusFailed {
-		if t.ChangedWhen.IsTruthy(c) {
+	if r.Status != TaskStatusFailed {
+		if !t.ChangedWhen.IsEmpty() && t.ChangedWhen.IsTruthy(c) {
 			r.Status = TaskStatusChanged
 			r.Changed = true
 		} else {

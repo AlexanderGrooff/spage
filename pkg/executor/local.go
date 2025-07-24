@@ -279,7 +279,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 		// Handle run_once tasks separately
 		firstHostCtx, firstHostName := GetFirstAvailableHost(hostContexts)
 		// TODO: template the run_once condition with actual closure
-		if task.RunOnce.IsTruthy(nil) {
+		if !task.RunOnce.IsEmpty() && task.RunOnce.IsTruthy(nil) {
 			if firstHostCtx == nil {
 				errMsg := fmt.Errorf("no hosts available for run_once task '%s'", task.Name)
 				common.LogError("No hosts available for run_once task", map[string]interface{}{"error": errMsg})
