@@ -1,0 +1,20 @@
+---
+- hosts: localhost
+  tasks:
+    - name: copy nested.txt.j2 to nested.txt
+      template:
+        src: nested.txt.j2
+        dest: nested.txt
+      register: copy_result
+      notify: remove nested.txt
+
+    - name: assert file has correct content
+      assert:
+        that:
+          - copy_result.contents.after == "Hello world!\n"
+
+  handlers:
+    - name: remove nested.txt
+      file:
+        path: nested.txt
+        state: absent

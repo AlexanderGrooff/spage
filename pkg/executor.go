@@ -3,6 +3,9 @@ package pkg
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
+	"path/filepath"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/config"
@@ -39,6 +42,21 @@ type TaskRunner interface {
 type GraphExecutor interface {
 	Execute(hostContexts map[string]*HostContext, orderedGraph [][]Task, cfg *config.Config) error
 	Revert(ctx context.Context, executedTasks []map[string]chan Task, hostContexts map[string]*HostContext, cfg *config.Config) error
+}
+
+func ChangeCWDToPlaybookDir(playbookPath string) string {
+	basePath := filepath.Dir(playbookPath)
+	currCwd, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("Failed to get current working directory: %v", err)
+	}
+
+	if err := os.Chdir(basePath); err != nil {
+		log.Fatalf("Failed to change directory to %s: %v", basePath, err)
+	}
+
+	fmt.Printf("Changed directory to %s\n", basePath)
+	return currCwd
 }
 
 func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cfg *config.Config) error {
@@ -89,6 +107,13 @@ func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cf
 	if err != nil {
 		return err
 	}
+
+	currCwd := ChangeCWDToPlaybookDir(graph.PlaybookPath)
+	defer func() {
+		if err := os.Chdir(currCwd); err != nil {
+			log.Fatalf("Failed to change directory back to %s: %v", currCwd, err)
+		}
+	}()
 
 	err = executor.Execute(hostContexts, orderedGraph, cfg)
 	return err

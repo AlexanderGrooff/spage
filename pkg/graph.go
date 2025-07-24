@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -39,6 +40,7 @@ type Graph struct {
 	Tasks          [][]Task
 	Handlers       []Task
 	Vars           map[string]interface{}
+	PlaybookPath   string
 }
 
 func (g Graph) String() string {
@@ -182,20 +184,19 @@ func (g Graph) ParallelTasks() [][]Task {
 	return g.Tasks
 }
 
-func NewGraphFromFile(path string, rolesPaths string) (Graph, error) {
+func NewGraphFromFile(playbookPath string, rolesPaths string) (Graph, error) {
 	// Read YAML file
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(playbookPath)
 	if err != nil {
-		return Graph{}, fmt.Errorf("error reading YAML file %s: %v", path, err)
+		return Graph{}, fmt.Errorf("error reading YAML file %s: %v", playbookPath, err)
 	}
-	return NewGraphFromPlaybook(data, filepath.Dir(path), rolesPaths)
-}
 
-func NewGraphFromPlaybook(data []byte, basePath string, rolesPaths string) (Graph, error) {
-	// Preprocess the playbook data with current directory as base path
-	if basePath == "" {
-		basePath = "."
-	}
+	currCwd := ChangeCWDToPlaybookDir(playbookPath)
+	defer func() {
+		if err := os.Chdir(currCwd); err != nil {
+			log.Fatalf("Failed to change directory back to %s: %v", currCwd, err)
+		}
+	}()
 
 	// Split the roles paths from the configuration
 	splitRolesPaths := func(rolesPaths string) []string {
@@ -216,7 +217,8 @@ func NewGraphFromPlaybook(data []byte, basePath string, rolesPaths string) (Grap
 		return result
 	}
 
-	processedNodes, err := compile.PreprocessPlaybook(data, basePath, splitRolesPaths(rolesPaths))
+	// Base path is set to '.' because we changed the cwd to the playbook path already
+	processedNodes, err := compile.PreprocessPlaybook(data, ".", splitRolesPaths(rolesPaths))
 	if err != nil {
 		return Graph{}, fmt.Errorf("error preprocessing playbook data: %w", err)
 	}
@@ -225,7 +227,7 @@ func NewGraphFromPlaybook(data []byte, basePath string, rolesPaths string) (Grap
 	attributes, err := ParsePlayAttributes(processedNodes)
 	if err != nil {
 		// We allow the graph to not have a root
-		common.LogDebug("No root block found in playbook, using empty attributes", map[string]interface{}{"playbook": basePath})
+		common.LogDebug("No root block found in playbook, using empty attributes", map[string]interface{}{"playbook": playbookPath})
 		attributes = make(map[string]interface{})
 	}
 	tasks, err := TextToGraphNodes(processedNodes)
@@ -233,7 +235,7 @@ func NewGraphFromPlaybook(data []byte, basePath string, rolesPaths string) (Grap
 		return Graph{}, fmt.Errorf("error parsing preprocessed tasks: %w", err)
 	}
 
-	graph, err := NewGraph(tasks, attributes)
+	graph, err := NewGraph(tasks, attributes, playbookPath)
 	if err != nil {
 		return Graph{}, fmt.Errorf("failed to generate graph: %w", err)
 	}
@@ -370,12 +372,12 @@ func GetVariableUsage(task Task) ([]string, error) {
 	return result, nil
 }
 
-func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}) (Graph, error) {
+func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playbookPath string) (Graph, error) {
 	common.LogDebug("NewGraph received nodes.", map[string]interface{}{"count": len(nodes), "attributes": graphAttributes}) // Log input count
 	if graphAttributes["vars"] == nil {
 		graphAttributes["vars"] = make(map[string]interface{})
 	}
-	g := Graph{RequiredInputs: []string{}, Vars: graphAttributes["vars"].(map[string]interface{})}
+	g := Graph{RequiredInputs: []string{}, Vars: graphAttributes["vars"].(map[string]interface{}), PlaybookPath: playbookPath}
 	dependsOn := map[string][]string{}
 	taskIdMapping := map[int]Task{}
 	lastTaskNameMapping := map[string]Task{}
