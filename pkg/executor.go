@@ -55,7 +55,7 @@ func ChangeCWDToPlaybookDir(playbookPath string) string {
 		log.Fatalf("Failed to change directory to %s: %v", basePath, err)
 	}
 
-	fmt.Printf("Changed directory to %s\n", basePath)
+	common.LogDebug("Changed directory to playbook directory", map[string]interface{}{"path": basePath, "playbook": playbookPath})
 	return currCwd
 }
 
