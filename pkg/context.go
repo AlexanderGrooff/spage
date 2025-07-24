@@ -195,6 +195,7 @@ func (c *HostContext) RunCommand(command, username string) (int, string, string,
 }
 
 func (c *HostContext) RunCommandWithShell(command, username string, useShell bool) (int, string, string, error) {
+	command = strings.ReplaceAll(command, "\r\n", "\n")
 	if c.Host.IsLocal {
 		return runtime.RunLocalCommandWithShell(command, username, useShell)
 	}
