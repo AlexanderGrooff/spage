@@ -191,10 +191,16 @@ func executeLocalCommand(command string, opts *CommandOptions) (int, string, str
 		} else {
 			rc = -1 // Indicate a non-exit error (e.g., command not found)
 		}
-		return rc, stdout.String(), stderr.String(), fmt.Errorf("failed to execute command %q: %v", cmd.String(), err)
+		// Clean sudo prompts from output before returning error
+		cleanedStdout := cleanSudoPrompts(stdout.String())
+		cleanedStderr := cleanSudoPrompts(stderr.String())
+		return rc, cleanedStdout, cleanedStderr, fmt.Errorf("failed to execute command %q: %v", cmd.String(), err)
 	}
 
-	return rc, stdout.String(), stderr.String(), nil
+	// Clean sudo prompts from output before returning
+	cleanedStdout := cleanSudoPrompts(stdout.String())
+	cleanedStderr := cleanSudoPrompts(stderr.String())
+	return rc, cleanedStdout, cleanedStderr, nil
 }
 
 // hostWriter adds a host prefix to output for interactive commands
@@ -235,6 +241,26 @@ func (ce *commandExecutor) setupPTY() error {
 	}
 
 	return ce.session.RequestPty("xterm", 40, 80, modes)
+}
+
+// cleanSudoPrompts removes sudo password prompts from the output
+func cleanSudoPrompts(output string) string {
+	lines := strings.Split(output, "\n")
+	var cleanedLines []string
+
+	for _, line := range lines {
+		// Skip lines that match sudo password prompt patterns
+		trimmedLine := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmedLine, "[sudo] password for ") ||
+			strings.HasPrefix(trimmedLine, "sudo: no tty present") ||
+			strings.HasPrefix(trimmedLine, "sudo: no password was provided") ||
+			strings.Contains(trimmedLine, "password:") {
+			continue
+		}
+		cleanedLines = append(cleanedLines, line)
+	}
+
+	return strings.Join(cleanedLines, "\n")
 }
 
 // executeCommand runs a command and returns the result
@@ -287,7 +313,11 @@ func (ce *commandExecutor) executeCommand(cmdToRun string, interactive bool) (in
 		rc = ce.getExitCode(err)
 	}
 
-	return rc, stdout.String(), stderr.String(), err
+	// Clean sudo prompts from stdout before returning
+	cleanedStdout := cleanSudoPrompts(stdout.String())
+	cleanedStderr := cleanSudoPrompts(stderr.String())
+
+	return rc, cleanedStdout, cleanedStderr, err
 }
 
 // getExitCode extracts the exit code from an error
