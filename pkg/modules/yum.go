@@ -26,10 +26,14 @@ type YumInput struct {
 	Name        interface{} `yaml:"name"`         // Name of the package(s) (string or list of strings)
 	State       string      `yaml:"state"`        // present (default), absent, latest, installed, removed
 	UpdateCache bool        `yaml:"update_cache"` // Run yum update before action
-	Enablerepo  []string    `yaml:"enablerepo"`   // List of repos to enable
-	Disablerepo []string    `yaml:"disablerepo"`  // List of repos to disable
+	Enablerepo  interface{} `yaml:"enablerepo"`   // List of repos to enable (string, comma-delimited string, or list)
+	Disablerepo interface{} `yaml:"disablerepo"`  // List of repos to disable (string, comma-delimited string, or list)
+	UpdateOnly  bool        `yaml:"update_only"`  // Only update packages, don't install/remove
 	// Internal storage for parsed package list
 	PkgNames []string
+	// Internal storage for parsed repo lists
+	EnablerepoList  []string
+	DisablerepoList []string
 }
 
 // YumOutput defines the output of the yum module.
@@ -83,9 +87,9 @@ func (i *YumInput) ToCode() string {
 
 	// Format Enablerepo field
 	var enablerepoCode string
-	if len(i.Enablerepo) > 0 {
+	if len(i.EnablerepoList) > 0 {
 		var repoElements []string
-		for _, repo := range i.Enablerepo {
+		for _, repo := range i.EnablerepoList {
 			repoElements = append(repoElements, fmt.Sprintf("%q", repo))
 		}
 		enablerepoCode = fmt.Sprintf("[]string{%s}", strings.Join(repoElements, ", "))
@@ -95,9 +99,9 @@ func (i *YumInput) ToCode() string {
 
 	// Format Disablerepo field
 	var disablerepoCode string
-	if len(i.Disablerepo) > 0 {
+	if len(i.DisablerepoList) > 0 {
 		var repoElements []string
-		for _, repo := range i.Disablerepo {
+		for _, repo := range i.DisablerepoList {
 			repoElements = append(repoElements, fmt.Sprintf("%q", repo))
 		}
 		disablerepoCode = fmt.Sprintf("[]string{%s}", strings.Join(repoElements, ", "))
@@ -105,12 +109,13 @@ func (i *YumInput) ToCode() string {
 		disablerepoCode = "nil"
 	}
 
-	return fmt.Sprintf("&modules.YumInput{Name: %s, State: %q, UpdateCache: %t, Enablerepo: %s, Disablerepo: %s, PkgNames: %s}",
+	return fmt.Sprintf("&modules.YumInput{Name: %s, State: %q, UpdateCache: %t, Enablerepo: %s, Disablerepo: %s, UpdateOnly: %t, PkgNames: %s}",
 		nameCode,
 		i.State,
 		i.UpdateCache,
 		enablerepoCode,
 		disablerepoCode,
+		i.UpdateOnly,
 		pkgNamesCode,
 	)
 }
@@ -128,10 +133,10 @@ func (i *YumInput) GetVariableUsage() []string {
 		}
 	}
 	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.State)...)
-	for _, repo := range i.Enablerepo {
+	for _, repo := range i.EnablerepoList {
 		vars = append(vars, pkg.GetVariableUsageFromTemplate(repo)...)
 	}
-	for _, repo := range i.Disablerepo {
+	for _, repo := range i.DisablerepoList {
 		vars = append(vars, pkg.GetVariableUsageFromTemplate(repo)...)
 	}
 	return vars
@@ -196,9 +201,95 @@ func (i *YumInput) parseAndValidatePackages() error {
 	return nil
 }
 
+// parseAndValidateRepos extracts repository names from Enablerepo/Disablerepo fields and validates them.
+func (i *YumInput) parseAndValidateRepos() error {
+	i.EnablerepoList = []string{}
+	i.DisablerepoList = []string{}
+
+	// Parse Enablerepo
+	if i.Enablerepo != nil {
+		switch v := i.Enablerepo.(type) {
+		case string:
+			if v != "" {
+				// Split comma-delimited string
+				repos := strings.Split(v, ",")
+				for _, repo := range repos {
+					repo = strings.TrimSpace(repo)
+					if repo != "" {
+						i.EnablerepoList = append(i.EnablerepoList, repo)
+					}
+				}
+			}
+		case []interface{}:
+			for idx, item := range v {
+				if repoStr, ok := item.(string); ok {
+					if repoStr == "" {
+						return fmt.Errorf("enablerepo name at index %d cannot be empty", idx)
+					}
+					i.EnablerepoList = append(i.EnablerepoList, repoStr)
+				} else {
+					return fmt.Errorf("invalid type for enablerepo name at index %d: expected string, got %T", idx, item)
+				}
+			}
+		case []string:
+			for idx, repoStr := range v {
+				if repoStr == "" {
+					return fmt.Errorf("enablerepo name at index %d cannot be empty", idx)
+				}
+				i.EnablerepoList = append(i.EnablerepoList, repoStr)
+			}
+		default:
+			return fmt.Errorf("invalid type for 'enablerepo' parameter: expected string, comma-delimited string, or list of strings, got %T", i.Enablerepo)
+		}
+	}
+
+	// Parse Disablerepo
+	if i.Disablerepo != nil {
+		switch v := i.Disablerepo.(type) {
+		case string:
+			if v != "" {
+				// Split comma-delimited string
+				repos := strings.Split(v, ",")
+				for _, repo := range repos {
+					repo = strings.TrimSpace(repo)
+					if repo != "" {
+						i.DisablerepoList = append(i.DisablerepoList, repo)
+					}
+				}
+			}
+		case []interface{}:
+			for idx, item := range v {
+				if repoStr, ok := item.(string); ok {
+					if repoStr == "" {
+						return fmt.Errorf("disablerepo name at index %d cannot be empty", idx)
+					}
+					i.DisablerepoList = append(i.DisablerepoList, repoStr)
+				} else {
+					return fmt.Errorf("invalid type for disablerepo name at index %d: expected string, got %T", idx, item)
+				}
+			}
+		case []string:
+			for idx, repoStr := range v {
+				if repoStr == "" {
+					return fmt.Errorf("disablerepo name at index %d cannot be empty", idx)
+				}
+				i.DisablerepoList = append(i.DisablerepoList, repoStr)
+			}
+		default:
+			return fmt.Errorf("invalid type for 'disablerepo' parameter: expected string, comma-delimited string, or list of strings, got %T", i.Disablerepo)
+		}
+	}
+
+	return nil
+}
+
 // Validate checks if the input parameters are valid.
 func (i *YumInput) Validate() error {
 	if err := i.parseAndValidatePackages(); err != nil {
+		return err
+	}
+
+	if err := i.parseAndValidateRepos(); err != nil {
 		return err
 	}
 
@@ -359,7 +450,7 @@ func (m YumModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.
 
 	// Template repository names
 	templatedEnablerepo := []string{}
-	for _, repo := range yumParams.Enablerepo {
+	for _, repo := range yumParams.EnablerepoList {
 		templatedRepo, err := pkg.TemplateString(repo, closure)
 		if err != nil {
 			return nil, fmt.Errorf("failed to template enablerepo '%s': %w", repo, err)
@@ -368,7 +459,7 @@ func (m YumModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.
 	}
 
 	templatedDisablerepo := []string{}
-	for _, repo := range yumParams.Disablerepo {
+	for _, repo := range yumParams.DisablerepoList {
 		templatedRepo, err := pkg.TemplateString(repo, closure)
 		if err != nil {
 			return nil, fmt.Errorf("failed to template disablerepo '%s': %w", repo, err)
@@ -385,7 +476,7 @@ func (m YumModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.
 		overallChanged = overallChanged || cacheChanged
 	}
 
-	if len(templatedPkgNames) == 0 {
+	if len(templatedPkgNames) == 0 || yumParams.UpdateOnly {
 		// Only update_cache was requested
 		output.State = "cache_updated"
 		output.WasChanged = overallChanged
@@ -465,6 +556,13 @@ func (m YumModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.C
 		}
 	}
 
+	// Ensure repository lists are populated
+	if yumParams.EnablerepoList == nil || yumParams.DisablerepoList == nil {
+		if err := yumParams.parseAndValidateRepos(); err != nil {
+			return nil, fmt.Errorf("internal state error: repositories not parsed/validated before Revert: %w", err)
+		}
+	}
+
 	// Re-template package names for revert context
 	templatedPkgNames := []string{}
 	if yumParams.PkgNames != nil {
@@ -479,7 +577,7 @@ func (m YumModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.C
 
 	// Re-template repository names
 	templatedEnablerepo := []string{}
-	for _, repo := range yumParams.Enablerepo {
+	for _, repo := range yumParams.EnablerepoList {
 		templatedRepo, err := pkg.TemplateString(repo, closure)
 		if err != nil {
 			return nil, fmt.Errorf("failed to template enablerepo '%s' for revert: %w", repo, err)
@@ -488,7 +586,7 @@ func (m YumModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.C
 	}
 
 	templatedDisablerepo := []string{}
-	for _, repo := range yumParams.Disablerepo {
+	for _, repo := range yumParams.DisablerepoList {
 		templatedRepo, err := pkg.TemplateString(repo, closure)
 		if err != nil {
 			return nil, fmt.Errorf("failed to template disablerepo '%s' for revert: %w", repo, err)
@@ -548,8 +646,8 @@ func (i *YumInput) UnmarshalYAML(node *yaml.Node) error {
 			Pkg         interface{} `yaml:"pkg"`  // Alias, accept string or list
 			State       string      `yaml:"state"`
 			UpdateCache *bool       `yaml:"update_cache"` // Use pointer for explicit false
-			Enablerepo  []string    `yaml:"enablerepo"`
-			Disablerepo []string    `yaml:"disablerepo"`
+			Enablerepo  interface{} `yaml:"enablerepo"`
+			Disablerepo interface{} `yaml:"disablerepo"`
 		}
 		var tmp YumInputMap
 		if err := node.Decode(&tmp); err != nil {
@@ -579,7 +677,15 @@ func (i *YumInput) UnmarshalYAML(node *yaml.Node) error {
 			i.Disablerepo = tmp.Disablerepo
 		}
 
-		return i.parseAndValidatePackages()
+		// Parse and validate both packages and repositories
+		if err := i.parseAndValidatePackages(); err != nil {
+			return err
+		}
+		if err := i.parseAndValidateRepos(); err != nil {
+			return err
+		}
+
+		return nil
 	}
 
 	return fmt.Errorf("invalid type for yum module input (line %d): expected string or map, got %s", node.Line, node.Tag)

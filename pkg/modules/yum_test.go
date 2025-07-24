@@ -139,8 +139,8 @@ disablerepo: [updates]
 				Name:        "curl",
 				State:       "latest",
 				UpdateCache: true,
-				Enablerepo:  []string{"epel"},
-				Disablerepo: []string{"updates"},
+				Enablerepo:  []interface{}{"epel"},
+				Disablerepo: []interface{}{"updates"},
 				PkgNames:    []string{"curl"},
 			},
 			wantErr: false,
@@ -212,4 +212,282 @@ func TestYumModule_Registration(t *testing.T) {
 
 	mod, _ = pkg.GetModule("ansible.builtin.dnf")
 	assert.IsType(t, YumModule{}, mod, "ansible.builtin.dnf module should be of type YumModule")
+}
+
+func TestYumInput_CommaDelimitedRepos(t *testing.T) {
+	tests := []struct {
+		name            string
+		yaml            string
+		expectedEnable  []string
+		expectedDisable []string
+		wantErr         bool
+	}{
+		{
+			name: "comma-delimited enablerepo",
+			yaml: `
+name: test-package
+enablerepo: "epel, extras, updates"
+`,
+			expectedEnable:  []string{"epel", "extras", "updates"},
+			expectedDisable: []string{},
+			wantErr:         false,
+		},
+		{
+			name: "comma-delimited disablerepo",
+			yaml: `
+name: test-package
+disablerepo: "base, extras, updates"
+`,
+			expectedEnable:  []string{},
+			expectedDisable: []string{"base", "extras", "updates"},
+			wantErr:         false,
+		},
+		{
+			name: "both comma-delimited repos",
+			yaml: `
+name: test-package
+enablerepo: "epel, extras"
+disablerepo: "base, updates"
+`,
+			expectedEnable:  []string{"epel", "extras"},
+			expectedDisable: []string{"base", "updates"},
+			wantErr:         false,
+		},
+		{
+			name: "single repo string",
+			yaml: `
+name: test-package
+enablerepo: "epel"
+`,
+			expectedEnable:  []string{"epel"},
+			expectedDisable: []string{},
+			wantErr:         false,
+		},
+		{
+			name: "empty string",
+			yaml: `
+name: test-package
+enablerepo: ""
+`,
+			expectedEnable:  []string{},
+			expectedDisable: []string{},
+			wantErr:         false,
+		},
+		{
+			name: "whitespace in comma-delimited",
+			yaml: `
+name: test-package
+enablerepo: "epel , extras , updates"
+`,
+			expectedEnable:  []string{"epel", "extras", "updates"},
+			expectedDisable: []string{},
+			wantErr:         false,
+		},
+		{
+			name: "mixed format repositories",
+			yaml: `
+name: test-package
+enablerepo: ["epel", "extras"]
+disablerepo: "base, updates"
+`,
+			expectedEnable:  []string{"epel", "extras"},
+			expectedDisable: []string{"base", "updates"},
+			wantErr:         false,
+		},
+		{
+			name: "list format repositories",
+			yaml: `
+name: test-package
+enablerepo: ["epel", "extras"]
+disablerepo: ["base", "updates"]
+`,
+			expectedEnable:  []string{"epel", "extras"},
+			expectedDisable: []string{"base", "updates"},
+			wantErr:         false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got YumInput
+
+			// Parse YAML string into yaml.Node
+			var node yaml.Node
+			err := yaml.Unmarshal([]byte(tt.yaml), &node)
+			if err != nil {
+				t.Fatalf("Failed to parse YAML: %v", err)
+			}
+
+			// Use the first document node
+			if len(node.Content) > 0 {
+				err = got.UnmarshalYAML(node.Content[0])
+			} else {
+				err = got.UnmarshalYAML(&node)
+			}
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+
+			// Validate to trigger repository parsing
+			err = got.Validate()
+			assert.NoError(t, err)
+
+			// Check enablerepo parsing
+			assert.Equal(t, tt.expectedEnable, got.EnablerepoList, "EnablerepoList mismatch")
+
+			// Check disablerepo parsing
+			assert.Equal(t, tt.expectedDisable, got.DisablerepoList, "DisablerepoList mismatch")
+		})
+	}
+}
+
+func TestYumInput_CommaDelimitedReposValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   *YumInput
+		wantErr bool
+	}{
+		{
+			name: "valid comma-delimited enablerepo",
+			input: &YumInput{
+				Name:       "test-package",
+				Enablerepo: "epel, extras, updates",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid comma-delimited disablerepo",
+			input: &YumInput{
+				Name:        "test-package",
+				Disablerepo: "base, extras",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid mixed format",
+			input: &YumInput{
+				Name:        "test-package",
+				Enablerepo:  []string{"epel", "extras"},
+				Disablerepo: "base, updates",
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid enablerepo type",
+			input: &YumInput{
+				Name:       "test-package",
+				Enablerepo: 123, // Invalid type
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid disablerepo type",
+			input: &YumInput{
+				Name:        "test-package",
+				Disablerepo: 123, // Invalid type
+			},
+			wantErr: true,
+		},
+		{
+			name: "empty enablerepo string",
+			input: &YumInput{
+				Name:       "test-package",
+				Enablerepo: "",
+			},
+			wantErr: false,
+		},
+		{
+			name: "empty disablerepo string",
+			input: &YumInput{
+				Name:        "test-package",
+				Disablerepo: "",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.input.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestYumInput_CommaDelimitedReposToCode(t *testing.T) {
+	tests := []struct {
+		name            string
+		input           *YumInput
+		expectedEnable  string
+		expectedDisable string
+	}{
+		{
+			name: "comma-delimited enablerepo",
+			input: &YumInput{
+				Name:       "test-package",
+				Enablerepo: "epel, extras, updates",
+			},
+			expectedEnable:  `[]string{"epel", "extras", "updates"}`,
+			expectedDisable: "nil",
+		},
+		{
+			name: "comma-delimited disablerepo",
+			input: &YumInput{
+				Name:        "test-package",
+				Disablerepo: "base, extras",
+			},
+			expectedEnable:  "nil",
+			expectedDisable: `[]string{"base", "extras"}`,
+		},
+		{
+			name: "both comma-delimited repos",
+			input: &YumInput{
+				Name:        "test-package",
+				Enablerepo:  "epel, extras",
+				Disablerepo: "base, updates",
+			},
+			expectedEnable:  `[]string{"epel", "extras"}`,
+			expectedDisable: `[]string{"base", "updates"}`,
+		},
+		{
+			name: "empty repos",
+			input: &YumInput{
+				Name: "test-package",
+			},
+			expectedEnable:  "nil",
+			expectedDisable: "nil",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Validate to trigger parsing
+			err := tt.input.Validate()
+			assert.NoError(t, err)
+
+			// Generate code
+			code := tt.input.ToCode()
+
+			// Check that the generated code contains the expected repository lists
+			if tt.expectedEnable != "nil" {
+				assert.Contains(t, code, tt.expectedEnable, "Generated code should contain expected enablerepo")
+			} else {
+				assert.Contains(t, code, "Enablerepo: nil", "Generated code should contain nil enablerepo")
+			}
+
+			if tt.expectedDisable != "nil" {
+				assert.Contains(t, code, tt.expectedDisable, "Generated code should contain expected disablerepo")
+			} else {
+				assert.Contains(t, code, "Disablerepo: nil", "Generated code should contain nil disablerepo")
+			}
+		})
+	}
 }
