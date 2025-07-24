@@ -1202,3 +1202,13 @@ func TestJinjaTestsPlaybook(t *testing.T) {
 		},
 	})
 }
+
+func TestNestedDirPlaybook(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/nested/playbooks/nested_dir_playbook.yaml",
+		configFile:   "sequential_no_revert.yaml",
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "nested_dir_playbook should succeed")
+		},
+	})
+}

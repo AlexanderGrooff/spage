@@ -3,6 +3,7 @@ package pkg
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -95,8 +96,13 @@ func InitializeHostContext(host *Host, cfg *config.Config) (*HostContext, error)
 }
 
 func ReadTemplateFile(filename string) (string, error) {
-	if filename[0] != '/' {
-		return ReadLocalFile("templates/" + filename)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to get current working directory: %w", err)
+	}
+	common.LogDebug("Reading template file in templates directory", map[string]interface{}{"filename": filename, "dir": filepath.Dir(filename), "cwd": cwd})
+	if !filepath.IsAbs(filename) {
+		return ReadLocalFile(filepath.Join("templates", filename))
 	}
 	return ReadLocalFile(filename)
 }

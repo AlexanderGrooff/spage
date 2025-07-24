@@ -229,6 +229,7 @@ func applyTagFiltering(graph pkg.Graph, tagsConfig config.TagsConfig) (pkg.Graph
 		Tasks:          make([][]pkg.Task, 0),
 		Handlers:       graph.Handlers, // Copy handlers
 		Vars:           graph.Vars,
+		PlaybookPath:   graph.PlaybookPath, // Copy base path
 	}
 
 	for _, taskLayer := range graph.Tasks {
