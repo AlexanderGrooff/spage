@@ -235,7 +235,7 @@ func newCommandExecutor(session *desopssshpool.Session, host string) *commandExe
 // setupPTY configures a pseudo-terminal for interactive sessions
 func (ce *commandExecutor) setupPTY() error {
 	modes := ssh.TerminalModes{
-		ssh.ECHO:          1,     // enable echoing
+		ssh.ECHO:          0,     // enable echoing
 		ssh.TTY_OP_ISPEED: 14400, // input speed = 14.4kbaud
 		ssh.TTY_OP_OSPEED: 14400, // output speed = 14.4kbaud
 	}
@@ -272,7 +272,7 @@ func (ce *commandExecutor) executeCommand(cmdToRun string, interactive bool) (in
 	if interactive {
 		// For interactive commands, stream stdout and stderr in real-time
 		// Add host prefix to distinguish remote output
-		hostPrefix := fmt.Sprintf("[%s] ", ce.host)
+		hostPrefix := "" // fmt.Sprintf("[%s] ", ce.host)
 		ce.session.Stdout = io.MultiWriter(&stdout, &hostWriter{os.Stdout, hostPrefix})
 		ce.session.Stderr = io.MultiWriter(&stderr, &hostWriter{os.Stderr, hostPrefix})
 
@@ -300,7 +300,7 @@ func (ce *commandExecutor) executeCommand(cmdToRun string, interactive bool) (in
 		select {
 		case err = <-done:
 			rc = ce.getExitCode(err)
-		case <-time.After(30 * time.Second): // 30 second timeout
+		case <-time.After(10 * time.Minute): // 10 minute timeout
 			closeErr := ce.session.Close()
 			if closeErr != nil {
 				common.DebugOutput("Error closing session: %v", closeErr)
