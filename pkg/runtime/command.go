@@ -3,6 +3,8 @@ package runtime
 import (
 	"bytes"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -66,6 +68,21 @@ type CommandResult struct {
 	Error    error
 }
 
+// hostWriter adds a host prefix to output for interactive commands
+type hostWriter struct {
+	writer     io.Writer
+	hostPrefix string
+}
+
+func (hw *hostWriter) Write(p []byte) (n int, err error) {
+	// Write the host prefix first
+	if _, err := hw.writer.Write([]byte(hw.hostPrefix)); err != nil {
+		return 0, err
+	}
+	// Then write the actual data
+	return hw.writer.Write(p)
+}
+
 // commandExecutor handles the execution of commands with different modes
 type commandExecutor struct {
 	session *desopssshpool.Session
@@ -94,11 +111,20 @@ func (ce *commandExecutor) setupPTY() error {
 // executeCommand runs a command and returns the result
 func (ce *commandExecutor) executeCommand(cmdToRun string, interactive bool) (int, string, string, error) {
 	var stdout, stderr bytes.Buffer
-	ce.session.Stdout = &stdout
-	ce.session.Stderr = &stderr
-
 	var err error
 	var rc int
+
+	if interactive {
+		// For interactive commands, stream stdout and stderr in real-time
+		// Add host prefix to distinguish remote output
+		hostPrefix := fmt.Sprintf("[%s] ", ce.host)
+		ce.session.Stdout = io.MultiWriter(&stdout, &hostWriter{os.Stdout, hostPrefix})
+		ce.session.Stderr = io.MultiWriter(&stderr, &hostWriter{os.Stderr, hostPrefix})
+	} else {
+		// For non-interactive commands, buffer everything
+		ce.session.Stdout = &stdout
+		ce.session.Stderr = &stderr
+	}
 
 	if interactive {
 		// Start the command for interactive execution
