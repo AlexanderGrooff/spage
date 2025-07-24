@@ -62,3 +62,19 @@
       - "multiline_task.stdout == 'Multiline block 1\nMultiline block 2\n'"
       - "multiline_task.rc == 0"
   after: "Multiline bash"
+
+- name: stdout lines
+  shell: for i in `seq 3`; do echo line $i; done
+  register: stdout_lines
+  after: "Multiline bash"
+
+- name: write stdout lines to stdout
+  shell: echo "{{ stdout_lines.stdout_lines }}"
+  after: "stdout lines"
+  register: stdout_lines_task
+
+- name: Assert stdout lines
+  assert:
+    that:
+      - "stdout_lines_task.stdout == '[line 1, line 2, line 3, ]\n'"
+  after: "write stdout lines to stdout"

@@ -67,6 +67,7 @@ func (o ShellOutput) AsFacts() map[string]interface{} {
 		"stderr":       o.Stderr,
 		"rc":           o.Rc,
 		"stdout_lines": strings.Split(o.Stdout, "\n"),
+		"stderr_lines": strings.Split(o.Stderr, "\n"),
 	}
 }
 
