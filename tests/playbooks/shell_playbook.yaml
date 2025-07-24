@@ -45,3 +45,18 @@
     that:
       - "fail_task.rc == 1"
   after: "Test failing command and check rc"
+
+- name: Multiline bash
+  shell: |
+    for i in `seq 2`; do
+      echo "Multiline block $i" | tee /tmp/spage/spage_test/testfile$i.txt
+    done
+  after: "Create test file in directory"
+  register: multiline_task
+
+- name: Assert multiline block
+  assert:
+    that:
+      - "multiline_task.stdout == 'Multiline block 1\nMultiline block 2\n'"
+      - "multiline_task.rc == 0"
+  after: "Multiline bash"

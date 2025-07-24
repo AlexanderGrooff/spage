@@ -191,8 +191,12 @@ func (c *HostContext) Stat(path string, follow bool) (os.FileInfo, error) {
 }
 
 func (c *HostContext) RunCommand(command, username string) (int, string, string, error) {
+	return c.RunCommandWithShell(command, username, false)
+}
+
+func (c *HostContext) RunCommandWithShell(command, username string, useShell bool) (int, string, string, error) {
 	if c.Host.IsLocal {
-		return runtime.RunLocalCommand(command, username)
+		return runtime.RunLocalCommandWithShell(command, username, useShell)
 	}
 
 	// Get SSH pool
@@ -201,7 +205,7 @@ func (c *HostContext) RunCommand(command, username string) (int, string, string,
 		return -1, "", "", fmt.Errorf("failed to get SSH pool for remote host %s: %w", c.Host.Host, err)
 	}
 
-	return runtime.RunRemoteCommand(pool, c.Host.Host, command, username, c.Host.Config)
+	return runtime.RunRemoteCommandWithShell(pool, c.Host.Host, command, username, c.Host.Config, useShell)
 }
 
 func EvaluateExpression(s string, closure *Closure) (interface{}, error) {

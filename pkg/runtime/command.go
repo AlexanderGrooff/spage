@@ -17,6 +17,10 @@ import (
 )
 
 func RunLocalCommand(command, username string) (int, string, string, error) {
+	return RunLocalCommandWithShell(command, username, false)
+}
+
+func RunLocalCommandWithShell(command, username string, useShell bool) (int, string, string, error) {
 	if command == "" {
 		return 0, "", "", nil
 	}
@@ -24,11 +28,23 @@ func RunLocalCommand(command, username string) (int, string, string, error) {
 	var err error
 	var cmd *exec.Cmd
 	var cmdToSplit string
-	if username != "" {
-		cmdToSplit = fmt.Sprintf("sudo -Su %s %s", username, command)
+
+	if useShell {
+		// Execute through shell to support shell features like pipes, redirections, etc.
+		if username != "" {
+			cmdToSplit = fmt.Sprintf("sudo -Su %s bash -c '%s'", username, command)
+		} else {
+			cmdToSplit = fmt.Sprintf("bash -c '%s'", command)
+		}
 	} else {
-		cmdToSplit = command
+		// Execute directly without shell interpretation
+		if username != "" {
+			cmdToSplit = fmt.Sprintf("sudo -Su %s %s", username, command)
+		} else {
+			cmdToSplit = command
+		}
 	}
+
 	splitCmd, err := shlex.Split(cmdToSplit)
 	if err != nil {
 		return -1, "", "", fmt.Errorf("failed to split command %s: %v", command, err)
@@ -174,14 +190,35 @@ func (ce *commandExecutor) getExitCode(err error) int {
 
 // buildSudoCommand builds the appropriate sudo command based on configuration
 func buildSudoCommand(command, username string, interactive bool) string {
+	return buildSudoCommandWithShell(command, username, interactive, false)
+}
+
+// buildSudoCommandWithShell builds the appropriate sudo command based on configuration with shell control
+func buildSudoCommandWithShell(command, username string, interactive bool, useShell bool) string {
 	if username == "" {
+		if useShell {
+			// Escape single quotes by replacing ' with '\''
+			escapedCmd := strings.ReplaceAll(command, "'", "'\\''")
+			return fmt.Sprintf("bash -c '%s'", escapedCmd)
+		}
 		return command
 	}
 
 	if interactive {
-		return fmt.Sprintf("sudo -Su %s bash -c '%s'", username, command)
+		if useShell {
+			// Escape single quotes by replacing ' with '\''
+			escapedCmd := strings.ReplaceAll(command, "'", "'\\''")
+			return fmt.Sprintf("sudo -Su %s bash -c '%s'", username, escapedCmd)
+		}
+		return fmt.Sprintf("sudo -Su %s %s", username, command)
 	}
-	return fmt.Sprintf("sudo -u %s bash -c '%s'", username, command)
+
+	if useShell {
+		// Escape single quotes by replacing ' with '\''
+		escapedCmd := strings.ReplaceAll(command, "'", "'\\''")
+		return fmt.Sprintf("sudo -u %s bash -c '%s'", username, escapedCmd)
+	}
+	return fmt.Sprintf("sudo -u %s %s", username, command)
 }
 
 // checkSudoPasswordError checks if the error is due to sudo asking for password
@@ -222,6 +259,11 @@ func RunInteractiveRemoteCommand(pool *desopssshpool.Pool, host, command, userna
 
 // RunRemoteCommand executes a command on a remote host using SSH pool
 func RunRemoteCommand(pool *desopssshpool.Pool, host, command, username string, cfg *config.Config) (int, string, string, error) {
+	return RunRemoteCommandWithShell(pool, host, command, username, cfg, false)
+}
+
+// RunRemoteCommandWithShell executes a command on a remote host using SSH pool with shell control
+func RunRemoteCommandWithShell(pool *desopssshpool.Pool, host, command, username string, cfg *config.Config, useShell bool) (int, string, string, error) {
 	// If interactive mode is enabled and username is provided, use interactive execution
 	if cfg != nil && cfg.Sudo.UseInteractive && username != "" {
 		return RunInteractiveRemoteCommand(pool, host, command, username, cfg)
@@ -238,7 +280,7 @@ func RunRemoteCommand(pool *desopssshpool.Pool, host, command, username string, 
 	executor := newCommandExecutor(session, host)
 
 	// Build the command
-	cmdToRun := buildSudoCommand(command, username, false)
+	cmdToRun := buildSudoCommandWithShell(command, username, false, useShell)
 	common.DebugOutput("Running remote command on %s: %s", host, cmdToRun)
 
 	// Execute the command

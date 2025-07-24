@@ -22,9 +22,12 @@
             pkgs.python312Packages.setuptools
             pkgs.pre-commit
             # Add other Go tools or dependencies here if needed, e.g.:
-            # pkgs.gopls
-            # pkgs.delve
+            pkgs.gopls
+            pkgs.delve
           ];
+
+          # Disable hardening for cgo
+          hardeningDisable = [ "all" ];
 
           # Set environment variables if necessary
           shellHook = ''

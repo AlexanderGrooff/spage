@@ -83,17 +83,12 @@ func (m ShellModule) templateAndExecute(command string, closure *pkg.Closure, pr
 		return ShellOutput{}, fmt.Errorf("failed to template shell command: %w", err) // Added error wrapping
 	}
 
-	// Correctly escape for 'sh -c'. The standard way is to replace ' with '\''
-	// inside a single-quoted string. This is much more robust than escaping double quotes.
-	escapedCmd := strings.ReplaceAll(templatedCmd, "'", "'\\''")
-	commandForShell := fmt.Sprintf("bash -c '%s'", escapedCmd)
-
-	// Pass the single-quoted command string to RunCommand
-	rc, stdout, stderr, err := closure.HostContext.RunCommand(commandForShell, runAs)
+	// Execute the command through a shell using the runtime layer's shell support
+	rc, stdout, stderr, err := closure.HostContext.RunCommandWithShell(templatedCmd, runAs, true)
 	output := ShellOutput{
 		Stdout:  stdout,
 		Stderr:  stderr,
-		Command: commandForShell, // Store the command passed to RunCommand
+		Command: templatedCmd, // Store the original templated command
 		Rc:      rc,
 	}
 
