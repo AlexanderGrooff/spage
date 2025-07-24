@@ -21,7 +21,7 @@ func RunLocalCommand(command, username string) (int, string, string, error) {
 	var cmd *exec.Cmd
 	var cmdToSplit string
 	if username != "" {
-		cmdToSplit = fmt.Sprintf("sudo -u %s %s", username, command)
+		cmdToSplit = fmt.Sprintf("sudo -Su %s %s", username, command)
 	} else {
 		cmdToSplit = command
 	}
@@ -94,7 +94,7 @@ func (b *BatchCommandExecutor) ExecuteBatch(commands []string, username string) 
 	script := scriptBuilder.String()
 	var cmdToRun string
 	if username != "" {
-		cmdToRun = fmt.Sprintf("sudo -u %s sh -c '%s'", username, script)
+		cmdToRun = fmt.Sprintf("sudo -Su %s bash -c '%s'", username, script)
 	} else {
 		cmdToRun = script
 	}
@@ -158,7 +158,7 @@ func RunRemoteCommand(pool *desopssshpool.Pool, host, command, username string) 
 	var cmdToRun string
 	if username != "" {
 		// Use sudo with sh -c, single-quoting the command to preserve its structure
-		cmdToRun = fmt.Sprintf("sudo -u %s sh -c '%s'", username, command)
+		cmdToRun = fmt.Sprintf("sudo -Su %s bash -c '%s'", username, command)
 	} else {
 		// Pass the command directly to session.Run without sh -c wrapper
 		cmdToRun = command
