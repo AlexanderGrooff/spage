@@ -120,6 +120,9 @@ func (ce *commandExecutor) executeCommand(cmdToRun string, interactive bool) (in
 		hostPrefix := fmt.Sprintf("[%s] ", ce.host)
 		ce.session.Stdout = io.MultiWriter(&stdout, &hostWriter{os.Stdout, hostPrefix})
 		ce.session.Stderr = io.MultiWriter(&stderr, &hostWriter{os.Stderr, hostPrefix})
+
+		// Set up stdin to stream from user's console
+		ce.session.Stdin = os.Stdin
 	} else {
 		// For non-interactive commands, buffer everything
 		ce.session.Stdout = &stdout
