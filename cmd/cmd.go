@@ -28,6 +28,7 @@ var (
 	checkMode     bool
 	diffMode      bool
 	extraVars     []string
+	becomeMode    bool
 )
 
 // LoadConfig loads the configuration and applies settings
@@ -79,7 +80,7 @@ var RootCmd = &cobra.Command{
 	},
 }
 
-func GetGraph(playbookFile string, tags, skipTags []string, baseConfig *config.Config) (pkg.Graph, error) {
+func GetGraph(playbookFile string, tags, skipTags []string, baseConfig *config.Config, becomeMode bool) (pkg.Graph, error) {
 	// Override config with command line flags if provided
 	if len(tags) > 0 {
 		baseConfig.Tags.Tags = tags
@@ -91,6 +92,11 @@ func GetGraph(playbookFile string, tags, skipTags []string, baseConfig *config.C
 	graph, err := pkg.NewGraphFromFile(playbookFile, baseConfig.RolesPath)
 	if err != nil {
 		return pkg.Graph{}, fmt.Errorf("failed to generate graph from playbook: %w", err)
+	}
+
+	// Apply become mode if enabled
+	if becomeMode {
+		applyBecomeToGraph(&graph)
 	}
 
 	// Apply tag filtering to the graph
@@ -105,7 +111,7 @@ var generateCmd = &cobra.Command{
 	Use:   "generate",
 	Short: "Generate a graph from a playbook and save it as Go code",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		graph, err := GetGraph(playbookFile, tags, skipTags, cfg)
+		graph, err := GetGraph(playbookFile, tags, skipTags, cfg, becomeMode)
 		if err != nil {
 			common.LogError("Failed to generate graph", map[string]interface{}{
 				"error": err.Error(),
@@ -135,7 +141,7 @@ var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run a playbook by compiling & executing it",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		graph, err := GetGraph(playbookFile, tags, skipTags, cfg)
+		graph, err := GetGraph(playbookFile, tags, skipTags, cfg, becomeMode)
 		if err != nil {
 			common.LogError("Failed to generate graph", map[string]interface{}{
 				"error": err.Error(),
@@ -192,6 +198,7 @@ func init() {
 	generateCmd.Flags().StringVarP(&outputFile, "output", "o", "generated_tasks.go", "Output file (default: generated_tasks.go)")
 	generateCmd.Flags().StringSliceVarP(&tags, "tags", "t", []string{}, "Only include tasks with these tags (comma-separated)")
 	generateCmd.Flags().StringSliceVar(&skipTags, "skip-tags", []string{}, "Skip tasks with these tags (comma-separated)")
+	generateCmd.Flags().BoolVar(&becomeMode, "become", false, "Run all tasks with become: true and become_user: root")
 
 	if err := generateCmd.MarkFlagRequired("playbook"); err != nil {
 		panic(fmt.Sprintf("failed to mark playbook flag as required: %v", err))
@@ -205,6 +212,7 @@ func init() {
 	runCmd.Flags().BoolVar(&checkMode, "check", false, "Enable check mode (dry run)")
 	runCmd.Flags().BoolVar(&diffMode, "diff", false, "Enable diff mode")
 	runCmd.Flags().StringSliceVarP(&extraVars, "extra-vars", "e", []string{}, "Set additional variables as key=value or YAML/JSON, i.e. -e 'key1=value1' -e 'key2=value2' or -e '{\"key1\": \"value1\", \"key2\": \"value2\"}'")
+	runCmd.Flags().BoolVar(&becomeMode, "become", false, "Run all tasks with become: true and become_user: root")
 
 	if err := runCmd.MarkFlagRequired("playbook"); err != nil {
 		panic(fmt.Sprintf("failed to mark playbook flag as required: %v", err))
@@ -217,6 +225,16 @@ func init() {
 // GetConfig returns the loaded configuration
 func GetConfig() *config.Config {
 	return cfg
+}
+
+// applyBecomeToGraph applies become: true and become_user: root to all tasks in the graph
+func applyBecomeToGraph(graph *pkg.Graph) {
+	for i := range graph.Tasks {
+		for j := range graph.Tasks[i] {
+			graph.Tasks[i][j].Become = true
+			graph.Tasks[i][j].BecomeUser = "root"
+		}
+	}
 }
 
 // applyTagFiltering filters tasks based on tag configuration

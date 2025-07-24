@@ -1,0 +1,9 @@
+---
+- name: run command without specific become
+  command: whoami
+  register: result
+
+- name: assert it was run as root
+  assert:
+    that:
+      - result.stdout == "root\n"

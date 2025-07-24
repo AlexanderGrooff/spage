@@ -23,6 +23,7 @@ type playbookTestCase struct {
 	check        func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory)
 	checkMode    bool
 	diffMode     bool
+	becomeMode   bool
 }
 
 func runPlaybookTest(t *testing.T, tc playbookTestCase) {
@@ -89,7 +90,7 @@ func runPlaybookTest(t *testing.T, tc playbookTestCase) {
 			if tc.skipTags != "" {
 				skipTags = strings.Split(tc.skipTags, ",")
 			}
-			graph, err := cmd.GetGraph(tc.playbookFile, tags, skipTags, cfg)
+			graph, err := cmd.GetGraph(tc.playbookFile, tags, skipTags, cfg, tc.becomeMode)
 			require.NoError(t, err, "failed to get graph")
 
 			// Capture stdout/stderr
@@ -1209,6 +1210,17 @@ func TestNestedDirPlaybook(t *testing.T) {
 		configFile:   "sequential_no_revert.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.Equal(t, 0, exitCode, "nested_dir_playbook should succeed")
+		},
+	})
+}
+
+func TestBecomeModePlaybook(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/become_mode_playbook.yaml",
+		configFile:   "sequential_no_revert.yaml",
+		becomeMode:   true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "become_mode_playbook should succeed")
 		},
 	})
 }
