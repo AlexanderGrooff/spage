@@ -301,7 +301,6 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			Before:     getStringFromMap(block, "before"),
 			After:      getStringFromMap(block, "after"),
 			Register:   getStringFromMap(block, "register"),
-			RunAs:      getStringFromMap(block, "run_as"),
 			DelegateTo: getStringFromMap(block, "delegate_to"),
 			IsHandler:  isHandlerBlock(block),
 			// Booleans (that might be strings like 'yes') are handled below
@@ -327,25 +326,31 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			task.When = whenCond
 		}
 
+		task.BecomeUser = getStringFromMap(block, "run_as")
+		if task.BecomeUser != "" {
+			task.Become = true
+		}
+
 		becomeUser := getStringFromMap(block, "become_user")
 
 		// Handle 'become' using the helper function
-		_, becomeFound, becomeErr := parseBoolOrStringBoolValue(block, "become", task.Name)
+		_, become, becomeErr := parseBoolOrStringBoolValue(block, "become", task.Name)
 		if becomeErr != nil {
 			errors = append(errors, becomeErr)
 			errored = true
 		}
+		task.Become = become
 
-		if task.RunAs != "" && (becomeFound || becomeUser != "") {
+		if task.BecomeUser != "" && (become || becomeUser != "") {
 			errors = append(errors, fmt.Errorf("'become'/'become_user' and 'run_as' are mutually exclusive"))
 			errored = true
 		}
 
 		// Use become/become_user to fill in run_as
-		if becomeFound && becomeUser != "" {
-			task.RunAs = becomeUser
-		} else if becomeFound && becomeUser == "" {
-			task.RunAs = "root"
+		if become && becomeUser != "" {
+			task.BecomeUser = becomeUser
+		} else if become {
+			task.BecomeUser = "root"
 		}
 
 		// Handle 'ignore_errors' using the helper function

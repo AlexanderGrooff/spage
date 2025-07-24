@@ -1,7 +1,6 @@
 package modules
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -10,18 +9,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync"
 
 	"github.com/AlexanderGrooff/spage/pkg"
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"gopkg.in/yaml.v3"
-)
-
-// Cache for tracking what has been installed on each host
-var (
-	hostCollectionsCache = make(map[string]map[string]bool) // host -> collection -> installed
-	hostBundleCache      = make(map[string]bool)            // host -> bundle_installed
-	cacheMutex           sync.RWMutex
 )
 
 // AnsiblePythonInput defines parameters for executing Python Ansible modules
@@ -119,50 +110,13 @@ func (o AnsiblePythonOutput) AsFacts() map[string]interface{} {
 	facts["changed"] = o.Changed()
 	facts["failed"] = o.Failed
 	facts["msg"] = o.Msg
-	facts["results"] = o.Results // Keep the original nested structure
 
 	// Flatten the results into the top level
 	if o.Results != nil {
 		maps.Copy(facts, o.Results)
 	}
 
-	common.DebugOutput("added ansible python results: %v\n", facts)
 	return facts
-}
-
-// Helper functions for cache management
-func isCollectionCached(hostKey, collection string) bool {
-	cacheMutex.RLock()
-	defer cacheMutex.RUnlock()
-	if hostColls, exists := hostCollectionsCache[hostKey]; exists {
-		return hostColls[collection]
-	}
-	return false
-}
-
-func markCollectionCached(hostKey, collection string) {
-	cacheMutex.Lock()
-	defer cacheMutex.Unlock()
-	if hostCollectionsCache[hostKey] == nil {
-		hostCollectionsCache[hostKey] = make(map[string]bool)
-	}
-	hostCollectionsCache[hostKey][collection] = true
-}
-
-func isBundleCached(hostKey string) bool {
-	cacheMutex.RLock()
-	defer cacheMutex.RUnlock()
-	return hostBundleCache[hostKey]
-}
-
-func markBundleCached(hostKey string) {
-	cacheMutex.Lock()
-	defer cacheMutex.Unlock()
-	hostBundleCache[hostKey] = true
-}
-
-func getHostKey(host *pkg.Host) string {
-	return host.Host
 }
 
 // AnsiblePythonModule implements a fallback module that executes Ansible modules via Python
@@ -221,14 +175,21 @@ func (m AnsiblePythonModule) executePythonModule(params AnsiblePythonInput, clos
 	templatedArgs := params.Args
 
 	// Create the ansible-playbook YAML file
+	hostname := closure.HostContext.Host.Host
+	connection := "local"
+	if !closure.HostContext.Host.IsLocal {
+		connection = "ssh"
+	}
 	playbook := map[string]interface{}{
-		"hosts":        "localhost",
+		"hosts":        hostname,
 		"gather_facts": false,
-		"connection":   "local",
+		"connection":   connection,
 		"tasks": []map[string]interface{}{
 			{
 				"name":            fmt.Sprintf("Execute %s", params.ModuleName),
 				params.ModuleName: templatedArgs,
+				"become":          runAs != "",
+				"become_user":     runAs,
 			},
 		},
 	}
@@ -244,9 +205,22 @@ func (m AnsiblePythonModule) executePythonModule(params AnsiblePythonInput, clos
 	}
 
 	// Create inventory file
-	inventoryContent := "[local]\nlocalhost ansible_connection=local\n"
+	inventoryContent := map[string]interface{}{
+		"all": map[string]interface{}{
+			"hosts": map[string]interface{}{
+				hostname: map[string]interface{}{
+					"ansible_connection": connection,
+				},
+			},
+		},
+	}
+	inventoryContentBytes, err := yaml.Marshal(inventoryContent)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal inventory: %w", err)
+	}
+
 	inventoryFile := filepath.Join(tempDir, "inventory")
-	if err := os.WriteFile(inventoryFile, []byte(inventoryContent), 0644); err != nil {
+	if err := os.WriteFile(inventoryFile, inventoryContentBytes, 0644); err != nil {
 		return nil, fmt.Errorf("failed to write inventory file: %w", err)
 	}
 
@@ -265,11 +239,6 @@ func (m AnsiblePythonModule) executePythonModule(params AnsiblePythonInput, clos
 		cmd.Env = append(cmd.Env, fmt.Sprintf("ANSIBLE_COLLECTIONS_PATH=%s", path))
 	} else if path, ok := os.LookupEnv("ANSIBLE_COLLECTIONS_PATHS"); ok {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("ANSIBLE_COLLECTIONS_PATHS=%s", path))
-	}
-
-	// If we're executing on a remote host, we need to handle that differently
-	if !closure.HostContext.Host.IsLocal {
-		return m.executeRemotePythonModule(params, templatedArgs, closure, runAs)
 	}
 
 	output, err := cmd.CombinedOutput()
@@ -293,430 +262,6 @@ func (m AnsiblePythonModule) executePythonModule(params AnsiblePythonInput, clos
 	}
 
 	return result, nil
-}
-
-func (m AnsiblePythonModule) executeRemotePythonModule(params AnsiblePythonInput, templatedArgs map[string]interface{}, closure *pkg.Closure, runAs string) (_ pkg.ModuleOutput, err error) {
-	hostKey := getHostKey(closure.HostContext.Host)
-
-	common.LogDebug("Starting remote Python module execution", map[string]interface{}{
-		"module": params.ModuleName,
-		"host":   closure.HostContext.Host.Name,
-	})
-
-	// Ensure we have the required collections on the remote host (with caching)
-	if err := m.ensureCollectionsOnRemote(params.ModuleName, closure, runAs, hostKey); err != nil {
-		return nil, fmt.Errorf("failed to ensure collections on remote host: %w", err)
-	}
-
-	// Determine working directory with multi-level caching strategy
-	var workingDir string
-	var shouldCleanup bool
-
-	// Level 1: Check for permanent cache
-	if isBundleCached(hostKey) {
-		workingDir = "/tmp/spage-ansible-cached"
-		common.LogDebug("Using permanent cached ansible bundle", map[string]interface{}{
-			"host": closure.HostContext.Host.Name,
-			"path": workingDir,
-		})
-	} else {
-		// Level 2: Check for session cache (predictable path)
-		sessionCachePath := "/tmp/spage-ansible-session"
-		checkSessionCmd := fmt.Sprintf("test -d %s/ansible && echo 'session_exists'", sessionCachePath)
-		if rc, stdout, _, err := closure.HostContext.RunCommand(checkSessionCmd, runAs); err == nil && rc == 0 && strings.Contains(stdout, "session_exists") {
-			workingDir = sessionCachePath
-			common.LogDebug("Using session cached ansible bundle", map[string]interface{}{
-				"host": closure.HostContext.Host.Name,
-				"path": workingDir,
-			})
-		} else {
-			// Level 3: Create new bundle (first time or session cache invalid)
-			workingDir = sessionCachePath
-			shouldCleanup = false // Keep session cache for subsequent calls
-
-			// Create the session directory
-			if rc, _, stderr, err := closure.HostContext.RunCommand(fmt.Sprintf("mkdir -p %s", workingDir), runAs); err != nil || rc != 0 {
-				return nil, fmt.Errorf("failed to create session cache dir: rc=%d, err=%w, stderr=%s", rc, err, stderr)
-			}
-
-			// Transfer ansible bundle to session cache
-			if err := m.transferMinimalAnsibleBundle(workingDir, closure, runAs, hostKey); err != nil {
-				return nil, fmt.Errorf("failed to transfer ansible bundle: %w", err)
-			}
-		}
-	}
-
-	// Cleanup session cache at the end if needed
-	if shouldCleanup {
-		defer func() {
-			if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", workingDir), runAs); err != nil {
-				common.LogWarn("Failed to cleanup working directory", map[string]interface{}{
-					"workingDir": workingDir,
-					"error":      err,
-				})
-			}
-		}()
-	}
-
-	// Generate the Python execution script
-	pythonScript, err := m.generatePythonScript(params, templatedArgs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate Python script: %w", err)
-	}
-
-	// Execute the module
-	return m.executeRemoteScript(pythonScript, workingDir, closure, runAs, params.ModuleName)
-}
-
-// ensureCollectionsOnRemote checks if required collections exist and installs them if missing (with caching)
-func (m AnsiblePythonModule) ensureCollectionsOnRemote(moduleName string, closure *pkg.Closure, runAs, hostKey string) error {
-	// For core modules (no dots), no collections needed
-	if !strings.Contains(moduleName, ".") {
-		common.LogDebug("Core module, no collections required", map[string]interface{}{
-			"module": moduleName,
-			"host":   closure.HostContext.Host.Name,
-		})
-		return nil
-	}
-
-	// Parse collection from FQCN (e.g., "community.general.python_requirements_info" -> "community.general")
-	parts := strings.Split(moduleName, ".")
-	if len(parts) < 3 {
-		return fmt.Errorf("invalid ansible FQCN '%s', expected format 'namespace.collection.module'", moduleName)
-	}
-	collectionName := strings.Join(parts[:2], ".")
-
-	// Check cache first
-	if isCollectionCached(hostKey, collectionName) {
-		common.LogDebug("Collection already cached for host", map[string]interface{}{
-			"collection": collectionName,
-			"host":       closure.HostContext.Host.Name,
-		})
-		return nil
-	}
-
-	common.LogDebug("Checking for collection on remote host", map[string]interface{}{
-		"collection": collectionName,
-		"module":     moduleName,
-		"host":       closure.HostContext.Host.Name,
-	})
-
-	// Check if collection already exists
-	checkCmd := fmt.Sprintf("python3 -c \"import ansible_collections.%s.%s.plugins.modules.%s; print('exists')\" 2>/dev/null",
-		parts[0], parts[1], parts[2])
-
-	if rc, stdout, _, err := closure.HostContext.RunCommand(checkCmd, runAs); err == nil && rc == 0 && strings.Contains(stdout, "exists") {
-		common.LogDebug("Collection already exists on remote host", map[string]interface{}{
-			"collection": collectionName,
-			"host":       closure.HostContext.Host.Name,
-		})
-		markCollectionCached(hostKey, collectionName)
-		return nil
-	}
-
-	// Collection doesn't exist, try to install it
-	common.LogInfo("Installing collection on remote host", map[string]interface{}{
-		"collection": collectionName,
-		"host":       closure.HostContext.Host.Name,
-	})
-
-	// Install collection with simplified command
-	installCmd := fmt.Sprintf(`
-		export PATH="$HOME/.local/bin:$PATH"
-		if ! command -v ansible-galaxy >/dev/null 2>&1; then
-			python3 -m pip install --user ansible-core >/dev/null 2>&1 || exit 1
-			export PATH="$HOME/.local/bin:$PATH"
-		fi
-		ansible-galaxy collection install %s --force >/dev/null 2>&1
-	`, collectionName)
-
-	if rc, stdout, stderr, err := closure.HostContext.RunCommand(installCmd, runAs); err != nil || rc != 0 {
-		common.LogWarn("Failed to install collection", map[string]interface{}{
-			"collection": collectionName,
-			"rc":         rc,
-			"error":      fmt.Sprintf("stderr: %s, stdout: %s", stderr, stdout),
-			"host":       closure.HostContext.Host.Name,
-		})
-		// Don't fail here - mark as attempted and let the module execution try
-	} else {
-		common.LogInfo("Successfully installed collection", map[string]interface{}{
-			"collection": collectionName,
-			"host":       closure.HostContext.Host.Name,
-		})
-	}
-
-	// Mark as cached regardless of success to avoid repeated attempts
-	markCollectionCached(hostKey, collectionName)
-	return nil
-}
-
-// transferMinimalAnsibleBundle creates and transfers only the essential ansible files
-func (m AnsiblePythonModule) transferMinimalAnsibleBundle(remoteTempDir string, closure *pkg.Closure, runAs, hostKey string) error {
-	// Find local ansible installation
-	cmd := exec.Command("python3", "-c", `import ansible; import os; print(os.path.dirname(ansible.__file__))`)
-	ansiblePathBytes, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("could not find local ansible installation: %w: %s", err, string(ansiblePathBytes))
-	}
-	ansibleDir := strings.TrimSpace(string(ansiblePathBytes))
-	ansibleBaseDir := filepath.Dir(ansibleDir)
-
-	common.LogDebug("Creating minimal ansible bundle", map[string]interface{}{
-		"host": closure.HostContext.Host.Name,
-	})
-
-	// Create a much smaller tarball with only essential files
-	localTarFile, err := os.CreateTemp("", "spage-ansible-minimal-*.tar.gz")
-	if err != nil {
-		return fmt.Errorf("failed to create local temp file for tarball: %w", err)
-	}
-	localTarPath := localTarFile.Name()
-	defer func() {
-		if err := os.Remove(localTarPath); err != nil {
-			common.LogWarn("Failed to remove local tar file", map[string]interface{}{
-				"file":  localTarPath,
-				"error": err.Error(),
-			})
-		}
-	}()
-	if err := localTarFile.Close(); err != nil {
-		return fmt.Errorf("failed to close local tar file: %w", err)
-	}
-
-	// Only include essential ansible core files (not collections)
-	tarArgs := []string{
-		"-czf", localTarPath,
-		"-C", ansibleBaseDir,
-		"ansible/module_utils", // Essential utilities
-		"ansible/modules",      // Core modules
-	}
-
-	tarCmd := exec.Command("tar", tarArgs...)
-	if output, err := tarCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to create minimal ansible bundle: %w: %s", err, string(output))
-	}
-
-	// Read and transfer the tarball
-	tarballBytes, err := os.ReadFile(localTarPath)
-	if err != nil {
-		return fmt.Errorf("failed to read tarball: %w", err)
-	}
-
-	common.LogDebug("Transferring minimal bundle", map[string]interface{}{
-		"size": len(tarballBytes),
-		"host": closure.HostContext.Host.Name,
-	})
-
-	encodedTarball := base64.StdEncoding.EncodeToString(tarballBytes)
-	remoteB64Path := filepath.Join(remoteTempDir, "ansible-minimal.b64")
-
-	if err := closure.HostContext.WriteFile(remoteB64Path, encodedTarball, runAs); err != nil {
-		return fmt.Errorf("failed to write ansible bundle to remote host: %w", err)
-	}
-
-	// Decode and unpack on remote
-	remoteTarPath := filepath.Join(remoteTempDir, "ansible-minimal.tar.gz")
-	unpackCmd := fmt.Sprintf("base64 -d %s > %s && tar -xzf %s -C %s", remoteB64Path, remoteTarPath, remoteTarPath, remoteTempDir)
-
-	if rc, _, stderr, err := closure.HostContext.RunCommand(unpackCmd, runAs); err != nil || rc != 0 {
-		return fmt.Errorf("failed to unpack ansible bundle on remote host: rc=%d, err=%w, stderr=%s", rc, err, stderr)
-	}
-
-	// Cache the bundle for future use with improved error handling
-	cachedPath := "/tmp/spage-ansible-cached"
-
-	// Step 1: Clean up any existing cache directory
-	cleanCmd := fmt.Sprintf("rm -rf %s", cachedPath)
-	if rc, stdout, stderr, err := closure.HostContext.RunCommand(cleanCmd, runAs); err != nil || rc != 0 {
-		common.LogDebug("Failed to clean cache directory", map[string]interface{}{
-			"host":   closure.HostContext.Host.Name,
-			"rc":     rc,
-			"error":  err,
-			"stderr": stderr,
-			"stdout": stdout,
-		})
-		return nil // Don't fail the whole operation just because caching failed
-	}
-
-	// Step 2: Create the cache directory
-	mkdirCmd := fmt.Sprintf("mkdir -p %s", cachedPath)
-	if rc, stdout, stderr, err := closure.HostContext.RunCommand(mkdirCmd, runAs); err != nil || rc != 0 {
-		common.LogDebug("Failed to create cache directory", map[string]interface{}{
-			"host":   closure.HostContext.Host.Name,
-			"rc":     rc,
-			"error":  err,
-			"stderr": stderr,
-			"stdout": stdout,
-		})
-		return nil // Don't fail the whole operation just because caching failed
-	}
-
-	// Step 3: Copy files using a more reliable method (use . instead of /*)
-	copyCmd := fmt.Sprintf("cp -r %s/. %s/", remoteTempDir, cachedPath)
-	if rc, stdout, stderr, err := closure.HostContext.RunCommand(copyCmd, runAs); err != nil || rc != 0 {
-		common.LogDebug("Failed to copy to cache directory", map[string]interface{}{
-			"host":    closure.HostContext.Host.Name,
-			"rc":      rc,
-			"error":   err,
-			"stderr":  stderr,
-			"stdout":  stdout,
-			"command": copyCmd,
-		})
-		return nil // Don't fail the whole operation just because caching failed
-	}
-
-	// Step 4: Verify the cache was created successfully
-	verifyCmd := fmt.Sprintf("test -d %s/ansible && echo 'cache_ok'", cachedPath)
-	if rc, stdout, stderr, err := closure.HostContext.RunCommand(verifyCmd, runAs); err == nil && rc == 0 && strings.Contains(stdout, "cache_ok") {
-		markBundleCached(hostKey)
-		common.LogDebug("Successfully cached ansible bundle for future use", map[string]interface{}{
-			"host": closure.HostContext.Host.Name,
-		})
-	} else {
-		common.LogDebug("Cache verification failed", map[string]interface{}{
-			"host":   closure.HostContext.Host.Name,
-			"rc":     rc,
-			"error":  err,
-			"stderr": stderr,
-			"stdout": stdout,
-		})
-	}
-
-	return nil
-}
-
-// generatePythonScript creates the Python execution script
-func (m AnsiblePythonModule) generatePythonScript(params AnsiblePythonInput, templatedArgs map[string]interface{}) (string, error) {
-	argsJSON, err := json.Marshal(templatedArgs)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal args: %w", err)
-	}
-
-	var pythonModulePath string
-	moduleName := params.ModuleName
-	if strings.Contains(moduleName, ".") {
-		parts := strings.Split(moduleName, ".")
-		if len(parts) < 3 {
-			return "", fmt.Errorf("invalid ansible FQCN '%s', expected format 'namespace.collection.module'", moduleName)
-		}
-		namespace := parts[0]
-		collection := parts[1]
-		moduleParts := parts[2:]
-		pythonModulePath = fmt.Sprintf("ansible_collections.%s.%s.plugins.modules.%s", namespace, collection, strings.Join(moduleParts, "."))
-	} else {
-		pythonModulePath = "ansible.modules." + moduleName
-	}
-
-	pythonScript := fmt.Sprintf(`#!/usr/bin/env python3
-import json
-import sys
-import importlib
-import ansible.module_utils.basic
-
-# Mock the AnsibleModule to capture the result
-class MockAnsibleModule:
-    def __init__(self, argument_spec, **kwargs):
-        self.params = %s
-
-    def exit_json(self, **kwargs):
-        print(json.dumps(kwargs))
-        sys.stdout.flush()
-        sys.exit(0)
-
-    def fail_json(self, **kwargs):
-        kwargs['failed'] = True
-        print(json.dumps(kwargs))
-        sys.stdout.flush()
-        sys.exit(1)
-
-# Replace AnsibleModule with our mock
-ansible.module_utils.basic.AnsibleModule = MockAnsibleModule
-
-try:
-    ansible_module = importlib.import_module("%s")
-    ansible_module.main()
-except ImportError as e:
-    print(json.dumps({"failed": True, "msg": "Module '%s' not found: " + str(e)}))
-    sys.stdout.flush()
-    sys.exit(1)
-except Exception as e:
-    print(json.dumps({"failed": True, "msg": f"Execution error in module '%s': {type(e).__name__}: {e}"}))
-    sys.stdout.flush()
-    sys.exit(1)
-`, string(argsJSON), pythonModulePath, moduleName, moduleName)
-
-	return pythonScript, nil
-}
-
-// executeRemoteScript executes the Python script on the remote host
-func (m AnsiblePythonModule) executeRemoteScript(pythonScript, workingDir string, closure *pkg.Closure, runAs, moduleName string) (pkg.ModuleOutput, error) {
-	// Write the script to remote
-	remotePath := "/tmp/spage-python-fallback.py"
-	if err := closure.HostContext.WriteFile(remotePath, pythonScript, runAs); err != nil {
-		return AnsiblePythonOutput{Failed: true, Msg: fmt.Sprintf("Failed to write remote script: %v", err)}, nil
-	}
-	defer func() {
-		if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -f %s", remotePath), runAs); err != nil {
-			common.LogWarn("Failed to cleanup remote script", map[string]interface{}{
-				"remotePath": remotePath,
-				"error":      err,
-			})
-		}
-	}()
-
-	// Build simplified PYTHONPATH command using the working directory
-	pythonPathCmd := fmt.Sprintf(`#!/bin/sh
-		PYTHONPATH="%s:$HOME/.local/lib/python3.*/site-packages:$HOME/.ansible/collections:/usr/local/lib/python3.*/dist-packages:/usr/lib/python3/dist-packages"
-		export PYTHONPATH
-		exec python3 %s
-	`, workingDir, remotePath)
-
-	rc, stdout, stderr, err := closure.HostContext.RunCommand(pythonPathCmd, runAs)
-
-	if err != nil {
-		return AnsiblePythonOutput{
-			Failed: true,
-			Msg:    fmt.Sprintf("Remote execution failed: %v", err),
-		}, fmt.Errorf("failed to execute module '%s' via Python fallback: %s", moduleName, err)
-	}
-
-	// Parse JSON output
-	var result map[string]interface{}
-	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
-		// Create simplified error message
-		errorMsg := fmt.Sprintf("Module execution failed (exit code %d)", rc)
-		if stderr != "" && len(stderr) < 100 {
-			errorMsg += fmt.Sprintf(": %s", stderr)
-		}
-		if stdout != "" && len(stdout) < 100 {
-			errorMsg += fmt.Sprintf(" [stdout: %s]", stdout)
-		}
-
-		return AnsiblePythonOutput{
-			Failed: true,
-			Msg:    errorMsg,
-		}, fmt.Errorf("failed to execute module '%s': %s", moduleName, errorMsg)
-	}
-
-	// Construct output
-	output := AnsiblePythonOutput{Results: result}
-	if changed, ok := result["changed"].(bool); ok {
-		output.WasChanged = changed
-	}
-	if failed, ok := result["failed"].(bool); ok {
-		output.Failed = failed
-	}
-	if rc != 0 && !output.Failed {
-		output.Failed = true
-	}
-	if msg, ok := result["msg"].(string); ok {
-		output.Msg = msg
-	}
-	if output.Msg == "" && stderr != "" && len(stderr) < 200 {
-		output.Msg = stderr
-	}
-
-	return output, nil
 }
 
 func (m AnsiblePythonModule) parseAnsibleOutput(output, moduleName string) AnsiblePythonOutput {

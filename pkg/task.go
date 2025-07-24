@@ -78,7 +78,8 @@ type Task struct {
 	After        string              `yaml:"after" json:"after,omitempty"`
 	When         JinjaExpressionList `yaml:"when" json:"when,omitempty"`
 	Register     string              `yaml:"register" json:"register,omitempty"`
-	RunAs        string              `yaml:"run_as" json:"run_as,omitempty"`
+	Become       bool                `yaml:"become" json:"become,omitempty"`
+	BecomeUser   string              `yaml:"become_user" json:"become_user,omitempty"`
 	IgnoreErrors JinjaExpression     `yaml:"ignore_errors,omitempty" json:"ignore_errors,omitempty"`
 	FailedWhen   JinjaExpressionList `yaml:"failed_when,omitempty" json:"failed_when,omitempty"`
 	ChangedWhen  JinjaExpressionList `yaml:"changed_when,omitempty" json:"changed_when,omitempty"`
@@ -280,7 +281,7 @@ func (t Task) ToCode() string {
 		t.Module,
 		t.Register,
 		actualParamsCode, // Use the generated code for the Actual field
-		t.RunAs,
+		t.BecomeUser,
 	))
 
 	if len(t.When) > 0 {
@@ -581,7 +582,7 @@ func (t Task) executeOnce(closure *Closure) TaskResult {
 		t.Params.Actual = templatedActualProvider // This could be nil if original was nil and TemplateModuleInputFields returns nil
 	}
 
-	r.Output, r.Error = module.Execute(t.Params.Actual, closure, t.RunAs)
+	r.Output, r.Error = module.Execute(t.Params.Actual, closure, t.BecomeUser)
 	duration := time.Since(startTime)
 	r.Duration = duration
 
@@ -670,7 +671,7 @@ func (t Task) RevertModule(closure *Closure) TaskResult {
 
 	// Pass t.Params.Actual to module.Revert
 	// Similar nil check considerations as in ExecuteModule for t.Params.Actual
-	r.Output, r.Error = module.Revert(t.Params.Actual, closure, convertedPreviousOutput, t.RunAs) // Pass potentially nil previousOutput
+	r.Output, r.Error = module.Revert(t.Params.Actual, closure, convertedPreviousOutput, t.BecomeUser) // Pass potentially nil previousOutput
 	duration := time.Since(startTime)
 	r.Duration = duration
 

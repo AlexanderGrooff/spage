@@ -1,15 +1,24 @@
 - name: Test Python fallback with ping module
   hosts: localhost
   tasks:
+    - name: run as root
+      ansible_python:
+        module_name: shell
+        args:
+          cmd: "whoami"
+      become: true
+      register: shell_root_result
+
+    - name: Verify shell root result
+      assert:
+        that:
+          - not shell_root_result.failed
+          - shell_root_result.stdout == "root"
+
     - name: Test ping module via Python fallback
       ping:
         data: "pong"
       register: ping_result
-
-    - name: Assert results are placed in result key
-      assert:
-        that:
-          - ping_result.results.ping == "pong"
 
     - name: Assert results are placed in high-level key
       assert:
@@ -17,7 +26,7 @@
           - ping_result.ping == "pong"
 
     - name: Create file to verify ping worked
-      shell: echo "{{ ping_result.results.ping }}" | tee /tmp/spage/python_fallback_ping.txt
+      shell: echo "{{ ping_result.ping }}" | tee /tmp/spage/python_fallback_ping.txt
 
     - name: Test unknown module
       some.collection.unknown_module:
@@ -42,7 +51,7 @@
       assert:
         that:
           - not collection_result.failed
-          - collection_result.results.python_version_info
+          - collection_result.python_version_info
         fail_msg: "The collection module should have succeeded"
 
     - name: test collection module with jinja template

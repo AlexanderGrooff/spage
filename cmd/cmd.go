@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"strings"
 
@@ -164,9 +165,7 @@ var runCmd = &cobra.Command{
 				return fmt.Errorf("failed to parse extra variables: %w", err)
 			}
 			// Merge extra facts into cfg.Facts (extra vars take precedence)
-			for k, v := range extraFacts {
-				cfg.Facts[k] = v
-			}
+			maps.Copy(cfg.Facts, extraFacts)
 
 		}
 
