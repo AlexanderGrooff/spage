@@ -520,7 +520,7 @@ func TestTemplatePlaybook(t *testing.T) {
 func TestShellPlaybook(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
 		playbookFile: "playbooks/shell_playbook.yaml",
-		configFile:   "default.yaml",
+		configFile:   "sequential_no_revert.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.Equal(t, 0, exitCode, "shell_playbook should run without error in env: %s, output: %s", envName, output)
 			assertDirectoryExistsWithInventory(t, "/tmp/spage/spage_test", inventory)

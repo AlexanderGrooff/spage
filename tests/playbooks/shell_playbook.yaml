@@ -48,10 +48,12 @@
 
 - name: Multiline bash
   shell: |
-    for i in `seq 2`; do
-      echo "Multiline block $i" | tee /tmp/spage/spage_test/testfile$i.txt
+    for i in `seq 3 | grep -v '3' | awk '{print $1 $2}'`; do
+      echo "Multiline block $i"
+      echo 'blabla' > /tmp/spage/spage_test/testfile$i.txt
     done
   after: "Create test file in directory"
+  become: true
   register: multiline_task
 
 - name: Assert multiline block
