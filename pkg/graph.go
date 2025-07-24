@@ -186,12 +186,16 @@ func (g Graph) ParallelTasks() [][]Task {
 
 func NewGraphFromFile(playbookPath string, rolesPaths string) (Graph, error) {
 	// Read YAML file
-	data, err := os.ReadFile(playbookPath)
+	absPlaybookPath, err := filepath.Abs(playbookPath)
 	if err != nil {
-		return Graph{}, fmt.Errorf("error reading YAML file %s: %v", playbookPath, err)
+		return Graph{}, fmt.Errorf("error getting absolute path for playbook %s: %v", playbookPath, err)
+	}
+	data, err := os.ReadFile(absPlaybookPath)
+	if err != nil {
+		return Graph{}, fmt.Errorf("error reading YAML file %s: %v", absPlaybookPath, err)
 	}
 
-	currCwd := ChangeCWDToPlaybookDir(playbookPath)
+	currCwd := ChangeCWDToPlaybookDir(absPlaybookPath)
 	defer func() {
 		if err := os.Chdir(currCwd); err != nil {
 			log.Fatalf("Failed to change directory back to %s: %v", currCwd, err)
@@ -227,7 +231,7 @@ func NewGraphFromFile(playbookPath string, rolesPaths string) (Graph, error) {
 	attributes, err := ParsePlayAttributes(processedNodes)
 	if err != nil {
 		// We allow the graph to not have a root
-		common.LogDebug("No root block found in playbook, using empty attributes", map[string]interface{}{"playbook": playbookPath})
+		common.LogDebug("No root block found in playbook, using empty attributes", map[string]interface{}{"playbook": absPlaybookPath})
 		attributes = make(map[string]interface{})
 	}
 	tasks, err := TextToGraphNodes(processedNodes)
@@ -235,7 +239,7 @@ func NewGraphFromFile(playbookPath string, rolesPaths string) (Graph, error) {
 		return Graph{}, fmt.Errorf("error parsing preprocessed tasks: %w", err)
 	}
 
-	graph, err := NewGraph(tasks, attributes, playbookPath)
+	graph, err := NewGraph(tasks, attributes, absPlaybookPath)
 	if err != nil {
 		return Graph{}, fmt.Errorf("failed to generate graph: %w", err)
 	}
