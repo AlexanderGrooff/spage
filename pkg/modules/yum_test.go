@@ -491,3 +491,213 @@ func TestYumInput_CommaDelimitedReposToCode(t *testing.T) {
 		})
 	}
 }
+
+func TestYumInput_ExcludeParameter(t *testing.T) {
+	tests := []struct {
+		name            string
+		yaml            string
+		expectedExclude []string
+		wantErr         bool
+	}{
+		{
+			name: "comma-delimited exclude",
+			yaml: `
+name: test-package
+exclude: "kernel, kernel-devel"
+`,
+			expectedExclude: []string{"kernel", "kernel-devel"},
+			wantErr:         false,
+		},
+		{
+			name: "list format exclude",
+			yaml: `
+name: test-package
+exclude: ["kernel", "kernel-devel"]
+`,
+			expectedExclude: []string{"kernel", "kernel-devel"},
+			wantErr:         false,
+		},
+		{
+			name: "single exclude package",
+			yaml: `
+name: test-package
+exclude: "kernel"
+`,
+			expectedExclude: []string{"kernel"},
+			wantErr:         false,
+		},
+		{
+			name: "empty exclude string",
+			yaml: `
+name: test-package
+exclude: ""
+`,
+			expectedExclude: []string{},
+			wantErr:         false,
+		},
+		{
+			name: "whitespace in comma-delimited exclude",
+			yaml: `
+name: test-package
+exclude: "kernel , kernel-devel , kernel-headers"
+`,
+			expectedExclude: []string{"kernel", "kernel-devel", "kernel-headers"},
+			wantErr:         false,
+		},
+		{
+			name: "mixed parameters with exclude",
+			yaml: `
+name: test-package
+enablerepo: "epel"
+exclude: "kernel, kernel-devel"
+`,
+			expectedExclude: []string{"kernel", "kernel-devel"},
+			wantErr:         false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got YumInput
+
+			// Parse YAML string into yaml.Node
+			var node yaml.Node
+			err := yaml.Unmarshal([]byte(tt.yaml), &node)
+			if err != nil {
+				t.Fatalf("Failed to parse YAML: %v", err)
+			}
+
+			// Use the first document node
+			if len(node.Content) > 0 {
+				err = got.UnmarshalYAML(node.Content[0])
+			} else {
+				err = got.UnmarshalYAML(&node)
+			}
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+
+			// Validate to trigger parsing
+			err = got.Validate()
+			assert.NoError(t, err)
+
+			// Check exclude parsing
+			assert.Equal(t, tt.expectedExclude, got.ExcludeList, "ExcludeList mismatch")
+		})
+	}
+}
+
+func TestYumInput_ExcludeValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   *YumInput
+		wantErr bool
+	}{
+		{
+			name: "valid comma-delimited exclude",
+			input: &YumInput{
+				Name:    "test-package",
+				Exclude: "kernel, kernel-devel",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid list format exclude",
+			input: &YumInput{
+				Name:    "test-package",
+				Exclude: []string{"kernel", "kernel-devel"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid mixed format",
+			input: &YumInput{
+				Name:       "test-package",
+				Enablerepo: "epel",
+				Exclude:    "kernel, kernel-devel",
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid exclude type",
+			input: &YumInput{
+				Name:    "test-package",
+				Exclude: 123, // Invalid type
+			},
+			wantErr: true,
+		},
+		{
+			name: "empty exclude string",
+			input: &YumInput{
+				Name:    "test-package",
+				Exclude: "",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.input.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestYumInput_ExcludeToCode(t *testing.T) {
+	tests := []struct {
+		name            string
+		input           *YumInput
+		expectedExclude string
+	}{
+		{
+			name: "comma-delimited exclude",
+			input: &YumInput{
+				Name:    "test-package",
+				Exclude: "kernel, kernel-devel",
+			},
+			expectedExclude: `[]string{"kernel", "kernel-devel"}`,
+		},
+		{
+			name: "list format exclude",
+			input: &YumInput{
+				Name:    "test-package",
+				Exclude: []string{"kernel", "kernel-devel"},
+			},
+			expectedExclude: `[]string{"kernel", "kernel-devel"}`,
+		},
+		{
+			name: "empty exclude",
+			input: &YumInput{
+				Name: "test-package",
+			},
+			expectedExclude: "nil",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Validate to trigger parsing
+			err := tt.input.Validate()
+			assert.NoError(t, err)
+
+			// Generate code
+			code := tt.input.ToCode()
+
+			// Check that the generated code contains the expected exclude list
+			if tt.expectedExclude != "nil" {
+				assert.Contains(t, code, tt.expectedExclude, "Generated code should contain expected exclude")
+			} else {
+				assert.Contains(t, code, "Exclude: nil", "Generated code should contain nil exclude")
+			}
+		})
+	}
+}

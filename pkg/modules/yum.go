@@ -28,12 +28,15 @@ type YumInput struct {
 	UpdateCache bool        `yaml:"update_cache"` // Run yum update before action
 	Enablerepo  interface{} `yaml:"enablerepo"`   // List of repos to enable (string, comma-delimited string, or list)
 	Disablerepo interface{} `yaml:"disablerepo"`  // List of repos to disable (string, comma-delimited string, or list)
+	Exclude     interface{} `yaml:"exclude"`      // List of packages to exclude (string, comma-delimited string, or list)
 	UpdateOnly  bool        `yaml:"update_only"`  // Only update packages, don't install/remove
 	// Internal storage for parsed package list
 	PkgNames []string
 	// Internal storage for parsed repo lists
 	EnablerepoList  []string
 	DisablerepoList []string
+	// Internal storage for parsed exclude list
+	ExcludeList []string
 }
 
 // YumOutput defines the output of the yum module.
@@ -109,12 +112,25 @@ func (i *YumInput) ToCode() string {
 		disablerepoCode = "nil"
 	}
 
-	return fmt.Sprintf("&modules.YumInput{Name: %s, State: %q, UpdateCache: %t, Enablerepo: %s, Disablerepo: %s, UpdateOnly: %t, PkgNames: %s}",
+	// Format Exclude field
+	var excludeCode string
+	if len(i.ExcludeList) > 0 {
+		var excludeElements []string
+		for _, pkgName := range i.ExcludeList {
+			excludeElements = append(excludeElements, fmt.Sprintf("%q", pkgName))
+		}
+		excludeCode = fmt.Sprintf("[]string{%s}", strings.Join(excludeElements, ", "))
+	} else {
+		excludeCode = "nil"
+	}
+
+	return fmt.Sprintf("&modules.YumInput{Name: %s, State: %q, UpdateCache: %t, Enablerepo: %s, Disablerepo: %s, Exclude: %s, UpdateOnly: %t, PkgNames: %s}",
 		nameCode,
 		i.State,
 		i.UpdateCache,
 		enablerepoCode,
 		disablerepoCode,
+		excludeCode,
 		i.UpdateOnly,
 		pkgNamesCode,
 	)
@@ -138,6 +154,9 @@ func (i *YumInput) GetVariableUsage() []string {
 	}
 	for _, repo := range i.DisablerepoList {
 		vars = append(vars, pkg.GetVariableUsageFromTemplate(repo)...)
+	}
+	for _, pkgName := range i.ExcludeList {
+		vars = append(vars, pkg.GetVariableUsageFromTemplate(pkgName)...)
 	}
 	return vars
 }
@@ -201,10 +220,11 @@ func (i *YumInput) parseAndValidatePackages() error {
 	return nil
 }
 
-// parseAndValidateRepos extracts repository names from Enablerepo/Disablerepo fields and validates them.
-func (i *YumInput) parseAndValidateRepos() error {
+// parseAndValidateAll extracts repository names and exclude packages from Enablerepo/Disablerepo/Exclude fields and validates them.
+func (i *YumInput) parseAndValidateAll() error {
 	i.EnablerepoList = []string{}
 	i.DisablerepoList = []string{}
+	i.ExcludeList = []string{}
 
 	// Parse Enablerepo
 	if i.Enablerepo != nil {
@@ -280,6 +300,43 @@ func (i *YumInput) parseAndValidateRepos() error {
 		}
 	}
 
+	// Parse Exclude
+	if i.Exclude != nil {
+		switch v := i.Exclude.(type) {
+		case string:
+			if v != "" {
+				// Split comma-delimited string
+				pkgs := strings.Split(v, ",")
+				for _, pkgName := range pkgs {
+					pkgName = strings.TrimSpace(pkgName)
+					if pkgName != "" {
+						i.ExcludeList = append(i.ExcludeList, pkgName)
+					}
+				}
+			}
+		case []interface{}:
+			for idx, item := range v {
+				if pkgName, ok := item.(string); ok {
+					if pkgName == "" {
+						return fmt.Errorf("exclude package name at index %d cannot be empty", idx)
+					}
+					i.ExcludeList = append(i.ExcludeList, pkgName)
+				} else {
+					return fmt.Errorf("invalid type for exclude package name at index %d: expected string, got %T", idx, item)
+				}
+			}
+		case []string:
+			for idx, pkgName := range v {
+				if pkgName == "" {
+					return fmt.Errorf("exclude package name at index %d cannot be empty", idx)
+				}
+				i.ExcludeList = append(i.ExcludeList, pkgName)
+			}
+		default:
+			return fmt.Errorf("invalid type for 'exclude' parameter: expected string, comma-delimited string, or list of strings, got %T", i.Exclude)
+		}
+	}
+
 	return nil
 }
 
@@ -289,7 +346,7 @@ func (i *YumInput) Validate() error {
 		return err
 	}
 
-	if err := i.parseAndValidateRepos(); err != nil {
+	if err := i.parseAndValidateAll(); err != nil {
 		return err
 	}
 
@@ -351,7 +408,7 @@ func (o YumOutput) AsFacts() map[string]interface{} {
 }
 
 // runYumCommand executes a yum command, handling sudo and common options.
-func runYumCommand(c *pkg.HostContext, runAsUser string, enablerepo, disablerepo []string, args ...string) (string, string, bool, error) {
+func runYumCommand(c *pkg.HostContext, runAsUser string, enablerepo, disablerepo, exclude []string, args ...string) (string, string, bool, error) {
 	baseCmd := []string{
 		"yum",
 		"-y", // Assume yes
@@ -367,6 +424,13 @@ func runYumCommand(c *pkg.HostContext, runAsUser string, enablerepo, disablerepo
 	if len(disablerepo) > 0 {
 		for _, repo := range disablerepo {
 			baseCmd = append(baseCmd, "--disablerepo="+repo)
+		}
+	}
+
+	// Add exclude options
+	if len(exclude) > 0 {
+		for _, pkgName := range exclude {
+			baseCmd = append(baseCmd, "--exclude="+pkgName)
 		}
 	}
 
@@ -467,9 +531,19 @@ func (m YumModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.
 		templatedDisablerepo = append(templatedDisablerepo, templatedRepo)
 	}
 
+	// Template exclude packages
+	templatedExclude := []string{}
+	for _, pkgName := range yumParams.ExcludeList {
+		templatedPkgName, err := pkg.TemplateString(pkgName, closure)
+		if err != nil {
+			return nil, fmt.Errorf("failed to template exclude package '%s': %w", pkgName, err)
+		}
+		templatedExclude = append(templatedExclude, templatedPkgName)
+	}
+
 	if yumParams.UpdateCache {
 		common.LogDebug("Updating yum cache", map[string]interface{}{"host": closure.HostContext.Host.Name})
-		_, _, cacheChanged, err := runYumCommand(closure.HostContext, runAs, templatedEnablerepo, templatedDisablerepo, "update")
+		_, _, cacheChanged, err := runYumCommand(closure.HostContext, runAs, templatedEnablerepo, templatedDisablerepo, templatedExclude, "update")
 		if err != nil {
 			return nil, fmt.Errorf("failed to update yum cache: %w", err)
 		}
@@ -514,7 +588,7 @@ func (m YumModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.
 	if len(pkgsToInstall) > 0 {
 		common.LogDebug("Ensuring packages are present/latest", map[string]interface{}{"host": closure.HostContext.Host.Name, "packages": pkgsToInstall, "state": yumParams.State})
 		args := append([]string{"install"}, pkgsToInstall...)
-		_, _, changed, err := runYumCommand(closure.HostContext, runAs, templatedEnablerepo, templatedDisablerepo, args...)
+		_, _, changed, err := runYumCommand(closure.HostContext, runAs, templatedEnablerepo, templatedDisablerepo, templatedExclude, args...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to install/upgrade packages %v: %w", pkgsToInstall, err)
 		}
@@ -525,7 +599,7 @@ func (m YumModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.
 	if len(pkgsToRemove) > 0 {
 		common.LogDebug("Ensuring packages are absent", map[string]interface{}{"host": closure.HostContext.Host.Name, "packages": pkgsToRemove})
 		args := append([]string{"remove"}, pkgsToRemove...)
-		_, _, changed, err := runYumCommand(closure.HostContext, runAs, templatedEnablerepo, templatedDisablerepo, args...)
+		_, _, changed, err := runYumCommand(closure.HostContext, runAs, templatedEnablerepo, templatedDisablerepo, templatedExclude, args...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to remove packages %v: %w", pkgsToRemove, err)
 		}
@@ -558,7 +632,7 @@ func (m YumModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.C
 
 	// Ensure repository lists are populated
 	if yumParams.EnablerepoList == nil || yumParams.DisablerepoList == nil {
-		if err := yumParams.parseAndValidateRepos(); err != nil {
+		if err := yumParams.parseAndValidateAll(); err != nil {
 			return nil, fmt.Errorf("internal state error: repositories not parsed/validated before Revert: %w", err)
 		}
 	}
@@ -594,6 +668,18 @@ func (m YumModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.C
 		templatedDisablerepo = append(templatedDisablerepo, templatedRepo)
 	}
 
+	// Re-template exclude packages for revert context
+	templatedExclude := []string{}
+	if yumParams.ExcludeList != nil {
+		for _, pkgName := range yumParams.ExcludeList {
+			templatedPkgName, err := pkg.TemplateString(pkgName, closure)
+			if err != nil {
+				return nil, fmt.Errorf("failed to template exclude package '%s' for revert: %w", pkgName, err)
+			}
+			templatedExclude = append(templatedExclude, templatedPkgName)
+		}
+	}
+
 	if len(templatedPkgNames) == 0 || !yumParams.HasRevert() {
 		return YumOutput{State: "norevert"}, nil
 	}
@@ -619,7 +705,7 @@ func (m YumModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.C
 	}
 
 	args := append([]string{revertAction}, pkgsForRevertAction...)
-	_, _, changed, err := runYumCommand(closure.HostContext, runAs, templatedEnablerepo, templatedDisablerepo, args...)
+	_, _, changed, err := runYumCommand(closure.HostContext, runAs, templatedEnablerepo, templatedDisablerepo, templatedExclude, args...)
 	if err != nil {
 		return YumOutput{Packages: pkgsForRevertAction, State: fmt.Sprintf("revert_failed_%s", revertAction), WasChanged: false}, fmt.Errorf("revert command '%s' failed for packages %v: %w", revertAction, pkgsForRevertAction, err)
 	}
@@ -648,6 +734,7 @@ func (i *YumInput) UnmarshalYAML(node *yaml.Node) error {
 			UpdateCache *bool       `yaml:"update_cache"` // Use pointer for explicit false
 			Enablerepo  interface{} `yaml:"enablerepo"`
 			Disablerepo interface{} `yaml:"disablerepo"`
+			Exclude     interface{} `yaml:"exclude"`
 		}
 		var tmp YumInputMap
 		if err := node.Decode(&tmp); err != nil {
@@ -676,12 +763,15 @@ func (i *YumInput) UnmarshalYAML(node *yaml.Node) error {
 		if tmp.Disablerepo != nil {
 			i.Disablerepo = tmp.Disablerepo
 		}
+		if tmp.Exclude != nil {
+			i.Exclude = tmp.Exclude
+		}
 
 		// Parse and validate both packages and repositories
 		if err := i.parseAndValidatePackages(); err != nil {
 			return err
 		}
-		if err := i.parseAndValidateRepos(); err != nil {
+		if err := i.parseAndValidateAll(); err != nil {
 			return err
 		}
 
