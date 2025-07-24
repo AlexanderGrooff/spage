@@ -201,7 +201,7 @@ func (c *HostContext) RunCommand(command, username string) (int, string, string,
 		return -1, "", "", fmt.Errorf("failed to get SSH pool for remote host %s: %w", c.Host.Host, err)
 	}
 
-	return runtime.RunRemoteCommand(pool, c.Host.Host, command, username)
+	return runtime.RunRemoteCommand(pool, c.Host.Host, command, username, c.Host.Config)
 }
 
 func EvaluateExpression(s string, closure *Closure) (interface{}, error) {

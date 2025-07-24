@@ -20,6 +20,7 @@ type Config struct {
 	HostKeyChecking bool                   `mapstructure:"host_key_checking"`
 	RolesPath       string                 `mapstructure:"roles_path"` // Colon-delimited paths to search for roles
 	Inventory       string                 `mapstructure:"inventory"`  // Colon-delimited paths to search for inventory files
+	Sudo            SudoConfig             `mapstructure:"sudo"`
 }
 
 // LoggingConfig holds logging-related configuration
@@ -42,6 +43,11 @@ type TemporalConfig struct {
 type TagsConfig struct {
 	Tags     []string `mapstructure:"tags"`      // Only run tasks with these tags
 	SkipTags []string `mapstructure:"skip_tags"` // Skip tasks with these tags
+}
+
+// SudoConfig holds sudo-related configuration
+type SudoConfig struct {
+	UseInteractive bool `mapstructure:"use_interactive"` // Use -Su (interactive) vs -u (non-interactive)
 }
 
 // ValidOutputFormats contains the list of supported output formats
@@ -129,6 +135,9 @@ func setDefaults(v *viper.Viper) {
 
 	// Inventory default
 	v.SetDefault("inventory", "") // Default to empty, SDK will use default inventory
+
+	// Sudo defaults
+	v.SetDefault("sudo.use_interactive", false) // Default to non-interactive (-u) for SSH sessions
 }
 
 // isValidOutputFormat checks if the given format is supported
