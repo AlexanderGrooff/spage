@@ -214,6 +214,74 @@ func TestYumModule_Registration(t *testing.T) {
 	assert.IsType(t, YumModule{}, mod, "ansible.builtin.dnf module should be of type YumModule")
 }
 
+func TestYumInput_PackageNames(t *testing.T) {
+	tests := []struct {
+		name          string
+		yaml          string
+		expectedNames []string
+		wantErr       bool
+	}{
+		{
+			name: "comma-delimited enablerepo",
+			yaml: `
+name: test-package
+`,
+			expectedNames: []string{"test-package"},
+			wantErr:       false,
+		},
+		{
+			name: "list of packages",
+			yaml: `
+name: ["curl", "wget"]
+`,
+			expectedNames: []string{"curl", "wget"},
+			wantErr:       false,
+		},
+		{
+			name: "jinja string list",
+			yaml: `
+name: "['curl', 'wget']"
+`,
+			expectedNames: []string{"curl", "wget"},
+			wantErr:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got YumInput
+
+			// Parse YAML string into yaml.Node
+			var node yaml.Node
+			err := yaml.Unmarshal([]byte(tt.yaml), &node)
+			if err != nil {
+				t.Fatalf("Failed to parse YAML: %v", err)
+			}
+
+			// Use the first document node
+			if len(node.Content) > 0 {
+				err = got.UnmarshalYAML(node.Content[0])
+			} else {
+				err = got.UnmarshalYAML(&node)
+			}
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+
+			// Validate to trigger repository parsing
+			err = got.Validate()
+			assert.NoError(t, err)
+
+			// Check enablerepo parsing
+			assert.Equal(t, tt.expectedNames, got.PkgNames, "PkgNames mismatch")
+		})
+	}
+}
+
 func TestYumInput_CommaDelimitedRepos(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -303,6 +371,74 @@ disablerepo: ["base", "updates"]
 `,
 			expectedEnable:  []string{"epel", "extras"},
 			expectedDisable: []string{"base", "updates"},
+			wantErr:         false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got YumInput
+
+			// Parse YAML string into yaml.Node
+			var node yaml.Node
+			err := yaml.Unmarshal([]byte(tt.yaml), &node)
+			if err != nil {
+				t.Fatalf("Failed to parse YAML: %v", err)
+			}
+
+			// Use the first document node
+			if len(node.Content) > 0 {
+				err = got.UnmarshalYAML(node.Content[0])
+			} else {
+				err = got.UnmarshalYAML(&node)
+			}
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+
+			// Validate to trigger repository parsing
+			err = got.Validate()
+			assert.NoError(t, err)
+
+			// Check enablerepo parsing
+			assert.Equal(t, tt.expectedEnable, got.EnablerepoList, "EnablerepoList mismatch")
+
+			// Check disablerepo parsing
+			assert.Equal(t, tt.expectedDisable, got.DisablerepoList, "DisablerepoList mismatch")
+		})
+	}
+}
+
+func TestYumInput_LiteralStringRepos(t *testing.T) {
+	tests := []struct {
+		name            string
+		yaml            string
+		expectedEnable  []string
+		expectedDisable []string
+		wantErr         bool
+	}{
+		{
+			name: "literal string enablerepo",
+			yaml: `
+name: test-package
+enablerepo: "[\"extras\", \"updates\"]"
+`,
+			expectedEnable:  []string{"extras", "updates"},
+			expectedDisable: []string{},
+			wantErr:         false,
+		},
+		{
+			name: "literal string enablerepo with trailing comma",
+			yaml: `
+name: test-package
+enablerepo: "[\"extras\", \"updates\", ]"
+`,
+			expectedEnable:  []string{"extras", "updates"},
+			expectedDisable: []string{},
 			wantErr:         false,
 		},
 	}

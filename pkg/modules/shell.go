@@ -28,6 +28,8 @@ type ShellOutput struct {
 	Stdout  string `yaml:"stdout"`
 	Stderr  string `yaml:"stderr"`
 	Command string `yaml:"command"`
+	StdoutLines []string `yaml:"stdout_lines"`
+	StderrLines []string `yaml:"stderr_lines"`
 	pkg.ModuleOutput
 	Rc int `json:"rc"`
 }
@@ -66,15 +68,15 @@ func (o ShellOutput) AsFacts() map[string]interface{} {
 		"stdout":       o.Stdout,
 		"stderr":       o.Stderr,
 		"rc":           o.Rc,
-		"stdout_lines": strings.Split(o.Stdout, "\n"),
-		"stderr_lines": strings.Split(o.Stderr, "\n"),
+		"stdout_lines": o.StdoutLines,
+		"stderr_lines": o.StderrLines,
 	}
 }
 
-func (m ShellModule) templateAndExecute(command string, closure *pkg.Closure, prev ShellOutput, runAs string) (ShellOutput, error) {
+func (m ShellModule) templateAndExecute(command string, closure *pkg.Closure, prev *ShellOutput, runAs string) (ShellOutput, error) {
 	var err error
 
-	if prev != (ShellOutput{}) { // Only add if 'prev' is not the zero value
+	if prev != nil {
 		closure.ExtraFacts["Previous"] = prev
 	}
 
@@ -91,6 +93,8 @@ func (m ShellModule) templateAndExecute(command string, closure *pkg.Closure, pr
 		Stderr:  stderr,
 		Command: templatedCmd, // Store the original templated command
 		Rc:      rc,
+		StdoutLines: strings.Split(stdout, "\n"),
+		StderrLines: strings.Split(stderr, "\n"),
 	}
 
 	// Don't wrap the error from RunCommand if it's nil
@@ -113,7 +117,7 @@ func (m ShellModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pk
 		}
 		return nil, fmt.Errorf("Execute: incorrect parameter type: expected ShellInput, got %T", params)
 	}
-	return m.templateAndExecute(shellParams.Execute, closure, ShellOutput{}, runAs)
+	return m.templateAndExecute(shellParams.Execute, closure, nil, runAs)
 }
 
 func (m ShellModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {
@@ -131,7 +135,7 @@ func (m ShellModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg
 	} else {
 		prev = ShellOutput{}
 	}
-	return m.templateAndExecute(shellParams.Revert, closure, prev, runAs)
+	return m.templateAndExecute(shellParams.Revert, closure, &prev, runAs)
 }
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface for ShellInput.

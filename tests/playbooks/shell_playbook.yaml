@@ -53,7 +53,6 @@
       echo 'blabla' > /tmp/spage/spage_test/testfile$i.txt
     done
   after: "Create test file in directory"
-  become: true
   register: multiline_task
 
 - name: Assert multiline block

@@ -398,6 +398,28 @@ func GetVariableUsageFromModule(input ConcreteModuleInputProvider) ([]string, er
 	return result, nil
 }
 
+// JinjaStringToStringList Evaluate string list "['abc', 'def']" into Golang []string{"abc", "def"}
+func JinjaStringToStringList(jinjaStr string) ([]string, error) {
+	// Evaluate strings into Golang
+	literalRepo, err := jinja.EvaluateExpression(jinjaStr, nil)
+	if err == nil {
+		switch literalRepo := literalRepo.(type) {
+		case []string:
+			return literalRepo, nil
+		case []interface{}:
+			var result []string
+			for _, repo := range literalRepo {
+				repoStr, ok := repo.(string)
+				if ok {
+					result = append(result, repoStr)
+				}
+			}
+			return result, nil
+		}
+	}
+	return nil, fmt.Errorf("failed to evaluate Jinja string %q into a string list", jinjaStr)
+}
+
 // extractVariablesFromValue recursively extracts variables from a reflect.Value
 func extractVariablesFromValue(val reflect.Value) ([]string, error) {
 	if !val.IsValid() {

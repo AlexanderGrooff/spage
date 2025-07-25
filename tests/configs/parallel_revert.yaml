@@ -1,4 +1,5 @@
 execution_mode: parallel
+revert: true
 logging:
   format: plain
   level: debug

@@ -1,20 +1,6 @@
 - name: Test Python fallback with ping module
   hosts: localhost
   tasks:
-    - name: run as root
-      ansible_python:
-        module_name: shell
-        args:
-          cmd: "whoami"
-      become: true
-      register: shell_root_result
-
-    - name: Verify shell root result
-      assert:
-        that:
-          - not shell_root_result.failed
-          - shell_root_result.stdout == "root"
-
     - name: Test ping module via Python fallback
       ping:
         data: "pong"

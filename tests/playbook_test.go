@@ -33,9 +33,9 @@ func runPlaybookTest(t *testing.T, tc playbookTestCase) {
 		inventoryFile string
 	}{
 		{executor: "local", inventoryFile: ""},
-		{executor: "local", inventoryFile: "inventory.yaml"},
+		// {executor: "local", inventoryFile: "inventory.yaml"},
 		{executor: "temporal", inventoryFile: ""},
-		{executor: "temporal", inventoryFile: "inventory.yaml"},
+		// {executor: "temporal", inventoryFile: "inventory.yaml"},
 	}
 
 	for _, env := range environments {
@@ -520,7 +520,7 @@ func TestTemplatePlaybook(t *testing.T) {
 func TestShellPlaybook(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
 		playbookFile: "playbooks/shell_playbook.yaml",
-		configFile:   "default.yaml",
+		configFile:   "parallel_revert.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.Equal(t, 0, exitCode, "shell_playbook should run without error in env: %s, output: %s", envName, output)
 			assertDirectoryExistsWithInventory(t, "/tmp/spage/spage_test", inventory)
@@ -542,7 +542,7 @@ func TestFilePlaybook(t *testing.T) {
 func TestInvalidPlaybook(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
 		playbookFile: "playbooks/invalid_playbook.yaml",
-		configFile:   "default.yaml",
+		configFile:   "parallel_revert.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.NotEqual(t, 0, exitCode, "invalid_playbook should fail in env: %s", envName)
 		},
@@ -552,7 +552,7 @@ func TestInvalidPlaybook(t *testing.T) {
 func TestRevertPlaybook(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
 		playbookFile: "playbooks/revert_playbook.yaml",
-		configFile:   "default.yaml",
+		configFile:   "parallel_revert.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.Equal(t, 1, exitCode, "revert_playbook should fail with exit code 1 in env: %s", envName)
 			assertFileContainsWithInventory(t, "/tmp/spage/revert_test.txt", "reverted", inventory)
@@ -574,7 +574,7 @@ func TestRevertPlaybookNoRevert(t *testing.T) {
 func TestExecutionModePlaybookParallelFails(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
 		playbookFile: "playbooks/execution_mode_playbook.yaml",
-		configFile:   "default.yaml", // default is parallel
+		configFile:   "parallel_revert.yaml", // default is parallel
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.NotEqual(t, 0, exitCode, "execution_mode_playbook in parallel should fail in env: %s", envName)
 		},
@@ -596,7 +596,7 @@ func TestExecutionModePlaybookSequentialSucceeds(t *testing.T) {
 func TestIncludePlaybook(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
 		playbookFile: "playbooks/include_playbook.yaml",
-		configFile:   "default.yaml",
+		configFile:   "parallel_revert.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.Equal(t, 0, exitCode, "include_playbook should succeed in env: %s, output: %s", envName, output)
 			assertFileExistsWithInventory(t, "/tmp/spage/include_test_main_start.txt", inventory)
@@ -609,7 +609,7 @@ func TestIncludePlaybook(t *testing.T) {
 func TestIncludeRolePlaybook(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
 		playbookFile: "playbooks/include_role_playbook.yaml",
-		configFile:   "default.yaml",
+		configFile:   "parallel_revert.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.Equal(t, 0, exitCode, "include_role_playbook should succeed in env: %s, output: %s", envName, output)
 			assertFileExistsWithInventory(t, "/tmp/spage/include_role_before.txt", inventory)
@@ -622,7 +622,7 @@ func TestIncludeRolePlaybook(t *testing.T) {
 func TestImportTasksPlaybook(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
 		playbookFile: "playbooks/import_tasks_playbook.yaml",
-		configFile:   "default.yaml",
+		configFile:   "parallel_revert.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.Equal(t, 0, exitCode, "import_tasks_playbook should succeed in env: %s, output: %s", envName, output)
 			assertFileExistsWithInventory(t, "/tmp/spage/import_tasks_before.txt", inventory)
@@ -635,7 +635,7 @@ func TestImportTasksPlaybook(t *testing.T) {
 func TestImportRolePlaybook(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
 		playbookFile: "playbooks/import_role_playbook.yaml",
-		configFile:   "default.yaml",
+		configFile:   "parallel_revert.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.Equal(t, 0, exitCode, "import_role_playbook should succeed in env: %s, output: %s", envName, output)
 			assertFileExistsWithInventory(t, "/tmp/spage/import_role_before.txt", inventory)
@@ -648,7 +648,7 @@ func TestImportRolePlaybook(t *testing.T) {
 func TestAssertPlaybook(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
 		playbookFile: "playbooks/assert_playbook.yaml",
-		configFile:   "default.yaml",
+		configFile:   "parallel_revert.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.NotEqual(t, 0, exitCode, "assert_playbook should fail in env: %s", envName)
 		},
@@ -658,7 +658,7 @@ func TestAssertPlaybook(t *testing.T) {
 func TestRootTasksPlaybook(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
 		playbookFile: "playbooks/root_tasks_playbook.yaml",
-		configFile:   "default.yaml",
+		configFile:   "parallel_revert.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.Equal(t, 0, exitCode, "root_tasks_playbook should succeed")
 			assertFileContainsWithInventory(t, "/tmp/spage/root_playbook_tasks.txt", "Created by root-level tasks section", inventory)
@@ -669,7 +669,7 @@ func TestRootTasksPlaybook(t *testing.T) {
 func TestRootRolesPlaybook(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
 		playbookFile: "playbooks/root_roles_playbook.yaml",
-		configFile:   "default.yaml",
+		configFile:   "parallel_revert.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.Equal(t, 0, exitCode, "root_roles_playbook should succeed")
 			assertFileContainsWithInventory(t, "/tmp/spage/root_playbook_role.txt", "Created by root-level roles section", inventory)

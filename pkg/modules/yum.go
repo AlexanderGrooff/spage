@@ -178,10 +178,14 @@ func (i *YumInput) parseAndValidatePackages() error {
 
 	switch v := i.Name.(type) {
 	case string:
-		if v == "" && !i.UpdateCache {
+		// Check if it's a string list in Jinja
+		strList, err := pkg.JinjaStringToStringList(v)
+		if err == nil {
+			i.PkgNames = append(i.PkgNames, strList...)
+		} else if v == "" && !i.UpdateCache {
 			return fmt.Errorf("yum module requires non-empty 'name' or 'update_cache=true'")
 		}
-		if v != "" {
+		if err != nil && v != "" {
 			i.PkgNames = append(i.PkgNames, v)
 		}
 	case []interface{}:
@@ -230,7 +234,11 @@ func (i *YumInput) parseAndValidateAll() error {
 	if i.Enablerepo != nil {
 		switch v := i.Enablerepo.(type) {
 		case string:
-			if v != "" {
+			// Check if it's a string list in Jinja
+			strList, err := pkg.JinjaStringToStringList(v)
+			if err == nil {
+				i.EnablerepoList = append(i.EnablerepoList, strList...)
+			} else if v != "" {
 				// Split comma-delimited string
 				repos := strings.Split(v, ",")
 				for _, repo := range repos {
@@ -267,7 +275,11 @@ func (i *YumInput) parseAndValidateAll() error {
 	if i.Disablerepo != nil {
 		switch v := i.Disablerepo.(type) {
 		case string:
-			if v != "" {
+			// Check if it's a string list in Jinja
+			strList, err := pkg.JinjaStringToStringList(v)
+			if err == nil {
+				i.DisablerepoList = append(i.DisablerepoList, strList...)
+			} else if v != "" {
 				// Split comma-delimited string
 				repos := strings.Split(v, ",")
 				for _, repo := range repos {
@@ -304,7 +316,11 @@ func (i *YumInput) parseAndValidateAll() error {
 	if i.Exclude != nil {
 		switch v := i.Exclude.(type) {
 		case string:
-			if v != "" {
+			// Check if it's a string list in Jinja
+			strList, err := pkg.JinjaStringToStringList(v)
+			if err == nil {
+				i.ExcludeList = append(i.ExcludeList, strList...)
+			} else if v != "" {
 				// Split comma-delimited string
 				pkgs := strings.Split(v, ",")
 				for _, pkgName := range pkgs {
