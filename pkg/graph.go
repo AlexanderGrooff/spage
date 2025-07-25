@@ -141,13 +141,13 @@ import (
 	content.WriteString(graphCode)
 	content.WriteString("\n")
 	content.WriteString(`func main() {
-    err := cmd.EntrypointLocalExecutor(GeneratedGraph)
-    if err != nil {
-        common.LogError("Failed to run playbook", map[string]interface{}{
-            "error": err.Error(),
-        })
-        os.Exit(1)
-    }
+	rootCmd := cmd.NewLocalExecutorCmd(GeneratedGraph)
+	if err := rootCmd.Execute(); err != nil {
+		common.LogError("Failed to run playbook", map[string]interface{}{
+			"error": err.Error(),
+		})
+		os.Exit(1)
+	}
 }
 `)
 
@@ -783,8 +783,8 @@ import (
 	content.WriteString("\n")      // Ensure a newline after graph code
 
 	content.WriteString(`func main() {
-	err := cmd.EntrypointTemporalExecutor(GeneratedGraph)
-	if err != nil {
+	rootCmd := cmd.NewTemporalExecutorCmd(GeneratedGraph)
+	if err := rootCmd.Execute(); err != nil {
 		common.LogError("Failed to run playbook", map[string]interface{}{
 			"error": err.Error(),
 		})

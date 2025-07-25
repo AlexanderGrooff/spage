@@ -1,9 +1,12 @@
 package cmd
 
 import (
-	"flag"
+	"fmt"
 	"log"
+	"maps"
 	"os"
+
+	"github.com/spf13/cobra"
 
 	"github.com/AlexanderGrooff/spage/pkg"
 	"github.com/AlexanderGrooff/spage/pkg/config"
@@ -37,49 +40,101 @@ func StartTemporalExecutor(graph *pkg.Graph, inventoryFile string, spageAppConfi
 	return nil
 }
 
-func EntrypointTemporalExecutor(graph pkg.Graph) error {
-	log.Println("Starting Spage Temporal runner...")
 
-	// Define flags with environment variable fallbacks
-	configFile := flag.String("config", getEnv("SPAGE_CONFIG_FILE", ""), "Spage configuration file path. If empty, 'spage.yaml' is tried, then defaults.")
-	inventoryFile := flag.String("inventory", getEnv("SPAGE_INVENTORY_FILE", ""), "Spage inventory file path. If empty, a default localhost inventory is used.")
-	checkMode := flag.Bool("check", false, "Enable check mode (dry run)")
-	diffMode := flag.Bool("diff", false, "Enable diff mode")
+var (
+	temporalConfigFile    string
+	temporalInventoryFile string
+	temporalCheckMode     bool
+	temporalDiffMode      bool
+	temporalTags          []string
+	temporalSkipTags      []string
+	temporalExtraVars     []string
+	temporalBecomeMode    bool
+)
 
-	flag.Parse()
+func NewTemporalExecutorCmd(graph pkg.Graph) *cobra.Command {
+	temporalCmd := &cobra.Command{
+		Use:   "temporal-executor",
+		Short: "Run a pre-compiled Spage playbook using Temporal",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			log.Println("Starting Spage Temporal runner...")
 
-	// Load Spage config
-	spageConfigPath := *configFile
-	if spageConfigPath == "" {
-		spageConfigPath = "spage.yaml" // Default to spage.yaml if config flag is empty
-		log.Printf("Config file flag is empty, attempting to load default: %s", spageConfigPath)
+			// Load Spage config
+			spageConfigPath := temporalConfigFile
+			if spageConfigPath == "" {
+				spageConfigPath = "spage.yaml" // Default to spage.yaml if config flag is empty
+				log.Printf("Config file flag is empty, attempting to load default: %s", spageConfigPath)
+			}
+
+			if err := LoadConfig(spageConfigPath); err != nil {
+				// Only log a warning if a specific file was intended but failed, or if the default spage.yaml was tried and failed.
+				if temporalConfigFile != "" || (temporalConfigFile == "" && spageConfigPath == "spage.yaml") {
+					log.Printf("Warning: Failed to load Spage config file '%s': %v. Using internal defaults.", spageConfigPath, err)
+				}
+			} else {
+				log.Printf("Spage config loaded from '%s'.", spageConfigPath)
+			}
+			spageAppConfig := GetConfig() // GetConfig() provides defaults if loading failed or no file specified
+
+			if temporalCheckMode {
+				if spageAppConfig.Facts == nil {
+					spageAppConfig.Facts = make(map[string]interface{})
+				}
+				spageAppConfig.Facts["ansible_check_mode"] = true
+			}
+
+			if temporalDiffMode {
+				if spageAppConfig.Facts == nil {
+					spageAppConfig.Facts = make(map[string]interface{})
+				}
+				spageAppConfig.Facts["ansible_diff"] = true
+			}
+
+			// Parse and merge extra variables
+			if len(temporalExtraVars) > 0 {
+				if spageAppConfig.Facts == nil {
+					spageAppConfig.Facts = make(map[string]interface{})
+				}
+				extraFacts, err := parseExtraVars(temporalExtraVars)
+				if err != nil {
+					return fmt.Errorf("failed to parse extra variables: %w", err)
+				}
+				// Merge extra facts into spageAppConfig.Facts (extra vars take precedence)
+				maps.Copy(spageAppConfig.Facts, extraFacts)
+			}
+
+			// Apply become mode if enabled
+			if temporalBecomeMode {
+				applyBecomeToGraph(&graph)
+			}
+
+			// Apply tag filtering to the graph
+			if len(temporalTags) > 0 {
+				spageAppConfig.Tags.Tags = temporalTags
+			}
+			if len(temporalSkipTags) > 0 {
+				spageAppConfig.Tags.SkipTags = temporalSkipTags
+			}
+
+			filteredGraph, err := applyTagFiltering(graph, spageAppConfig.Tags)
+			if err != nil {
+				return fmt.Errorf("failed to apply tag filtering: %w", err)
+			}
+
+			log.Printf("Preparing to run Temporal worker. Workflow trigger from config: %t", spageAppConfig.Temporal.Trigger)
+
+			return StartTemporalExecutor(&filteredGraph, temporalInventoryFile, spageAppConfig)
+		},
 	}
 
-	if err := LoadConfig(spageConfigPath); err != nil {
-		// Only log a warning if a specific file was intended but failed, or if the default spage.yaml was tried and failed.
-		if *configFile != "" || (*configFile == "" && spageConfigPath == "spage.yaml") {
-			log.Printf("Warning: Failed to load Spage config file '%s': %v. Using internal defaults.", spageConfigPath, err)
-		}
-	} else {
-		log.Printf("Spage config loaded from '%s'.", spageConfigPath)
-	}
-	spageAppConfig := GetConfig() // GetConfig() provides defaults if loading failed or no file specified
+	temporalCmd.Flags().StringVarP(&temporalConfigFile, "config", "c", getEnv("SPAGE_CONFIG_FILE", ""), "Spage configuration file path. If empty, 'spage.yaml' is tried, then defaults.")
+	temporalCmd.Flags().StringVarP(&temporalInventoryFile, "inventory", "i", getEnv("SPAGE_INVENTORY_FILE", ""), "Spage inventory file path. If empty, a default localhost inventory is used.")
+	temporalCmd.Flags().BoolVar(&temporalCheckMode, "check", false, "Enable check mode (dry run)")
+	temporalCmd.Flags().BoolVar(&temporalDiffMode, "diff", false, "Enable diff mode")
+	temporalCmd.Flags().StringSliceVarP(&temporalTags, "tags", "t", []string{}, "Only include tasks with these tags (comma-separated)")
+	temporalCmd.Flags().StringSliceVar(&temporalSkipTags, "skip-tags", []string{}, "Skip tasks with these tags (comma-separated)")
+	temporalCmd.Flags().StringSliceVarP(&temporalExtraVars, "extra-vars", "e", []string{}, "Set additional variables as key=value or YAML/JSON")
+	temporalCmd.Flags().BoolVar(&temporalBecomeMode, "become", false, "Run all tasks with become: true and become_user: root")
 
-	if *checkMode {
-		if spageAppConfig.Facts == nil {
-			spageAppConfig.Facts = make(map[string]interface{})
-		}
-		spageAppConfig.Facts["ansible_check_mode"] = true
-	}
-
-	if *diffMode {
-		if spageAppConfig.Facts == nil {
-			spageAppConfig.Facts = make(map[string]interface{})
-		}
-		spageAppConfig.Facts["ansible_diff"] = true
-	}
-
-	log.Printf("Preparing to run Temporal worker. Workflow trigger from config: %t", spageAppConfig.Temporal.Trigger)
-
-	return StartTemporalExecutor(&graph, *inventoryFile, spageAppConfig)
+	return temporalCmd
 }
