@@ -48,9 +48,19 @@ spage run --inventory inventory.yaml --playbook playbook.yaml
 playbooks into Go programs. You can then utilize the Golang toolchain to compile and run the playbook, either locally
 or on the target host.
 
+### Q: Why should I use Spage?
+
+**A: Spage is a drop-in replacement for Ansible** that compiles your playbooks into Go programs. You can then utilize the
+Golang toolchain to compile and run the playbook, either locally or on the target host.
+
+If you're familiar with Ansible but want to improve performance, compile to a binary, get rid of the Python dependency or want to adopt different execution models
+such as running in Temporal, Spage is for you.
+Instead of running `ansible-playbook playbook.yaml`, you can run `spage run -p playbook.yaml` or `spage generate -p playbook.yaml -o generated_tasks.go && go run generated_tasks.go`.
+Typical variables such as `--become`, `--inventory`, `--tags`, `--extra-vars` are supported.
+
 ### Q: Why is it called Spage?
 
-**A: It's a reference to [Factorio: Space Age](https://www.factorio.com/space-age/buy).** I build Spage when Space Age was
+**A: It's a reference to [Factorio: Space Age](https://www.factorio.com/space-age/buy).** I built Spage when Space Age was
 not yet released, and I wanted something to do. So while waiting for the release, I
 found a very funny Reddit comment calling it Spage, and thus Spage was born.
 
