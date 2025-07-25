@@ -275,17 +275,22 @@ func (t Task) ToCode() string {
 	}
 
 	// Construct the Task literal, wrapping the actual params code in pkg.ModuleInput
-	sb.WriteString(fmt.Sprintf("pkg.Task{Id: %d, Name: %q, Module: %q, Register: %q, Params: pkg.ModuleInput{Actual: %s}, RunAs: %q",
+	sb.WriteString(fmt.Sprintf("pkg.Task{Id: %d, Name: %q, Module: %q, Register: %q, Params: pkg.ModuleInput{Actual: %s}",
 		t.Id,
 		t.Name,
 		t.Module,
 		t.Register,
 		actualParamsCode, // Use the generated code for the Actual field
-		t.BecomeUser,
 	))
 
 	if len(t.When) > 0 {
 		sb.WriteString(fmt.Sprintf(", When: %s", t.When.ToCode()))
+	}
+	if t.Become {
+		sb.WriteString(fmt.Sprintf(", Become: %t", t.Become))
+	}
+	if t.BecomeUser != "" {
+		sb.WriteString(fmt.Sprintf(", BecomeUser: %q", t.BecomeUser))
 	}
 
 	if t.IgnoreErrors.Expression != "" {
