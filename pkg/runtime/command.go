@@ -33,15 +33,17 @@ type CommandOptions struct {
 	UseSudo         bool
 	SudoUser        string
 	InteractiveSudo bool
+	BecomeFlags     string
 }
 
 // NewCommandOptions creates a new CommandOptions with sensible defaults
-func NewCommandOptions() *CommandOptions {
+func NewCommandOptions(cfg *config.Config) *CommandOptions {
 	return &CommandOptions{
 		UseShell:        false,
 		Interactive:     false,
 		UseSudo:         false,
 		InteractiveSudo: false,
+		BecomeFlags:     cfg.PrivilegeEscalation.BecomeFlags,
 	}
 }
 
@@ -139,15 +141,15 @@ func buildCommand(command string, opts *CommandOptions) string {
 	// Handle sudo commands
 	if opts.InteractiveSudo {
 		if opts.UseShell {
-			return fmt.Sprintf("sudo -Su %s bash -c '%s'", opts.Username, command)
+			return fmt.Sprintf("sudo -Su %s %s bash -c '%s'", opts.Username, opts.BecomeFlags, command)
 		}
-		return fmt.Sprintf("sudo -Su %s %s", opts.Username, command)
+		return fmt.Sprintf("sudo -Su %s %s", opts.Username, opts.BecomeFlags)
 	}
 
 	if opts.UseShell {
-		return fmt.Sprintf("sudo -u %s bash -c '%s'", opts.Username, command)
+		return fmt.Sprintf("sudo -u %s %s bash -c '%s'", opts.Username, opts.BecomeFlags, command)
 	}
-	return fmt.Sprintf("sudo -u %s %s", opts.Username, command)
+	return fmt.Sprintf("sudo -u %s %s", opts.Username, opts.BecomeFlags)
 }
 
 // executeLocalCommand executes a command locally
@@ -334,7 +336,7 @@ func (ce *commandExecutor) getExitCode(err error) int {
 // executeRemoteCommand executes a command on a remote host
 func executeRemoteCommand(pool *desopssshpool.Pool, host, command string, opts *CommandOptions, cfg *config.Config) (int, string, string, error) {
 	// If interactive mode is enabled and username is provided, use interactive execution
-	if cfg != nil && cfg.Sudo.UseInteractive && opts.UseSudo {
+	if cfg != nil && cfg.PrivilegeEscalation.UseInteractive && opts.UseSudo {
 		return executeInteractiveRemoteCommand(pool, host, command, opts, cfg)
 	}
 
@@ -405,16 +407,16 @@ func checkSudoPasswordError(stderrOutput, host string) error {
 
 // Public API functions - these maintain backward compatibility
 
-func RunLocalCommand(command, username string) (int, string, string, error) {
-	opts := NewCommandOptions()
+func RunLocalCommand(command, username string, cfg *config.Config) (int, string, string, error) {
+	opts := NewCommandOptions(cfg)
 	if username != "" {
 		opts.WithUsername(username)
 	}
 	return executeLocalCommand(command, opts)
 }
 
-func RunLocalCommandWithShell(command, username string, useShell bool) (int, string, string, error) {
-	opts := NewCommandOptions()
+func RunLocalCommandWithShell(command, username string, useShell bool, cfg *config.Config) (int, string, string, error) {
+	opts := NewCommandOptions(cfg)
 	if username != "" {
 		opts.WithUsername(username)
 	}
@@ -425,7 +427,7 @@ func RunLocalCommandWithShell(command, username string, useShell bool) (int, str
 }
 
 func RunRemoteCommand(pool *desopssshpool.Pool, host, command, username string, cfg *config.Config) (int, string, string, error) {
-	opts := NewCommandOptions()
+	opts := NewCommandOptions(cfg)
 	if username != "" {
 		opts.WithUsername(username)
 	}
@@ -433,7 +435,7 @@ func RunRemoteCommand(pool *desopssshpool.Pool, host, command, username string, 
 }
 
 func RunRemoteCommandWithShell(pool *desopssshpool.Pool, host, command, username string, cfg *config.Config, useShell bool) (int, string, string, error) {
-	opts := NewCommandOptions()
+	opts := NewCommandOptions(cfg)
 	if username != "" {
 		opts.WithUsername(username)
 	}
@@ -444,134 +446,10 @@ func RunRemoteCommandWithShell(pool *desopssshpool.Pool, host, command, username
 }
 
 func RunInteractiveRemoteCommand(pool *desopssshpool.Pool, host, command, username string, cfg *config.Config) (int, string, string, error) {
-	opts := NewCommandOptions()
+	opts := NewCommandOptions(cfg)
 	if username != "" {
 		opts.WithUsername(username).WithInteractiveSudo()
 	}
 	opts.WithInteractive()
 	return executeInteractiveRemoteCommand(pool, host, command, opts, cfg)
-}
-
-// BatchCommandExecutor allows executing multiple commands in a single SSH session
-type BatchCommandExecutor struct {
-	pool *desopssshpool.Pool
-	host string
-	cfg  *config.Config
-}
-
-// NewBatchCommandExecutor creates a new batch command executor using SSH pool
-func NewBatchCommandExecutor(pool *desopssshpool.Pool, host string, cfg *config.Config) *BatchCommandExecutor {
-	return &BatchCommandExecutor{
-		pool: pool,
-		host: host,
-		cfg:  cfg,
-	}
-}
-
-// buildBatchScript combines multiple commands into a single script
-func buildBatchScript(commands []string) string {
-	var scriptBuilder strings.Builder
-	for i, command := range commands {
-		if i > 0 {
-			scriptBuilder.WriteString(" && ")
-		}
-		scriptBuilder.WriteString(fmt.Sprintf("echo '=== COMMAND %d ===' && %s", i+1, command))
-	}
-	return scriptBuilder.String()
-}
-
-// ExecuteBatch executes multiple commands in a single SSH session using the pool
-func (b *BatchCommandExecutor) ExecuteBatch(commands []string, username string) ([]CommandResult, error) {
-	if len(commands) == 0 {
-		return nil, nil
-	}
-
-	// If interactive mode is enabled and username is provided, use interactive execution
-	if b.cfg != nil && b.cfg.Sudo.UseInteractive && username != "" {
-		return b.executeInteractiveBatch(commands, username)
-	}
-
-	// Get a session from the pool
-	session, err := b.pool.Get(b.host)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get SSH session from pool for host %s: %w", b.host, err)
-	}
-	defer session.Put() // Important: return session to pool
-
-	// Create command executor
-	executor := newCommandExecutor(session, b.host)
-
-	// Build the script and command
-	script := buildBatchScript(commands)
-	opts := NewCommandOptions()
-	if username != "" {
-		opts.WithUsername(username)
-	}
-	cmdToRun := buildCommand(script, opts)
-
-	common.DebugOutput("Running batch commands on %s: %s", b.host, cmdToRun)
-
-	// Execute the command
-	rc, stdout, stderr, err := executor.executeCommand(cmdToRun, false)
-
-	// Check for sudo password errors
-	if err != nil {
-		if sudoErr := checkSudoPasswordError(stderr, b.host); sudoErr != nil {
-			return nil, sudoErr
-		}
-	}
-
-	// Return a single result for the batch
-	return []CommandResult{
-		{
-			Command:  strings.Join(commands, " && "),
-			ExitCode: rc,
-			Stdout:   stdout,
-			Stderr:   stderr,
-			Error:    err,
-		},
-	}, nil
-}
-
-// executeInteractiveBatch executes multiple commands in an interactive SSH session
-func (b *BatchCommandExecutor) executeInteractiveBatch(commands []string, username string) ([]CommandResult, error) {
-	// Get a session from the pool
-	session, err := b.pool.Get(b.host)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get SSH session from pool for host %s: %w", b.host, err)
-	}
-	defer session.Put() // Important: return session to pool
-
-	// Create command executor
-	executor := newCommandExecutor(session, b.host)
-
-	// Setup PTY for interactive session
-	if err := executor.setupPTY(); err != nil {
-		return nil, fmt.Errorf("failed to request PTY for host %s: %w", b.host, err)
-	}
-
-	// Build the script and command
-	script := buildBatchScript(commands)
-	opts := NewCommandOptions()
-	if username != "" {
-		opts.WithUsername(username).WithInteractiveSudo()
-	}
-	opts.WithInteractive()
-	cmdToRun := buildCommand(script, opts)
-
-	common.DebugOutput("Running interactive batch commands on %s: %s", b.host, cmdToRun)
-
-	// Execute the command
-	rc, stdout, stderr, err := executor.executeCommand(cmdToRun, true)
-
-	// Return a single result for the batch
-	return []CommandResult{
-		{
-			Command:  strings.Join(commands, " && "),
-			ExitCode: rc,
-			Stdout:   stdout,
-			Stderr:   stderr,
-			Error:    err,
-		},
-	}, nil
 }

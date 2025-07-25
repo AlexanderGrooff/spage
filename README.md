@@ -125,11 +125,8 @@ TODO:
 
 - Add revert conditions `revert_when`
 - Should we compile assets (templates, files) along with the code?
-- Read `ansible.cfg` variables such as `[defaults] roles_path = roles/:shared_roles/` and
-`[privilege_escalation] become_flags = -H -S`
 - `vars_prompt` on play
 - `gather_facts` on play
 - Logic for `no_log`
-- Don't allow interactive commands in `temporal` executor, or define an option that allows for signals/disallows interactivity.
 - Plugin support
 - Callback support

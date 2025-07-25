@@ -1222,6 +1222,10 @@ func TestBecomeModePlaybook(t *testing.T) {
 		configFile:   "sequential_no_revert.yaml",
 		becomeMode:   true,
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			if !allowSudo {
+				assert.Equal(t, 1, exitCode, "become_mode_playbook should fail")
+				return
+			}
 			assert.Equal(t, 0, exitCode, "become_mode_playbook should succeed")
 		},
 	})

@@ -10,17 +10,17 @@ import (
 
 // Config holds all configuration settings
 type Config struct {
-	Logging         LoggingConfig          `mapstructure:"logging"`
-	ExecutionMode   string                 `mapstructure:"execution_mode"`
-	Executor        string                 `mapstructure:"executor"` // "local" or "temporal"
-	Temporal        TemporalConfig         `mapstructure:"temporal"`
-	Revert          bool                   `mapstructure:"revert"`
-	Tags            TagsConfig             `mapstructure:"tags"`
-	Facts           map[string]interface{} `mapstructure:"facts"`
-	HostKeyChecking bool                   `mapstructure:"host_key_checking"`
-	RolesPath       string                 `mapstructure:"roles_path"` // Colon-delimited paths to search for roles
-	Inventory       string                 `mapstructure:"inventory"`  // Colon-delimited paths to search for inventory files
-	Sudo            SudoConfig             `mapstructure:"sudo"`
+	Logging             LoggingConfig             `mapstructure:"logging"`
+	ExecutionMode       string                    `mapstructure:"execution_mode"`
+	Executor            string                    `mapstructure:"executor"` // "local" or "temporal"
+	Temporal            TemporalConfig            `mapstructure:"temporal"`
+	Revert              bool                      `mapstructure:"revert"`
+	Tags                TagsConfig                `mapstructure:"tags"`
+	Facts               map[string]interface{}    `mapstructure:"facts"`
+	HostKeyChecking     bool                      `mapstructure:"host_key_checking"`
+	RolesPath           string                    `mapstructure:"roles_path"` // Colon-delimited paths to search for roles
+	Inventory           string                    `mapstructure:"inventory"`  // Colon-delimited paths to search for inventory files
+	PrivilegeEscalation PrivilegeEscalationConfig `mapstructure:"privilege_escalation"`
 }
 
 // LoggingConfig holds logging-related configuration
@@ -45,9 +45,10 @@ type TagsConfig struct {
 	SkipTags []string `mapstructure:"skip_tags"` // Skip tasks with these tags
 }
 
-// SudoConfig holds sudo-related configuration
-type SudoConfig struct {
-	UseInteractive bool `mapstructure:"use_interactive"` // Use -Su (interactive) vs -u (non-interactive)
+// PrivilegeEscalationConfig holds privilege escalation configuration
+type PrivilegeEscalationConfig struct {
+	UseInteractive bool   `mapstructure:"use_interactive"` // Use -Su (interactive) vs -u (non-interactive)
+	BecomeFlags    string `mapstructure:"become_flags"`    // Additional flags to pass to become
 }
 
 // ValidOutputFormats contains the list of supported output formats
@@ -136,8 +137,9 @@ func setDefaults(v *viper.Viper) {
 	// Inventory default
 	v.SetDefault("inventory", "") // Default to empty, SDK will use default inventory
 
-	// Sudo defaults
-	v.SetDefault("sudo.use_interactive", false) // Default to non-interactive (-u) for SSH sessions
+	// PrivilegeEscalation defaults
+	v.SetDefault("privilege_escalation.use_interactive", false) // Default to non-interactive (-u) for SSH sessions
+	v.SetDefault("privilege_escalation.become_flags", "")
 }
 
 // isValidOutputFormat checks if the given format is supported

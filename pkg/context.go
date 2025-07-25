@@ -196,7 +196,7 @@ func (c *HostContext) RunCommand(command, username string) (int, string, string,
 
 func (c *HostContext) RunCommandWithShell(command, username string, useShell bool) (int, string, string, error) {
 	if c.Host.IsLocal {
-		return runtime.RunLocalCommandWithShell(command, username, useShell)
+		return runtime.RunLocalCommandWithShell(command, username, useShell, c.Host.Config)
 	}
 
 	// Get SSH pool
