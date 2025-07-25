@@ -128,11 +128,12 @@ func (g Graph) SaveToFile(path string) error {
 	content.WriteString(`package main
 
 import (
-    "os"
-    "github.com/AlexanderGrooff/spage/cmd"
-    "github.com/AlexanderGrooff/spage/pkg"
-    "github.com/AlexanderGrooff/spage/pkg/common"
-    "github.com/AlexanderGrooff/spage/pkg/modules"
+	"os"
+
+	"github.com/AlexanderGrooff/spage/cmd"
+	"github.com/AlexanderGrooff/spage/pkg"
+	"github.com/AlexanderGrooff/spage/pkg/common"
+	"github.com/AlexanderGrooff/spage/pkg/modules"
 )
 
 `)
@@ -141,7 +142,12 @@ import (
 	content.WriteString(graphCode)
 	content.WriteString("\n")
 	content.WriteString(`func main() {
-	rootCmd := cmd.NewLocalExecutorCmd(GeneratedGraph)
+	localCmd := cmd.NewLocalExecutorCmd(GeneratedGraph)
+	temporalCmd := cmd.NewTemporalExecutorCmd(GeneratedGraph)
+
+	rootCmd := localCmd
+	rootCmd.AddCommand(temporalCmd)
+
 	if err := rootCmd.Execute(); err != nil {
 		common.LogError("Failed to run playbook", map[string]interface{}{
 			"error": err.Error(),
@@ -736,68 +742,5 @@ func (g Graph) CheckForRequiredInputs(inventory *Inventory, cfg *config.Config) 
 			}
 		}
 	}
-	return nil
-}
-
-func (g Graph) SaveToTemporalWorkflowFile(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("error creating directories: %v", err)
-	}
-
-	file, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("error creating file %s: %v", path, err)
-	}
-	defer func() {
-		if closeErr := file.Close(); closeErr != nil {
-			common.LogWarn("Failed to close file", map[string]interface{}{
-				"file":  path,
-				"error": closeErr.Error(),
-			})
-		}
-	}()
-
-	common.LogInfo("Generating Temporal workflow runner Go code", map[string]interface{}{
-		"path": path,
-	})
-
-	graphCode := g.ToCode()
-
-	var content strings.Builder
-	content.WriteString(`package main
-
-import (
-	"os"
-
-	"github.com/AlexanderGrooff/spage/cmd"
-	"github.com/AlexanderGrooff/spage/pkg"
-	"github.com/AlexanderGrooff/spage/pkg/common"
-	"github.com/AlexanderGrooff/spage/pkg/modules"
-)
-
-`)
-
-	// Inject the GeneratedGraph definition
-	content.WriteString("\n")      // Ensure a newline before graph code
-	content.WriteString(graphCode) // graphCode produces "var GeneratedGraph = pkg.Graph{...}"
-	content.WriteString("\n")      // Ensure a newline after graph code
-
-	content.WriteString(`func main() {
-	rootCmd := cmd.NewTemporalExecutorCmd(GeneratedGraph)
-	if err := rootCmd.Execute(); err != nil {
-		common.LogError("Failed to run playbook", map[string]interface{}{
-			"error": err.Error(),
-		})
-		os.Exit(1)
-	}
-}
-`)
-
-	_, err = file.WriteString(content.String())
-	if err != nil {
-		return fmt.Errorf("error writing to file %s: %v", path, err)
-	}
-
-	common.LogInfo("Temporal workflow runner Go code generated successfully", map[string]interface{}{"path": path})
 	return nil
 }

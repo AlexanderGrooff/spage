@@ -119,11 +119,7 @@ var generateCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if cfg.Executor == "temporal" {
-			err = graph.SaveToTemporalWorkflowFile(outputFile)
-		} else {
-			err = graph.SaveToFile(outputFile)
-		}
+		err = graph.SaveToFile(outputFile)
 		common.LogInfo("Compiled binary", map[string]interface{}{
 			"output_file": outputFile,
 		})

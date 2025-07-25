@@ -21,7 +21,6 @@ func StartLocalExecutor(graph *pkg.Graph, inventoryFile string, cfg *config.Conf
 	return nil
 }
 
-
 var (
 	localConfigFile    string
 	localInventoryFile string
@@ -33,11 +32,12 @@ var (
 	localBecomeMode    bool
 )
 
-
 func NewLocalExecutorCmd(graph pkg.Graph) *cobra.Command {
 	localCmd := &cobra.Command{
-		Use:   "local-executor",
-		Short: "Run a pre-compiled Spage playbook locally",
+		Use:          "spage-playbook",
+		Short:        "A pre-compiled Spage playbook that runs locally by default",
+		Args:         cobra.NoArgs,
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			err := LoadConfig(localConfigFile)
 			if err != nil {

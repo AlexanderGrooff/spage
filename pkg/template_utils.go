@@ -49,14 +49,14 @@ func (e JinjaExpression) IsEmpty() bool {
 
 func (el JinjaExpressionList) ToCode() string {
 	sb := strings.Builder{}
-	sb.WriteString("[")
+	sb.WriteString("pkg.JinjaExpressionList{")
 	for i, item := range el {
 		sb.WriteString(item.ToCode())
 		if i < len(el)-1 {
 			sb.WriteString(", ")
 		}
 	}
-	sb.WriteString("]")
+	sb.WriteString("}")
 	return sb.String()
 }
 

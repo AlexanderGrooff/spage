@@ -54,8 +54,10 @@ var (
 
 func NewTemporalExecutorCmd(graph pkg.Graph) *cobra.Command {
 	temporalCmd := &cobra.Command{
-		Use:   "temporal-executor",
-		Short: "Run a pre-compiled Spage playbook using Temporal",
+		Use:          "temporal",
+		Short:        "Run the pre-compiled Spage playbook using Temporal",
+		Args:         cobra.NoArgs,
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			log.Println("Starting Spage Temporal runner...")
 
