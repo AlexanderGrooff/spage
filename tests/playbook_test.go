@@ -15,6 +15,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var testEnvironments = []struct {
+	executor      string
+	inventoryFile string
+}{
+	{executor: "local", inventoryFile: ""},
+	// {executor: "local", inventoryFile: "inventory.yaml"},
+	{executor: "temporal", inventoryFile: ""},
+	// {executor: "temporal", inventoryFile: "inventory.yaml"},
+}
+var allowSudo = false
+
 type playbookTestCase struct {
 	playbookFile string
 	configFile   string
@@ -28,17 +39,8 @@ type playbookTestCase struct {
 
 func runPlaybookTest(t *testing.T, tc playbookTestCase) {
 	t.Helper()
-	environments := []struct {
-		executor      string
-		inventoryFile string
-	}{
-		{executor: "local", inventoryFile: ""},
-		// {executor: "local", inventoryFile: "inventory.yaml"},
-		{executor: "temporal", inventoryFile: ""},
-		// {executor: "temporal", inventoryFile: "inventory.yaml"},
-	}
 
-	for _, env := range environments {
+	for _, env := range testEnvironments {
 		t.Run(fmt.Sprintf("%s_%s_%s", tc.playbookFile, env.executor, env.inventoryFile), func(t *testing.T) {
 			cleanup(t)
 
@@ -90,7 +92,7 @@ func runPlaybookTest(t *testing.T, tc playbookTestCase) {
 			if tc.skipTags != "" {
 				skipTags = strings.Split(tc.skipTags, ",")
 			}
-			graph, err := cmd.GetGraph(tc.playbookFile, tags, skipTags, cfg, tc.becomeMode)
+			graph, err := cmd.GetGraph(tc.playbookFile, tags, skipTags, cfg, allowSudo && tc.becomeMode)
 			require.NoError(t, err, "failed to get graph")
 
 			// Capture stdout/stderr

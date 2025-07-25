@@ -32,12 +32,12 @@ You can use Spage in two ways:
 
 ```bash
 # Generate the Go code that you can then compile and run
-spage generate -p playbook.yaml -o generated_tasks.go
+spage generate --playbook playbook.yaml --output generated_tasks.go
 go build -o spage_playbook generated_tasks.go
-./spage_playbook -inventory inventory.yaml
+./spage_playbook --inventory inventory.yaml
 
 # Or run directly across an inventory
-spage run -i inventory.yaml -p playbook.yaml
+spage run --inventory inventory.yaml --playbook playbook.yaml
 ```
 
 ## FAQ
@@ -74,57 +74,42 @@ The Python fallback automatically activates when:
 
 ### How It Works
 
-1. **Module Detection**: Spage first attempts to find a native Go implementation of the requested module
-2. **Fallback Activation**: If no native module exists, the Python fallback mechanism engages
-3. **Collection Management**: Required Ansible collections are automatically installed on target hosts if missing
-4. **Bundle Transfer**: Essential Ansible core files (~1.4MB) are transferred to the target host
-5. **Python Execution**: The module is executed using the same Python infrastructure as standard Ansible
-
-### Performance Optimizations
-
-The Python fallback includes several performance optimizations:
-
-- **Collection Caching**: Collections are installed once per host and cached for the session
-- **Multi-Level Bundle Caching**:
-  - **Permanent Cache**: Long-term cache at `/tmp/spage-ansible-cached` (when permissions allow)
-  - **Session Cache**: Per-session cache at `/tmp/spage-ansible-session` for repeated module calls
-  - **Fresh Transfer**: Only occurs once per session when caches are unavailable
-- **Minimal Bundles**: Only essential Ansible core files are transferred, not the entire Ansible installation
-- **Smart Collection Detection**: Existing collections are detected before attempting installation
+1. **Module Detection**: Spage first attempts to find a native Go implementation of the requested module.
+2. **Fallback Activation**: If no native module exists, the Python fallback mechanism engages.
+3. **Playbook Generation**: A temporary Ansible playbook is generated, containing the required module and its parameters.
+4. **Remote Execution**: Spage executes the playbook on the target host using `ansible-playbook`.
 
 ### Usage Examples
 
 ```yaml
-# Explicit Python fallback
-- name: Use Python fallback for ping module
-  ansible_python:
-    module_name: ping
-    args:
-      data: pong
+# The 'command' module is supported natively by Spage, so it doesn't use the Python fallback
+- name: Get Python requirements info
+  command:
+    cmd: echo "Hello world!"
 
-# Community collection module (automatically uses Python fallback)
+# Community collection module is not (yet) supported by Spage, so it uses the Python fallback
 - name: Get Python requirements info
   community.general.python_requirements_info:
     dependencies: []
 
-# Custom namespace module
+# Custom namespace module is also using the Python fallback
 - name: Use custom module
   my_company.custom_collection.special_module:
     param1: value1
     param2: value2
+
+# Explicit Python fallback
+- name: Force usage of Python fallback for ping module
+  ansible_python:
+    module_name: ping
+    args:
+      data: pong
 ```
-
-### Local vs Remote Execution
-
-- **Local Execution**: Uses the local Ansible installation directly with `ansible-playbook`
-- **Remote Execution**: Transfers minimal Ansible bundle and executes via Python with proper `PYTHONPATH` configuration
 
 ### Limitations
 
-- Requires Python 3 and pip on target hosts for collection installation
+- Requires Python 3 and pip on the executing host for collection installation
 - Some complex Ansible plugins may have additional dependencies
-- Performance is slower than native Go modules but still benefits from caching optimizations
-- Network transfers are required for initial bundle deployment per session
 
 ## Differences between Spage and Ansible
 

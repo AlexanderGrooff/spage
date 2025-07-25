@@ -126,10 +126,14 @@ func (i *AptInput) parseAndValidatePackages() error {
 
 	switch v := i.Name.(type) {
 	case string:
-		if v == "" && !i.UpdateCache {
+		// Check if it's a string list in Jinja
+		strList, err := pkg.JinjaStringToStringList(v)
+		if err == nil {
+			i.PkgNames = append(i.PkgNames, strList...)
+		} else if v == "" && !i.UpdateCache {
 			return fmt.Errorf("apt module requires non-empty 'name' or 'update_cache=true'")
 		}
-		if v != "" {
+		if err != nil && v != "" {
 			i.PkgNames = append(i.PkgNames, v)
 		}
 	case []interface{}:
