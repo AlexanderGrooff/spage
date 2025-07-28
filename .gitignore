@@ -3,6 +3,7 @@
 
 .vscode
 .idea
+.cursor
 
 .venv
 .envrc
