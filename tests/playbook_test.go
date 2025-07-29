@@ -108,9 +108,9 @@ func runPlaybookTest(t *testing.T, tc playbookTestCase) {
 			var runErr error
 			switch env.executor {
 			case "local":
-				runErr = cmd.StartLocalExecutor(&graph, env.inventoryFile, cfg)
+				runErr = cmd.StartLocalExecutor(&graph, env.inventoryFile, cfg, nil)
 			case "temporal":
-				runErr = cmd.StartTemporalExecutor(&graph, env.inventoryFile, cfg)
+				runErr = cmd.StartTemporalExecutor(&graph, env.inventoryFile, cfg, nil)
 			default:
 				require.Fail(t, "invalid environment: %s", env.executor)
 			}

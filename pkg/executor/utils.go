@@ -639,6 +639,21 @@ func SharedProcessLevelResults(
 		Config:         cfg,
 	}
 
+	// Get daemon reporting from config
+	var daemonReporting *pkg.DaemonReporting
+	if cfg != nil {
+		if daemonClient := cfg.GetDaemonReporting(); daemonClient != nil {
+			if client, ok := daemonClient.(pkg.DaemonReporter); ok {
+				daemonReporting = pkg.NewDaemonReporting(client)
+			}
+		}
+	}
+
+	// Report level start progress
+	if daemonReporting != nil {
+		daemonReporting.ReportLevelProcessing(executionLevel, numExpectedResultsOnLevel)
+	}
+
 	// Process results until we get all expected results or encounter an error
 	for resultsReceived < numExpectedResultsOnLevel {
 		// Try to receive from error channel first (non-blocking)
@@ -647,6 +662,11 @@ func SharedProcessLevelResults(
 				dispatchError = err
 				logger.Error("Dispatch error received from loadLevelTasks", "level", executionLevel, "error", dispatchError)
 				levelHardErrored = true
+
+				// Report error to daemon
+				if daemonReporting != nil {
+					daemonReporting.ReportError(executionLevel, err)
+				}
 				break
 			}
 		}
@@ -673,6 +693,11 @@ func SharedProcessLevelResults(
 
 		resultsReceived++
 		processedTasksOnLevel = append(processedTasksOnLevel, result)
+
+		// Report task completion progress
+		if daemonReporting != nil {
+			daemonReporting.ReportTaskProgress(resultsReceived, numExpectedResultsOnLevel, executionLevel, result)
+		}
 
 		// Additional processing for temporal executor (fact registration)
 		if onResult != nil {
@@ -705,6 +730,11 @@ func SharedProcessLevelResults(
 		errMsg := fmt.Errorf("level %d did not receive all expected results: got %d, expected %d", executionLevel, resultsReceived, numExpectedResultsOnLevel)
 		logger.Error(errMsg.Error())
 		return true, processedTasksOnLevel, errMsg
+	}
+
+	// Report level completion progress
+	if daemonReporting != nil {
+		daemonReporting.ReportLevelProcessing(executionLevel+1, resultsReceived)
 	}
 
 	return levelHardErrored, processedTasksOnLevel, nil

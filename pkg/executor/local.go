@@ -108,7 +108,7 @@ func (e *LocalGraphExecutor) Execute(hostContexts map[string]*pkg.HostContext, o
 		resultsCh := make(chan pkg.TaskResult, numExpectedResultsOnLevel)
 		errCh := make(chan error, 1) // For fatal errors from the task loading goroutine
 
-		go e.loadLevelTasks(ctx, tasksInLevel, hostContexts, resultsCh, errCh, cfg)
+		go e.loadLevelTasks(ctx, tasksInLevel, hostContexts, resultsCh, errCh, cfg, executionLevel)
 
 		levelErrored, errProcessingResults := e.processLevelResults(
 			ctx, resultsCh, errCh,
@@ -267,11 +267,22 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 	resultsCh chan pkg.TaskResult,
 	errCh chan error,
 	cfg *config.Config,
+	executionLevel int,
 ) {
 	defer close(resultsCh)
 
 	var wg sync.WaitGroup
 	isParallelDispatch := cfg.ExecutionMode == "parallel"
+
+	// Get daemon reporting from config
+	var daemonReporting *pkg.DaemonReporting
+	if cfg != nil {
+		if daemonClient := cfg.GetDaemonReporting(); daemonClient != nil {
+			if client, ok := daemonClient.(pkg.DaemonReporter); ok {
+				daemonReporting = pkg.NewDaemonReporting(client)
+			}
+		}
+	}
 
 	for _, taskDefinition := range tasksInLevel {
 		task := taskDefinition
@@ -323,7 +334,14 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 					// Note: delegate_to inside a run_once loop has complex behavior.
 					// This implementation executes on the `firstHostCtx`'s designated runner.
 					// A more advanced version might need to resolve delegation for each item.
+
 					result := e.Runner.ExecuteTask(ctx, task, closure, cfg)
+
+					// Send metrics to daemon if available
+					if daemonReporting != nil {
+						daemonReporting.ReportRunOnceItemCompletion(task, result, firstHostName, executionLevel, len(closures))
+					}
+
 					itemResults = append(itemResults, result)
 					totalDuration += result.Duration
 					if result.Status == pkg.TaskStatusChanged {
@@ -411,6 +429,12 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				})
 
 				originalResult := e.Runner.ExecuteTask(ctx, task, closure, cfg)
+
+				// Send metrics to daemon if available
+				if daemonReporting != nil {
+					daemonReporting.ReportRunOnceSingleCompletion(task, originalResult, closure.HostContext.Host.Name, executionLevel)
+				}
+
 				allResults := CreateRunOnceResultsForAllHosts(originalResult, hostContexts, firstHostName)
 				for _, result := range allResults {
 					select {
@@ -458,6 +482,11 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 					}
 				}
 
+				// Report task execution progress
+				if daemonReporting != nil {
+					daemonReporting.ReportTaskStart(task.Name, hostName, executionLevel)
+				}
+
 				select {
 				case <-ctx.Done():
 					common.LogWarn("Context cancelled, stopping task dispatch for level.", map[string]interface{}{"task": task.Name, "host": hostName})
@@ -478,6 +507,12 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 							return
 						default:
 							taskResult := e.Runner.ExecuteTask(ctx, task, closure, cfg)
+
+							// Send metrics to daemon if available
+							if daemonReporting != nil {
+								daemonReporting.ReportTaskCompletion(task, taskResult, hostName, executionLevel, "parallel", "execution")
+							}
+
 							select {
 							case resultsCh <- taskResult:
 							case <-ctx.Done():
@@ -486,6 +521,12 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 					}()
 				} else {
 					taskResult := e.Runner.ExecuteTask(ctx, task, closure, cfg)
+
+					// Send metrics to daemon if available
+					if daemonReporting != nil {
+						daemonReporting.ReportTaskCompletion(task, taskResult, hostName, executionLevel, "sequential", "execution")
+					}
+
 					select {
 					case resultsCh <- taskResult:
 					case <-ctx.Done():

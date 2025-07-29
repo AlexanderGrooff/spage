@@ -6,8 +6,10 @@ import (
 	"maps"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
+	"github.com/AlexanderGrooff/spage/pkg/daemon"
 	"gopkg.in/yaml.v3"
 
 	"github.com/spf13/cobra"
@@ -29,6 +31,10 @@ var (
 	diffMode      bool
 	extraVars     []string
 	becomeMode    bool
+
+	// Daemon communication flags
+	daemonGRPC string
+	taskID     string
 )
 
 // LoadConfig loads the configuration and applies settings
@@ -171,17 +177,92 @@ var runCmd = &cobra.Command{
 
 		}
 
+		// Initialize daemon client if daemon communication is enabled
+		var daemonClient *daemon.Client
+
+		// Check if daemon communication is enabled via config or CLI flags
+		daemonEnabled := cfg.Daemon.Enabled || daemonGRPC != "" || taskID != ""
+
+		if daemonEnabled {
+			// Determine daemon endpoint (CLI flag takes precedence over config)
+			daemonEndpoint := daemonGRPC
+			if daemonEndpoint == "" {
+				daemonEndpoint = cfg.Daemon.Endpoint
+			}
+			if daemonEndpoint == "" {
+				daemonEndpoint = "localhost:9091"
+			}
+
+			// Determine task ID (CLI flag takes precedence over config)
+			taskIDToUse := taskID
+			if taskIDToUse == "" {
+				taskIDToUse = cfg.Daemon.TaskID
+			}
+
+			daemonClient, err = daemon.NewClient(&daemon.Config{
+				Endpoint: daemonEndpoint,
+				TaskID:   taskIDToUse,
+				Timeout:  30 * time.Second,
+			})
+			if err != nil {
+				common.LogError("Failed to create daemon client", map[string]interface{}{
+					"error": err.Error(),
+				})
+				os.Exit(1)
+			}
+			defer daemonClient.Close()
+
+			// Register task with daemon
+			if taskIDToUse != "" {
+				variables := make(map[string]string)
+				for k, v := range cfg.Facts {
+					if str, ok := v.(string); ok {
+						variables[k] = str
+					}
+				}
+
+				if err := daemonClient.RegisterTask(playbookFile, inventoryFile, variables, cfg.Executor); err != nil {
+					common.LogWarn("Failed to register task with daemon (continuing without daemon communication)", map[string]interface{}{
+						"error": err.Error(),
+						"note":  "This is expected if the daemon doesn't have the protobuf service registered yet",
+					})
+					// Continue execution even if daemon registration fails
+				} else {
+					common.LogInfo("Task registered with daemon", map[string]interface{}{
+						"task_id":  taskIDToUse,
+						"endpoint": daemonEndpoint,
+					})
+				}
+			}
+		}
+
 		if cfg.Executor == "temporal" {
-			err = StartTemporalExecutor(&graph, inventoryFile, cfg)
+			err = StartTemporalExecutor(&graph, inventoryFile, cfg, daemonClient)
 		} else {
-			err = StartLocalExecutor(&graph, inventoryFile, cfg)
+			err = StartLocalExecutor(&graph, inventoryFile, cfg, daemonClient)
 		}
 		if err != nil {
 			common.LogError("Failed to run playbook", map[string]interface{}{
 				"error": err.Error(),
 			})
+
+			// Report error to daemon if available
+			if daemonClient != nil && (taskID != "" || cfg.Daemon.TaskID != "") {
+				daemonClient.ReportError(err.Error())
+			}
+
 			os.Exit(1)
 		}
+
+		// Report completion to daemon if available
+		if daemonClient != nil && (taskID != "" || cfg.Daemon.TaskID != "") {
+			daemonClient.ReportCompletion(map[string]string{
+				"playbook":  playbookFile,
+				"inventory": inventoryFile,
+				"executor":  cfg.Executor,
+			})
+		}
+
 		return nil
 	},
 }
@@ -209,6 +290,10 @@ func init() {
 	runCmd.Flags().BoolVar(&diffMode, "diff", false, "Enable diff mode")
 	runCmd.Flags().StringSliceVarP(&extraVars, "extra-vars", "e", []string{}, "Set additional variables as key=value or YAML/JSON, i.e. -e 'key1=value1' -e 'key2=value2' or -e '{\"key1\": \"value1\", \"key2\": \"value2\"}'")
 	runCmd.Flags().BoolVar(&becomeMode, "become", false, "Run all tasks with become: true and become_user: root")
+
+	// Daemon communication flags
+	runCmd.Flags().StringVar(&daemonGRPC, "daemon-grpc", "", "Daemon gRPC endpoint (default: localhost:9091)")
+	runCmd.Flags().StringVar(&taskID, "task-id", "", "Task ID for daemon communication")
 
 	if err := runCmd.MarkFlagRequired("playbook"); err != nil {
 		panic(fmt.Sprintf("failed to mark playbook flag as required: %v", err))

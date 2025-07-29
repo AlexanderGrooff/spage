@@ -11,9 +11,9 @@ import (
 	"github.com/AlexanderGrooff/spage/pkg/executor"
 )
 
-func StartLocalExecutor(graph *pkg.Graph, inventoryFile string, cfg *config.Config) error {
+func StartLocalExecutor(graph *pkg.Graph, inventoryFile string, cfg *config.Config, daemonClient interface{}) error {
 	exec := executor.NewLocalGraphExecutor(&executor.LocalTaskRunner{})
-	err := pkg.ExecuteGraph(exec, graph, inventoryFile, cfg)
+	err := pkg.ExecuteGraph(exec, graph, inventoryFile, cfg, daemonClient)
 	if err != nil {
 		fmt.Printf("Execution failed: %v\n", err)
 		return err
@@ -90,7 +90,7 @@ func NewLocalExecutorCmd(graph pkg.Graph) *cobra.Command {
 				return fmt.Errorf("failed to apply tag filtering: %w", err)
 			}
 
-			return StartLocalExecutor(&filteredGraph, localInventoryFile, cfg)
+			return StartLocalExecutor(&filteredGraph, localInventoryFile, cfg, nil)
 		},
 	}
 

@@ -20,7 +20,7 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func StartTemporalExecutor(graph *pkg.Graph, inventoryFile string, spageAppConfig *config.Config) error {
+func StartTemporalExecutor(graph *pkg.Graph, inventoryFile string, spageAppConfig *config.Config, daemonClient interface{}) error {
 	log.Printf("Preparing to run Temporal worker. Workflow trigger from config: %t", spageAppConfig.Temporal.Trigger)
 
 	// Prepare options for the Temporal worker runner
@@ -39,7 +39,6 @@ func StartTemporalExecutor(graph *pkg.Graph, inventoryFile string, spageAppConfi
 	}
 	return nil
 }
-
 
 var (
 	temporalConfigFile    string
@@ -125,7 +124,7 @@ func NewTemporalExecutorCmd(graph pkg.Graph) *cobra.Command {
 
 			log.Printf("Preparing to run Temporal worker. Workflow trigger from config: %t", spageAppConfig.Temporal.Trigger)
 
-			return StartTemporalExecutor(&filteredGraph, temporalInventoryFile, spageAppConfig)
+			return StartTemporalExecutor(&filteredGraph, temporalInventoryFile, spageAppConfig, nil)
 		},
 	}
 

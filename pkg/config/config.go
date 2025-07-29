@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	// "github.com/AlexanderGrooff/spage/pkg" // Removed to break import cycle
 	"github.com/spf13/viper"
@@ -14,6 +15,7 @@ type Config struct {
 	ExecutionMode       string                    `mapstructure:"execution_mode"`
 	Executor            string                    `mapstructure:"executor"` // "local" or "temporal"
 	Temporal            TemporalConfig            `mapstructure:"temporal"`
+	Daemon              DaemonConfig              `mapstructure:"daemon"`
 	Revert              bool                      `mapstructure:"revert"`
 	Tags                TagsConfig                `mapstructure:"tags"`
 	Facts               map[string]interface{}    `mapstructure:"facts"`
@@ -21,6 +23,9 @@ type Config struct {
 	RolesPath           string                    `mapstructure:"roles_path"` // Colon-delimited paths to search for roles
 	Inventory           string                    `mapstructure:"inventory"`  // Colon-delimited paths to search for inventory files
 	PrivilegeEscalation PrivilegeEscalationConfig `mapstructure:"privilege_escalation"`
+
+	// Internal fields for daemon reporting (not serialized)
+	daemonReporting interface{}
 }
 
 // LoggingConfig holds logging-related configuration
@@ -51,6 +56,14 @@ type PrivilegeEscalationConfig struct {
 	BecomeFlags    string `mapstructure:"become_flags"`    // Additional flags to pass to become
 }
 
+// DaemonConfig holds daemon communication configuration
+type DaemonConfig struct {
+	Enabled  bool          `mapstructure:"enabled"`
+	Endpoint string        `mapstructure:"endpoint"`
+	TaskID   string        `mapstructure:"task_id"`
+	Timeout  time.Duration `mapstructure:"timeout"`
+}
+
 // ValidOutputFormats contains the list of supported output formats
 var ValidOutputFormats = []string{"json", "yaml", "plain"}
 
@@ -58,6 +71,16 @@ var ValidOutputFormats = []string{"json", "yaml", "plain"}
 var ValidExecutionModes = []string{"parallel", "sequential"}
 
 var ValidExecutors = []string{"local", "temporal"}
+
+// SetDaemonReporting sets the daemon reporting instance
+func (c *Config) SetDaemonReporting(reporting interface{}) {
+	c.daemonReporting = reporting
+}
+
+// GetDaemonReporting gets the daemon reporting instance
+func (c *Config) GetDaemonReporting() interface{} {
+	return c.daemonReporting
+}
 
 // Load loads configuration from files and environment variables
 func Load(configPaths ...string) (*Config, error) {
@@ -140,6 +163,12 @@ func setDefaults(v *viper.Viper) {
 	// PrivilegeEscalation defaults
 	v.SetDefault("privilege_escalation.use_interactive", false) // Default to non-interactive (-u) for SSH sessions
 	v.SetDefault("privilege_escalation.become_flags", "")
+
+	// Daemon defaults
+	v.SetDefault("daemon.enabled", false) // Default to disabled
+	v.SetDefault("daemon.endpoint", "localhost:9091")
+	v.SetDefault("daemon.task_id", "")
+	v.SetDefault("daemon.timeout", 3*time.Second) // Default to 3 seconds
 }
 
 // isValidOutputFormat checks if the given format is supported
