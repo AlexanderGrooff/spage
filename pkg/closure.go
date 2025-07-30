@@ -4,16 +4,19 @@ import (
 	"log"
 
 	"github.com/AlexanderGrooff/jinja-go"
+	"github.com/AlexanderGrooff/spage/pkg/config"
 )
 
 type Closure struct {
 	HostContext *HostContext
 	ExtraFacts  map[string]interface{}
+	Config      *config.Config
 }
 
-func ConstructClosure(c *HostContext, t Task) *Closure {
+func ConstructClosure(c *HostContext, t Task, cfg *config.Config) *Closure {
 	closure := Closure{
 		HostContext: c,
+		Config:      cfg,
 		ExtraFacts:  make(map[string]interface{}),
 	}
 

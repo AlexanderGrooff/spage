@@ -194,7 +194,7 @@ func (e *LocalGraphExecutor) Revert(ctx context.Context, executedTasks []map[str
 					continue
 				}
 
-				closure := pkg.ConstructClosure(hostCtx, task)
+				closure := pkg.ConstructClosure(hostCtx, task, cfg)
 				revertResult := task.RevertModule(closure) // Calls module's Revert via Task.RevertModule
 
 				if revertResult.Error != nil {
@@ -274,16 +274,6 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 	var wg sync.WaitGroup
 	isParallelDispatch := cfg.ExecutionMode == "parallel"
 
-	// Get daemon reporting from config
-	var daemonReporting *pkg.DaemonReporting
-	if cfg != nil {
-		if daemonClient := cfg.GetDaemonReporting(); daemonClient != nil {
-			if client, ok := daemonClient.(pkg.DaemonReporter); ok {
-				daemonReporting = pkg.NewDaemonReporting(client)
-			}
-		}
-	}
-
 	for _, taskDefinition := range tasksInLevel {
 		task := taskDefinition
 
@@ -301,7 +291,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				return // No hosts, so we can't proceed.
 			}
 
-			closures, err := GetTaskClosures(task, firstHostCtx)
+			closures, err := GetTaskClosures(task, firstHostCtx, cfg)
 			if err != nil {
 				errMsg := fmt.Errorf("critical error: failed to get task closures for run_once task '%s' on host '%s': %w", task.Name, firstHostName, err)
 				common.LogError("Dispatch error for run_once task", map[string]interface{}{"error": errMsg})
@@ -337,11 +327,6 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 
 					result := e.Runner.ExecuteTask(ctx, task, closure, cfg)
 
-					// Send metrics to daemon if available
-					if daemonReporting != nil {
-						daemonReporting.ReportRunOnceItemCompletion(task, result, firstHostName, executionLevel, len(closures))
-					}
-
 					itemResults = append(itemResults, result)
 					totalDuration += result.Duration
 					if result.Status == pkg.TaskStatusChanged {
@@ -370,7 +355,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 					finalStatus = pkg.TaskStatusFailed
 				}
 
-				finalClosure := pkg.ConstructClosure(firstHostCtx, task)
+				finalClosure := pkg.ConstructClosure(firstHostCtx, task, cfg)
 				aggregatedResult := pkg.TaskResult{
 					Task:     task,
 					Closure:  finalClosure,
@@ -430,11 +415,6 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 
 				originalResult := e.Runner.ExecuteTask(ctx, task, closure, cfg)
 
-				// Send metrics to daemon if available
-				if daemonReporting != nil {
-					daemonReporting.ReportRunOnceSingleCompletion(task, originalResult, closure.HostContext.Host.Name, executionLevel)
-				}
-
 				allResults := CreateRunOnceResultsForAllHosts(originalResult, hostContexts, firstHostName)
 				for _, result := range allResults {
 					select {
@@ -452,7 +432,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 		// Normal task execution for non-run_once tasks
 		for hostName, hostCtx := range hostContexts {
 
-			closures, err := GetTaskClosures(task, hostCtx)
+			closures, err := GetTaskClosures(task, hostCtx, cfg)
 			if err != nil {
 				errMsg := fmt.Errorf("critical error: failed to get task closures for task '%s' on host '%s': %w, aborting level", task.Name, hostName, err)
 				common.LogError("Dispatch error in loadLevelTasks", map[string]interface{}{"error": errMsg})
@@ -482,11 +462,6 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 					}
 				}
 
-				// Report task execution progress
-				if daemonReporting != nil {
-					daemonReporting.ReportTaskStart(task.Name, hostName, executionLevel)
-				}
-
 				select {
 				case <-ctx.Done():
 					common.LogWarn("Context cancelled, stopping task dispatch for level.", map[string]interface{}{"task": task.Name, "host": hostName})
@@ -508,11 +483,6 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 						default:
 							taskResult := e.Runner.ExecuteTask(ctx, task, closure, cfg)
 
-							// Send metrics to daemon if available
-							if daemonReporting != nil {
-								daemonReporting.ReportTaskCompletion(task, taskResult, hostName, executionLevel, "parallel", "execution")
-							}
-
 							select {
 							case resultsCh <- taskResult:
 							case <-ctx.Done():
@@ -521,11 +491,6 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 					}()
 				} else {
 					taskResult := e.Runner.ExecuteTask(ctx, task, closure, cfg)
-
-					// Send metrics to daemon if available
-					if daemonReporting != nil {
-						daemonReporting.ReportTaskCompletion(task, taskResult, hostName, executionLevel, "sequential", "execution")
-					}
 
 					select {
 					case resultsCh <- taskResult:
@@ -595,7 +560,7 @@ func (e *LocalGraphExecutor) executeHandlers(
 			}
 
 			// Execute the handler
-			closure := pkg.ConstructClosure(hostCtx, handler)
+			closure := pkg.ConstructClosure(hostCtx, handler, cfg)
 			result := e.Runner.ExecuteTask(ctx, handler, closure, cfg)
 
 			// Mark the handler as executed

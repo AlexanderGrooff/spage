@@ -9,6 +9,7 @@ import (
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/config"
+	"github.com/AlexanderGrooff/spage/pkg/daemon"
 )
 
 // GenericOutput is a flexible map-based implementation of pkg.ModuleOutput.
@@ -59,7 +60,7 @@ func ChangeCWDToPlaybookDir(playbookPath string) string {
 	return currCwd
 }
 
-func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cfg *config.Config, daemonClient interface{}) error {
+func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cfg *config.Config, daemonClientInterface interface{}) error {
 	var inventory *Inventory
 	var err error
 
@@ -115,22 +116,21 @@ func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cf
 		}
 	}()
 
-	// Create daemon reporting instance if daemon client is provided
-	var daemonReporting *DaemonReporting
-	if daemonClient != nil {
-		if client, ok := daemonClient.(DaemonReporter); ok {
-			daemonReporting = NewDaemonReporting(client)
+	// Create daemon client if provided
+	var daemonClient *daemon.Client
+	if daemonClientInterface != nil {
+		if client, ok := daemonClientInterface.(*daemon.Client); ok {
+			daemonClient = client
 		}
 	}
 
-	// Store daemon reporting in a context that can be accessed by executors
+	// Store daemon client in a context that can be accessed by executors
 	// We'll use a global variable or pass it through the config for now
-	if daemonReporting != nil {
+	if daemonClient != nil {
 		// For now, we'll store it in the config as a temporary solution
 		// This is not ideal but avoids breaking the interface
-		cfg.SetDaemonReporting(daemonReporting)
-		daemonReporting.ReportExecutionStart(graph)
-		defer daemonReporting.ReportExecutionCompletion()
+		cfg.SetDaemonReporting(daemonClient)
+		ReportPlayStart(daemonClient, graph.PlaybookPath, inventoryFile, cfg.Executor)
 	}
 
 	err = executor.Execute(hostContexts, orderedGraph, cfg)

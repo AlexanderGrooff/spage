@@ -221,7 +221,7 @@ var runCmd = &cobra.Command{
 					}
 				}
 
-				if err := daemonClient.RegisterTask(playbookFile, inventoryFile, variables, cfg.Executor); err != nil {
+				if err := daemonClient.RegisterPlayStart(playbookFile, inventoryFile, variables, cfg.Executor); err != nil {
 					common.LogWarn("Failed to register task with daemon (continuing without daemon communication)", map[string]interface{}{
 						"error": err.Error(),
 						"note":  "This is expected if the daemon doesn't have the protobuf service registered yet",
@@ -246,21 +246,7 @@ var runCmd = &cobra.Command{
 				"error": err.Error(),
 			})
 
-			// Report error to daemon if available
-			if daemonClient != nil && (taskID != "" || cfg.Daemon.TaskID != "") {
-				daemonClient.ReportError(err.Error())
-			}
-
 			os.Exit(1)
-		}
-
-		// Report completion to daemon if available
-		if daemonClient != nil && (taskID != "" || cfg.Daemon.TaskID != "") {
-			daemonClient.ReportCompletion(map[string]string{
-				"playbook":  playbookFile,
-				"inventory": inventoryFile,
-				"executor":  cfg.Executor,
-			})
 		}
 
 		return nil

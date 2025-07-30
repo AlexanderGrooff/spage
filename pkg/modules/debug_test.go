@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/AlexanderGrooff/spage/pkg"
+	"github.com/AlexanderGrooff/spage/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -61,7 +62,7 @@ func TestDebugInput_Validate(t *testing.T) {
 
 func TestDebugModule_Execute_Msg(t *testing.T) {
 	mod := DebugModule{}
-	closure := pkg.ConstructClosure(&pkg.HostContext{Host: &pkg.Host{Name: "localhost"}, Facts: &sync.Map{}}, pkg.Task{})
+	closure := pkg.ConstructClosure(&pkg.HostContext{Host: &pkg.Host{Name: "localhost"}, Facts: &sync.Map{}}, pkg.Task{}, &config.Config{})
 	input := DebugInput{Msg: "Hello, {{ world_var }}!"}
 	closure.HostContext.Facts.Store("world_var", "Earth")
 
@@ -79,7 +80,7 @@ func TestDebugModule_Execute_Msg(t *testing.T) {
 
 func TestDebugModule_Execute_Var(t *testing.T) {
 	mod := DebugModule{}
-	closure := pkg.ConstructClosure(&pkg.HostContext{Host: &pkg.Host{Name: "localhost"}, Facts: &sync.Map{}}, pkg.Task{})
+	closure := pkg.ConstructClosure(&pkg.HostContext{Host: &pkg.Host{Name: "localhost"}, Facts: &sync.Map{}}, pkg.Task{}, &config.Config{})
 	closure.HostContext.Facts.Store("my_fact", "fact_value")
 	closure.HostContext.Facts.Store("my_map_fact", map[string]interface{}{"key": "value"})
 
@@ -117,7 +118,7 @@ func TestDebugModule_Execute_Var(t *testing.T) {
 
 func TestDebugModule_Revert_Msg(t *testing.T) {
 	mod := DebugModule{}
-	closure := pkg.ConstructClosure(&pkg.HostContext{Host: &pkg.Host{Name: "localhost"}, Facts: &sync.Map{}}, pkg.Task{})
+	closure := pkg.ConstructClosure(&pkg.HostContext{Host: &pkg.Host{Name: "localhost"}, Facts: &sync.Map{}}, pkg.Task{}, &config.Config{})
 	input := DebugInput{Msg: "Reverting: {{ world_var }}!"}
 	closure.HostContext.Facts.Store("world_var", "Mars")
 
@@ -139,7 +140,7 @@ func TestDebugModule_Revert_Msg(t *testing.T) {
 
 func TestDebugModule_Revert_Var(t *testing.T) {
 	mod := DebugModule{}
-	closure := pkg.ConstructClosure(&pkg.HostContext{Host: &pkg.Host{Name: "localhost"}, Facts: &sync.Map{}}, pkg.Task{})
+	closure := pkg.ConstructClosure(&pkg.HostContext{Host: &pkg.Host{Name: "localhost"}, Facts: &sync.Map{}}, pkg.Task{}, &config.Config{})
 	closure.HostContext.Facts.Store("revert_fact", "revert_value")
 	closure.HostContext.Facts.Store("revert_map_fact", map[string]interface{}{"rkey": "rvalue"})
 
@@ -167,7 +168,7 @@ func TestDebugModule_Revert_Var(t *testing.T) {
 
 func TestDebugModule_Revert(t *testing.T) {
 	mod := DebugModule{}
-	closure := pkg.ConstructClosure(&pkg.HostContext{Host: &pkg.Host{Name: "localhost"}, Facts: &sync.Map{}}, pkg.Task{})
+	closure := pkg.ConstructClosure(&pkg.HostContext{Host: &pkg.Host{Name: "localhost"}, Facts: &sync.Map{}}, pkg.Task{}, &config.Config{})
 	input := DebugInput{Msg: "test"}
 
 	// Revert with no previous output

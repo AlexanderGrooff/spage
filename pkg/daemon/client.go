@@ -129,8 +129,8 @@ func (c *Client) Disconnect() error {
 	return nil
 }
 
-// RegisterTask registers the current task with the daemon
-func (c *Client) RegisterTask(playbook, inventory string, variables map[string]string, engine string) error {
+// RegisterPlayStart registers the current play with the daemon
+func (c *Client) RegisterPlayStart(playbook, inventory string, variables map[string]string, engine string) error {
 	if err := c.ensureConnected(); err != nil {
 		// Check if it's a connection error
 		if status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded {
@@ -245,30 +245,6 @@ func (c *Client) UpdateProgress(progress float64, message string, metadata map[s
 	}
 
 	return nil
-}
-
-// ReportError reports an error to the daemon
-func (c *Client) ReportError(errorMsg string) error {
-	// Silently ignore errors if daemon is not available
-	return c.UpdateProgress(0.0, fmt.Sprintf("Error: %s", errorMsg), map[string]string{
-		"error":  errorMsg,
-		"status": "failed",
-	})
-}
-
-// ReportCompletion reports task completion to the daemon
-func (c *Client) ReportCompletion(result map[string]string) error {
-	metadata := map[string]string{
-		"status": "completed",
-	}
-
-	// Add result data to metadata
-	for k, v := range result {
-		metadata[k] = v
-	}
-
-	// Silently ignore errors if daemon is not available
-	return c.UpdateProgress(100.0, "Task completed successfully", metadata)
 }
 
 // GetTaskStatus retrieves the current task status from the daemon
