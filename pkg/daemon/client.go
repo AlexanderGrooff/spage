@@ -11,7 +11,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -30,7 +29,7 @@ type Client struct {
 	connected bool
 
 	// Progress streaming
-	progressStream core.SpageExecution_StreamProgressClient
+	progressStream core.SpageExecution_StreamTaskProgressClient
 	streamMu       sync.RWMutex
 
 	// Context for graceful shutdown
@@ -130,7 +129,7 @@ func (c *Client) Disconnect() error {
 }
 
 // RegisterPlayStart registers the current play with the daemon
-func (c *Client) RegisterPlayStart(playbook, inventory string, variables map[string]string, engine string) error {
+func (c *Client) RegisterPlayStart(playbook, inventory string, variables map[string]string, executor string) error {
 	if err := c.ensureConnected(); err != nil {
 		// Check if it's a connection error
 		if status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded {
@@ -139,43 +138,43 @@ func (c *Client) RegisterPlayStart(playbook, inventory string, variables map[str
 		return err
 	}
 
-	req := &core.RegisterTaskRequest{
-		TaskId:    c.taskID,
+	req := &core.RegisterPlayRequest{
+		PlayId:    c.taskID,
 		Playbook:  playbook,
 		Inventory: inventory,
 		Variables: variables,
-		Engine:    engine,
+		Executor:  executor,
 		Metadata: map[string]string{
 			"playbook":  playbook,
 			"inventory": inventory,
-			"engine":    engine,
+			"executor":  executor,
 		},
 	}
 
 	ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
 	defer cancel()
 
-	resp, err := c.client.RegisterTask(ctx, req)
+	resp, err := c.client.RegisterPlay(ctx, req)
 	if err != nil {
 		// Check if it's a connection error
 		if status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded {
 			return fmt.Errorf("daemon not available: %w", err)
 		}
-		return fmt.Errorf("failed to register task: %w", err)
+		return fmt.Errorf("failed to register play: %w", err)
 	}
 
 	if !resp.Success {
 		if resp.Error != nil {
-			return fmt.Errorf("task registration failed: %s", resp.Error.Message)
+			return fmt.Errorf("play registration failed: %s", resp.Error.Message)
 		}
-		return fmt.Errorf("task registration failed")
+		return fmt.Errorf("play registration failed")
 	}
 
 	return nil
 }
 
-// UpdateProgress sends a progress update to the daemon
-func (c *Client) UpdateProgress(progress float64, message string, metadata map[string]string) error {
+// UpdateTaskResult sends a task result update to the daemon
+func (c *Client) UpdateTaskResult(taskResult *core.TaskResult) error {
 	if c == nil {
 		return nil // Return nil instead of error to avoid breaking task execution
 	}
@@ -199,11 +198,14 @@ func (c *Client) UpdateProgress(progress float64, message string, metadata map[s
 		return nil
 	}
 
-	update := &core.ProgressUpdate{
-		TaskId:    c.taskID,
-		Progress:  progress,
-		Message:   message,
-		Metadata:  metadata,
+	// Ensure the TaskResult has the correct TaskId (should be the play ID)
+	if taskResult.TaskId == "" {
+		taskResult.TaskId = c.taskID
+	}
+
+	update := &core.TaskProgressUpdate{
+		TaskId:    c.taskID, // Use the play ID for the TaskProgressUpdate
+		Result:    taskResult,
 		Timestamp: timestamppb.Now(),
 	}
 
@@ -247,63 +249,111 @@ func (c *Client) UpdateProgress(progress float64, message string, metadata map[s
 	return nil
 }
 
-// GetTaskStatus retrieves the current task status from the daemon
-func (c *Client) GetTaskStatus() (*core.Task, error) {
-	if err := c.ensureConnected(); err != nil {
-		return nil, err
+// UpdateTaskProgress sends a progress update to the daemon (simplified version)
+func (c *Client) UpdateTaskProgress(progress float64, metadata map[string]string) error {
+	if c == nil {
+		return nil // Return nil instead of error to avoid breaking task execution
 	}
 
-	req := &core.GetTaskStatusRequest{
+	// Check if we're connected first
+	c.mu.RLock()
+	connected := c.connected
+	c.mu.RUnlock()
+
+	if !connected {
+		// Try to connect, but don't fail if it doesn't work
+		if err := c.Connect(); err != nil {
+			// Silently ignore connection failures - daemon might not be running
+			return nil
+		}
+	}
+
+	// Ensure progress stream is established
+	if err := c.ensureProgressStream(); err != nil {
+		// Silently ignore stream establishment failures - daemon might not be running
+		return nil
+	}
+
+	// Determine task status from metadata if available
+	var taskStatus core.TaskStatus
+	var errorMsg string
+
+	if statusStr, ok := metadata["status"]; ok {
+		switch statusStr {
+		case "completed":
+			taskStatus = core.TaskStatus_TASK_STATUS_COMPLETED
+		case "failed":
+			taskStatus = core.TaskStatus_TASK_STATUS_FAILED
+			if errMsg, ok := metadata["error"]; ok {
+				errorMsg = errMsg
+			}
+		case "skipped":
+			taskStatus = core.TaskStatus_TASK_STATUS_SKIPPED
+		default:
+			taskStatus = core.TaskStatus_TASK_STATUS_RUNNING
+		}
+	} else {
+		// Fallback to progress-based logic for backward compatibility
+		if progress >= 100.0 {
+			taskStatus = core.TaskStatus_TASK_STATUS_COMPLETED
+		} else if progress < 0.0 {
+			taskStatus = core.TaskStatus_TASK_STATUS_FAILED
+			if errMsg, ok := metadata["error"]; ok {
+				errorMsg = errMsg
+			}
+		} else {
+			taskStatus = core.TaskStatus_TASK_STATUS_RUNNING
+		}
+	}
+
+	update := &core.TaskProgressUpdate{
 		TaskId: c.taskID,
+		Result: &core.TaskResult{
+			TaskId: c.taskID,
+			Status: taskStatus,
+			Error:  errorMsg,
+		},
+		Timestamp: timestamppb.Now(),
 	}
 
-	ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
-	defer cancel()
+	c.streamMu.RLock()
+	defer c.streamMu.RUnlock()
 
-	resp, err := c.client.GetTaskStatus(ctx, req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get task status: %w", err)
-	}
+	if c.progressStream != nil {
+		// Try to send the update with retry logic
+		var err error
+		for retries := 0; retries < 3; retries++ {
+			err = c.progressStream.Send(update)
+			if err == nil {
+				break
+			}
 
-	if resp.Error != nil {
-		return nil, fmt.Errorf("task status error: %s", resp.Error.Message)
-	}
+			// If it's a connection error, try to reconnect
+			if status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded {
+				c.streamMu.RUnlock()
+				c.streamMu.Lock()
+				c.progressStream = nil // Reset stream to force reconnection
+				c.streamMu.Unlock()
+				c.streamMu.RLock()
 
-	return resp.Task, nil
-}
+				// Try to reestablish connection
+				if reconnectErr := c.ensureProgressStream(); reconnectErr != nil {
+					return nil // Don't fail the operation
+				}
+				continue
+			}
 
-// HealthCheck performs a health check on the daemon
-func (c *Client) HealthCheck() error {
-	if err := c.ensureConnected(); err != nil {
-		return err
-	}
+			// For other errors, don't retry
+			break
+		}
 
-	ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
-	defer cancel()
-
-	_, err := c.client.HealthCheck(ctx, &emptypb.Empty{})
-	if err != nil {
-		return fmt.Errorf("daemon health check failed: %w", err)
+		if err != nil {
+			// Silently ignore send failures - daemon might not be running
+			return nil
+		}
 	}
 
 	return nil
-}
-
-// GetMetrics retrieves metrics from the daemon
-func (c *Client) GetMetrics() (*core.Metrics, error) {
-	if err := c.ensureConnected(); err != nil {
-		return nil, err
-	}
-
-	ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
-	defer cancel()
-
-	metrics, err := c.client.GetMetrics(ctx, &emptypb.Empty{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get metrics: %w", err)
-	}
-
-	return metrics, nil
 }
 
 // ensureConnected ensures the client is connected to the daemon
@@ -341,7 +391,7 @@ func (c *Client) ensureProgressStream() error {
 	}
 
 	// Create progress stream
-	stream, err := c.client.StreamProgress(c.ctx)
+	stream, err := c.client.StreamTaskProgress(c.ctx)
 	if err != nil {
 		// Check if it's a connection error
 		if status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded {
@@ -389,7 +439,11 @@ func (c *Client) receiveProgressUpdates() {
 		}
 
 		// Handle incoming progress updates (if needed)
-		fmt.Printf("Received progress update: %s - %.1f%%\n", update.Message, update.Progress)
+		if update.Result != nil {
+			fmt.Printf("Received task result: %s - %s\n", update.TaskId, update.Result.Status)
+		} else {
+			fmt.Printf("Received progress update: %s\n", update.TaskId)
+		}
 	}
 }
 
@@ -404,4 +458,9 @@ func (c *Client) IsConnected() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.connected
+}
+
+// GetTaskID returns the task ID (which is also the play ID)
+func (c *Client) GetTaskID() string {
+	return c.taskID
 }

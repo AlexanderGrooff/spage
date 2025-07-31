@@ -3,7 +3,6 @@ package pkg
 import (
 	"fmt"
 	"runtime"
-	"time"
 
 	"github.com/AlexanderGrooff/spage-protobuf/spage/core"
 	"github.com/AlexanderGrooff/spage/pkg/daemon"
@@ -18,12 +17,13 @@ func ReportTaskStart(client *daemon.Client, taskName, hostName string, execution
 		return nil
 	}
 
-	return client.UpdateProgress(0.0, fmt.Sprintf("Executing task: %s on %s", taskName, hostName), map[string]string{
-		"task":   taskName,
-		"host":   hostName,
-		"level":  fmt.Sprintf("%d", executionLevel),
-		"status": "running",
-	})
+	taskResult := &core.TaskResult{
+		TaskId:    client.GetTaskID(), // Use the play ID instead of task name
+		Status:    core.TaskStatus_TASK_STATUS_RUNNING,
+		StartedAt: timestamppb.Now(),
+	}
+
+	return client.UpdateTaskResult(taskResult)
 }
 
 // ReportTaskCompletion reports the completion of a task with metrics
@@ -32,79 +32,59 @@ func ReportTaskCompletion(client *daemon.Client, task Task, result TaskResult, h
 		return nil
 	}
 
-	status := "completed"
-	errorMsg := ""
+	// Determine task status based on result
+	var taskStatus core.TaskStatus
+	var errorMsg string
+
 	if result.Error != nil {
-		status = "failed"
+		taskStatus = core.TaskStatus_TASK_STATUS_FAILED
 		errorMsg = result.Error.Error()
+	} else {
+		taskStatus = core.TaskStatus_TASK_STATUS_COMPLETED
 	}
 
-	// Collect resource metrics
-	resourceMetrics := collectResourceMetrics()
-
-	// Create combined metrics
-	metrics := map[string]string{
-		"task":        task.Name,
-		"host":        hostName,
-		"level":       fmt.Sprintf("%d", executionLevel),
-		"status":      status,
-		"duration_ms": fmt.Sprintf("%.2f", float64(result.Duration.Microseconds())/1000.0),
-		"duration_ns": fmt.Sprintf("%d", result.Duration.Nanoseconds()),
-		"error":       errorMsg,
+	// Create TaskResult from the actual result
+	taskResult := &core.TaskResult{
+		TaskId:      client.GetTaskID(), // Use the play ID instead of task name
+		Status:      taskStatus,
+		Error:       errorMsg,
+		Output:      fmt.Sprintf("%v", result.Output),
+		StartedAt:   timestamppb.Now(), // We could get this from result if available
+		CompletedAt: timestamppb.Now(),
 	}
 
-	// Merge resource metrics
-	for k, v := range resourceMetrics {
-		metrics[k] = v
+	// Add metrics if we have them
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	if result.Duration > 0 {
+		taskResult.Metrics = &core.TaskMetrics{
+			Duration:      float64(result.Duration.Seconds()),
+			MemoryAlloc:   float64(m.Alloc) / 1024 / 1024,
+			MemoryHeap:    float64(m.HeapAlloc) / 1024 / 1024,
+			MemorySys:     float64(m.Sys) / 1024 / 1024,
+			MemoryHeapSys: float64(m.HeapSys) / 1024 / 1024,
+			GcCycles:      float64(m.NumGC),
+			Goroutines:    float64(runtime.NumGoroutine()),
+			CpuCount:      float64(runtime.NumCPU()),
+		}
 	}
 
-	progress := 100.0
-	if result.Error != nil {
-		progress = -1.0 // Negative progress indicates error
-	}
-
-	return client.UpdateProgress(progress, fmt.Sprintf("Task %s %s on %s", task.Name, status, hostName), metrics)
+	// Use the new UpdateTaskResult method with the actual TaskResult
+	return client.UpdateTaskResult(taskResult)
 }
 
 func ReportTaskSkipped(client *daemon.Client, taskName, hostName string, executionLevel int) error {
-	return client.UpdateProgress(0.0, fmt.Sprintf("Task %s skipped on %s", taskName, hostName), map[string]string{
-		"task":   taskName,
-		"host":   hostName,
-		"level":  fmt.Sprintf("%d", executionLevel),
-		"status": "skipped",
-	})
-}
-
-// ReportTaskProgress reports progress during task processing
-func ReportTaskProgress(client *daemon.Client, resultsReceived, numExpectedResultsOnLevel, executionLevel int, result TaskResult) error {
 	if client == nil {
 		return nil
 	}
 
-	// Calculate progress based on completed tasks across all levels
-	status := "completed"
-	if result.Error != nil {
-		status = "failed"
+	taskResult := &core.TaskResult{
+		TaskId:    client.GetTaskID(), // Use the play ID instead of task name
+		Status:    core.TaskStatus_TASK_STATUS_SKIPPED,
+		StartedAt: timestamppb.Now(),
 	}
 
-	// Calculate progress percentage
-	progress := float64(resultsReceived) * 100.0 / float64(numExpectedResultsOnLevel)
-	if progress > 100.0 {
-		progress = 100.0
-	}
-
-	if result.Error != nil {
-		progress = -1.0 // Negative progress indicates error
-	}
-
-	return client.UpdateProgress(progress, fmt.Sprintf("Task %s %s", result.Task.Name, status), map[string]string{
-		"task":            result.Task.Name,
-		"host":            result.Closure.HostContext.Host.Name,
-		"level":           fmt.Sprintf("%d", executionLevel),
-		"status":          status,
-		"tasks_completed": fmt.Sprintf("%d", resultsReceived),
-		"tasks_total":     fmt.Sprintf("%d", numExpectedResultsOnLevel),
-	})
+	return client.UpdateTaskResult(taskResult)
 }
 
 // ReportError reports an error to the daemon
@@ -113,79 +93,18 @@ func ReportError(client *daemon.Client, executionLevel int, err error) error {
 		return nil
 	}
 
-	return client.UpdateProgress(-1.0, fmt.Sprintf("Error in level %d: %s", executionLevel, err.Error()), map[string]string{
-		"level":  fmt.Sprintf("%d", executionLevel),
-		"error":  err.Error(),
-		"status": "failed",
-	})
+	taskResult := &core.TaskResult{
+		TaskId:      client.GetTaskID(), // Use the play ID instead of task name
+		Status:      core.TaskStatus_TASK_STATUS_FAILED,
+		Error:       err.Error(),
+		StartedAt:   timestamppb.Now(),
+		CompletedAt: timestamppb.Now(),
+	}
+
+	return client.UpdateTaskResult(taskResult)
 }
 
 // ReportExecutionStart reports the start of execution
 func ReportPlayStart(client *daemon.Client, playbook, inventory, executor string) error {
 	return client.RegisterPlayStart(playbook, inventory, map[string]string{}, executor)
-}
-
-// collectResourceMetrics collects system resource metrics
-func collectResourceMetrics() map[string]string {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-
-	return map[string]string{
-		"memory_alloc_mb":    fmt.Sprintf("%.2f", float64(m.Alloc)/1024/1024),
-		"memory_total_mb":    fmt.Sprintf("%.2f", float64(m.TotalAlloc)/1024/1024),
-		"memory_heap_mb":     fmt.Sprintf("%.2f", float64(m.HeapAlloc)/1024/1024),
-		"memory_sys_mb":      fmt.Sprintf("%.2f", float64(m.Sys)/1024/1024),
-		"memory_heap_sys_mb": fmt.Sprintf("%.2f", float64(m.HeapSys)/1024/1024),
-		"gc_cycles":          fmt.Sprintf("%d", m.NumGC),
-		"goroutines":         fmt.Sprintf("%d", runtime.NumGoroutine()),
-		"cpu_count":          fmt.Sprintf("%d", runtime.NumCPU()),
-	}
-}
-
-// CreateProgressUpdate creates a proper ProgressUpdate protobuf message
-func CreateProgressUpdate(taskID string, progress float64, message string, metadata map[string]string) *core.ProgressUpdate {
-	return &core.ProgressUpdate{
-		TaskId:    taskID,
-		Progress:  progress,
-		Message:   message,
-		Metadata:  metadata,
-		Timestamp: timestamppb.Now(),
-	}
-}
-
-// CreateTaskResult creates a proper TaskResult protobuf message
-func CreateTaskResult(taskID string, status core.TaskStatus, output string, err error, duration time.Duration, result map[string]string) *core.TaskResult {
-	taskResult := &core.TaskResult{
-		TaskId:    taskID,
-		Status:    status,
-		Output:    output,
-		Duration:  duration.Seconds(),
-		Result:    result,
-		StartedAt: timestamppb.Now(), // This should be set when task starts
-	}
-
-	if err != nil {
-		taskResult.Error = err.Error()
-		taskResult.Status = core.TaskStatus_TASK_STATUS_FAILED
-	}
-
-	return taskResult
-}
-
-// CreateTask creates a proper Task protobuf message
-func CreateTask(taskID, taskType string, priority core.TaskPriority, payload map[string]string, status core.TaskStatus, progress float64, result map[string]string, err string) *core.Task {
-	task := &core.Task{
-		Id:        taskID,
-		Type:      taskType,
-		Priority:  priority,
-		Payload:   payload,
-		Status:    status,
-		Progress:  progress,
-		Result:    result,
-		Error:     err,
-		CreatedAt: timestamppb.Now(),
-		UpdatedAt: timestamppb.Now(),
-	}
-
-	return task
 }

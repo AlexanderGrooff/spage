@@ -133,7 +133,7 @@ func buildCommand(command string, opts *CommandOptions) string {
 	// Build the command based on options
 	if !opts.UseSudo {
 		if opts.UseShell {
-			return fmt.Sprintf("bash -c '%s'", command)
+			return fmt.Sprintf("/bin/bash -c '%s'", command)
 		}
 		return command
 	}
@@ -141,13 +141,13 @@ func buildCommand(command string, opts *CommandOptions) string {
 	// Handle sudo commands
 	if opts.InteractiveSudo {
 		if opts.UseShell {
-			return fmt.Sprintf("sudo -Su %s %s bash -c '%s'", opts.Username, opts.BecomeFlags, command)
+			return fmt.Sprintf("sudo -Su %s %s /bin/bash -c '%s'", opts.Username, opts.BecomeFlags, command)
 		}
 		return fmt.Sprintf("sudo -Su %s %s", opts.Username, opts.BecomeFlags)
 	}
 
 	if opts.UseShell {
-		return fmt.Sprintf("sudo -u %s %s bash -c '%s'", opts.Username, opts.BecomeFlags, command)
+		return fmt.Sprintf("sudo -u %s %s /bin/bash -c '%s'", opts.Username, opts.BecomeFlags, command)
 	}
 	return fmt.Sprintf("sudo -u %s %s", opts.Username, opts.BecomeFlags)
 }
@@ -162,29 +162,23 @@ func executeLocalCommand(command string, opts *CommandOptions) (int, string, str
 	var stdout, stderr bytes.Buffer
 	var cmd *exec.Cmd
 
-	if opts.UseShell {
-		// For shell commands, execute directly through the shell
-		cmd = exec.Command("bash", "-c", cmdToRun)
-	} else {
-		// For non-shell commands, use shlex.Split for proper argument parsing
-		splitCmd, err := shlex.Split(cmdToRun)
-		if err != nil {
-			return -1, "", "", fmt.Errorf("failed to split command %s: %v", command, err)
-		}
-		prog := splitCmd[0]
-		args := splitCmd[1:]
-		absProg, err := exec.LookPath(prog)
-		if err != nil {
-			return -1, "", "", fmt.Errorf("failed to find %s in $PATH: %v", prog, err)
-		}
-		cmd = exec.Command(absProg, args...)
+	splitCmd, err := shlex.Split(cmdToRun)
+	if err != nil {
+		return -1, "", "", fmt.Errorf("failed to split command %s: %v", command, err)
 	}
+	prog := splitCmd[0]
+	args := splitCmd[1:]
+	absProg, err := exec.LookPath(prog)
+	if err != nil {
+		return -1, "", "", fmt.Errorf("failed to find %s in $PATH: %v", prog, err)
+	}
+	cmd = exec.Command(absProg, args...)
 
 	common.DebugOutput("Running command: %s", cmd.String())
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 	rc := 0
 	if err != nil {
 		// Try to get the exit code

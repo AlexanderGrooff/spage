@@ -10,6 +10,7 @@ import (
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/daemon"
+	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
 	"github.com/spf13/cobra"
@@ -34,7 +35,7 @@ var (
 
 	// Daemon communication flags
 	daemonGRPC string
-	taskID     string
+	playID     string
 )
 
 // LoadConfig loads the configuration and applies settings
@@ -181,7 +182,7 @@ var runCmd = &cobra.Command{
 		var daemonClient *daemon.Client
 
 		// Check if daemon communication is enabled via config or CLI flags
-		daemonEnabled := cfg.Daemon.Enabled || daemonGRPC != "" || taskID != ""
+		daemonEnabled := cfg.Daemon.Enabled || daemonGRPC != "" || playID != ""
 
 		if daemonEnabled {
 			// Determine daemon endpoint (CLI flag takes precedence over config)
@@ -193,15 +194,22 @@ var runCmd = &cobra.Command{
 				daemonEndpoint = "localhost:9091"
 			}
 
-			// Determine task ID (CLI flag takes precedence over config)
-			taskIDToUse := taskID
-			if taskIDToUse == "" {
-				taskIDToUse = cfg.Daemon.TaskID
+			// Determine play ID (CLI flag takes precedence over config)
+			playIDToUse := playID
+			if playIDToUse == "" {
+				playIDToUse = cfg.Daemon.PlayID
+			}
+			if playIDToUse == "" {
+				generatedTaskID := uuid.New().String()
+				common.LogInfo("No play ID provided, generating a new one", map[string]interface{}{
+					"play_id": generatedTaskID,
+				})
+				playIDToUse = generatedTaskID
 			}
 
 			daemonClient, err = daemon.NewClient(&daemon.Config{
 				Endpoint: daemonEndpoint,
-				TaskID:   taskIDToUse,
+				TaskID:   playIDToUse,
 				Timeout:  30 * time.Second,
 			})
 			if err != nil {
@@ -211,29 +219,6 @@ var runCmd = &cobra.Command{
 				os.Exit(1)
 			}
 			defer daemonClient.Close()
-
-			// Register task with daemon
-			if taskIDToUse != "" {
-				variables := make(map[string]string)
-				for k, v := range cfg.Facts {
-					if str, ok := v.(string); ok {
-						variables[k] = str
-					}
-				}
-
-				if err := daemonClient.RegisterPlayStart(playbookFile, inventoryFile, variables, cfg.Executor); err != nil {
-					common.LogWarn("Failed to register task with daemon (continuing without daemon communication)", map[string]interface{}{
-						"error": err.Error(),
-						"note":  "This is expected if the daemon doesn't have the protobuf service registered yet",
-					})
-					// Continue execution even if daemon registration fails
-				} else {
-					common.LogInfo("Task registered with daemon", map[string]interface{}{
-						"task_id":  taskIDToUse,
-						"endpoint": daemonEndpoint,
-					})
-				}
-			}
 		}
 
 		if cfg.Executor == "temporal" {
@@ -279,7 +264,7 @@ func init() {
 
 	// Daemon communication flags
 	runCmd.Flags().StringVar(&daemonGRPC, "daemon-grpc", "", "Daemon gRPC endpoint (default: localhost:9091)")
-	runCmd.Flags().StringVar(&taskID, "task-id", "", "Task ID for daemon communication")
+	runCmd.Flags().StringVar(&playID, "play-id", "", "Play ID for daemon communication")
 
 	if err := runCmd.MarkFlagRequired("playbook"); err != nil {
 		panic(fmt.Sprintf("failed to mark playbook flag as required: %v", err))

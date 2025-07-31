@@ -60,7 +60,7 @@ type PrivilegeEscalationConfig struct {
 type DaemonConfig struct {
 	Enabled  bool          `mapstructure:"enabled"`
 	Endpoint string        `mapstructure:"endpoint"`
-	TaskID   string        `mapstructure:"task_id"`
+	PlayID   string        `mapstructure:"play_id"`
 	Timeout  time.Duration `mapstructure:"timeout"`
 }
 
@@ -167,7 +167,7 @@ func setDefaults(v *viper.Viper) {
 	// Daemon defaults
 	v.SetDefault("daemon.enabled", false) // Default to disabled
 	v.SetDefault("daemon.endpoint", "localhost:9091")
-	v.SetDefault("daemon.task_id", "")
+	v.SetDefault("daemon.play_id", "")
 	v.SetDefault("daemon.timeout", 3*time.Second) // Default to 3 seconds
 }
 
