@@ -173,6 +173,29 @@ func (c *Client) RegisterPlayStart(playbook, inventory string, variables map[str
 	return nil
 }
 
+func (c *Client) RegisterPlayCompletion() error {
+	req := &core.RegisterPlayCompletionRequest{
+		PlayId: c.taskID,
+	}
+
+	ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
+	defer cancel()
+
+	resp, err := c.client.RegisterPlayCompletion(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed to register play completion: %w", err)
+	}
+
+	if !resp.Success {
+		if resp.Error != nil {
+			return fmt.Errorf("play completion registration failed: %s", resp.Error.Message)
+		}
+		return fmt.Errorf("play completion registration failed")
+	}
+
+	return nil
+}
+
 // UpdateTaskResult sends a task result update to the daemon
 func (c *Client) UpdateTaskResult(taskResult *core.TaskResult) error {
 	if c == nil {

@@ -108,3 +108,7 @@ func ReportError(client *daemon.Client, executionLevel int, err error) error {
 func ReportPlayStart(client *daemon.Client, playbook, inventory, executor string) error {
 	return client.RegisterPlayStart(playbook, inventory, map[string]string{}, executor)
 }
+
+func ReportPlayCompletion(client *daemon.Client) error {
+	return client.RegisterPlayCompletion()
+}

@@ -131,6 +131,7 @@ func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cf
 		// This is not ideal but avoids breaking the interface
 		cfg.SetDaemonReporting(daemonClient)
 		ReportPlayStart(daemonClient, graph.PlaybookPath, inventoryFile, cfg.Executor)
+		defer ReportPlayCompletion(daemonClient)
 	}
 
 	err = executor.Execute(hostContexts, orderedGraph, cfg)
