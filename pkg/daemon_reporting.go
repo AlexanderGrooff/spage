@@ -18,7 +18,7 @@ func ReportTaskStart(client *daemon.Client, taskName, hostName string, execution
 	}
 
 	taskResult := &core.TaskResult{
-		TaskId:    client.GetTaskID(), // Use the play ID instead of task name
+		TaskId:    taskName, // Use the actual task name
 		Status:    core.TaskStatus_TASK_STATUS_RUNNING,
 		StartedAt: timestamppb.Now(),
 	}
@@ -45,7 +45,7 @@ func ReportTaskCompletion(client *daemon.Client, task Task, result TaskResult, h
 
 	// Create TaskResult from the actual result
 	taskResult := &core.TaskResult{
-		TaskId:      client.GetTaskID(), // Use the play ID instead of task name
+		TaskId:      task.Name, // Use the actual task name
 		Status:      taskStatus,
 		Error:       errorMsg,
 		Output:      fmt.Sprintf("%v", result.Output),
@@ -79,7 +79,7 @@ func ReportTaskSkipped(client *daemon.Client, taskName, hostName string, executi
 	}
 
 	taskResult := &core.TaskResult{
-		TaskId:    client.GetTaskID(), // Use the play ID instead of task name
+		TaskId:    taskName, // Use the actual task name
 		Status:    core.TaskStatus_TASK_STATUS_SKIPPED,
 		StartedAt: timestamppb.Now(),
 	}
@@ -94,7 +94,7 @@ func ReportError(client *daemon.Client, executionLevel int, err error) error {
 	}
 
 	taskResult := &core.TaskResult{
-		TaskId:      client.GetTaskID(), // Use the play ID instead of task name
+		TaskId:      "error", // Use a generic error task name
 		Status:      core.TaskStatus_TASK_STATUS_FAILED,
 		Error:       err.Error(),
 		StartedAt:   timestamppb.Now(),

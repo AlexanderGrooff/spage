@@ -198,13 +198,13 @@ func (c *Client) UpdateTaskResult(taskResult *core.TaskResult) error {
 		return nil
 	}
 
-	// Ensure the TaskResult has the correct TaskId (should be the play ID)
+	// Ensure the TaskResult has the correct TaskId (should be the actual task name/ID)
 	if taskResult.TaskId == "" {
-		taskResult.TaskId = c.taskID
+		taskResult.TaskId = "unknown-task"
 	}
 
 	update := &core.TaskProgressUpdate{
-		TaskId:    c.taskID, // Use the play ID for the TaskProgressUpdate
+		TaskId:    c.taskID, // Use the play ID for the TaskProgressUpdate.TaskId (this is actually the play ID)
 		Result:    taskResult,
 		Timestamp: timestamppb.Now(),
 	}
