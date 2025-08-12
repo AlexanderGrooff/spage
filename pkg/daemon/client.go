@@ -51,7 +51,7 @@ func NewClient(cfg *Config) (*Client, error) {
 	}
 
 	if cfg.Timeout == 0 {
-		cfg.Timeout = 30 * time.Second
+		cfg.Timeout = 3 * time.Second
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -191,6 +191,30 @@ func (c *Client) RegisterPlayCompletion() error {
 			return fmt.Errorf("play completion registration failed: %s", resp.Error.Message)
 		}
 		return fmt.Errorf("play completion registration failed")
+	}
+
+	return nil
+}
+
+// RegisterPlayError registers a play error with the daemon
+func (c *Client) RegisterPlayError() error {
+	req := &core.RegisterPlayCompletionRequest{
+		PlayId: c.taskID,
+	}
+
+	ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
+	defer cancel()
+
+	resp, err := c.client.RegisterPlayCompletion(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed to register play error: %w", err)
+	}
+
+	if !resp.Success {
+		if resp.Error != nil {
+			return fmt.Errorf("play error registration failed: %s", resp.Error.Message)
+		}
+		return fmt.Errorf("play error registration failed")
 	}
 
 	return nil

@@ -6,7 +6,6 @@ import (
 	"maps"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/daemon"
@@ -114,6 +113,53 @@ func GetGraph(playbookFile string, tags, skipTags []string, baseConfig *config.C
 	return filteredGraph, nil
 }
 
+func GetDaemonClient() (*daemon.Client, error) {
+	// Initialize daemon client if daemon communication is enabled
+	var daemonClient *daemon.Client
+	var err error
+
+	// Check if daemon communication is enabled via config or CLI flags
+	daemonEnabled := cfg.Daemon.Enabled || daemonGRPC != "" || playID != ""
+
+	if daemonEnabled {
+		// Determine daemon endpoint (CLI flag takes precedence over config)
+		daemonEndpoint := daemonGRPC
+		if daemonEndpoint == "" {
+			daemonEndpoint = cfg.Daemon.Endpoint
+		}
+		if daemonEndpoint == "" {
+			daemonEndpoint = "localhost:9091"
+		}
+
+		// Determine play ID (CLI flag takes precedence over config)
+		playIDToUse := playID
+		if playIDToUse == "" {
+			playIDToUse = cfg.Daemon.PlayID
+		}
+		if playIDToUse == "" {
+			generatedTaskID := uuid.New().String()
+			common.LogInfo("No play ID provided, generating a new one", map[string]interface{}{
+				"play_id": generatedTaskID,
+			})
+			playIDToUse = generatedTaskID
+		}
+
+		daemonClient, err = daemon.NewClient(&daemon.Config{
+			Endpoint: daemonEndpoint,
+			TaskID:   playIDToUse,
+			Timeout:  cfg.Daemon.Timeout,
+		})
+		if err != nil {
+			common.LogError("Failed to create daemon client", map[string]interface{}{
+				"error": err.Error(),
+			})
+			os.Exit(1)
+		}
+	}
+
+	return daemonClient, nil
+}
+
 var generateCmd = &cobra.Command{
 	Use:   "generate",
 	Short: "Generate a graph from a playbook and save it as Go code",
@@ -144,12 +190,17 @@ var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run a playbook by compiling & executing it",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		daemonClient, err := GetDaemonClient()
+		if err != nil {
+			return fmt.Errorf("failed to get daemon client: %w", err)
+		}
+
 		graph, err := GetGraph(playbookFile, tags, skipTags, cfg, becomeMode)
 		if err != nil {
-			common.LogError("Failed to generate graph", map[string]interface{}{
-				"error": err.Error(),
-			})
-			os.Exit(1)
+			if daemonClient != nil {
+				_ = daemonClient.RegisterPlayError()
+			}
+			return fmt.Errorf("failed to generate graph: %w", err)
 		}
 		if checkMode {
 			if cfg.Facts == nil {
@@ -176,49 +227,6 @@ var runCmd = &cobra.Command{
 			// Merge extra facts into cfg.Facts (extra vars take precedence)
 			maps.Copy(cfg.Facts, extraFacts)
 
-		}
-
-		// Initialize daemon client if daemon communication is enabled
-		var daemonClient *daemon.Client
-
-		// Check if daemon communication is enabled via config or CLI flags
-		daemonEnabled := cfg.Daemon.Enabled || daemonGRPC != "" || playID != ""
-
-		if daemonEnabled {
-			// Determine daemon endpoint (CLI flag takes precedence over config)
-			daemonEndpoint := daemonGRPC
-			if daemonEndpoint == "" {
-				daemonEndpoint = cfg.Daemon.Endpoint
-			}
-			if daemonEndpoint == "" {
-				daemonEndpoint = "localhost:9091"
-			}
-
-			// Determine play ID (CLI flag takes precedence over config)
-			playIDToUse := playID
-			if playIDToUse == "" {
-				playIDToUse = cfg.Daemon.PlayID
-			}
-			if playIDToUse == "" {
-				generatedTaskID := uuid.New().String()
-				common.LogInfo("No play ID provided, generating a new one", map[string]interface{}{
-					"play_id": generatedTaskID,
-				})
-				playIDToUse = generatedTaskID
-			}
-
-			daemonClient, err = daemon.NewClient(&daemon.Config{
-				Endpoint: daemonEndpoint,
-				TaskID:   playIDToUse,
-				Timeout:  30 * time.Second,
-			})
-			if err != nil {
-				common.LogError("Failed to create daemon client", map[string]interface{}{
-					"error": err.Error(),
-				})
-				os.Exit(1)
-			}
-			defer daemonClient.Close()
 		}
 
 		if cfg.Executor == "temporal" {
