@@ -1,10 +1,18 @@
 package cmd
 
 import (
+	"archive/tar"
+	"bufio"
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
+	"mime/multipart"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
@@ -35,6 +43,13 @@ var (
 	// Daemon communication flags
 	daemonGRPC string
 	playID     string
+
+	// Bundle create flags
+	bundleDir        string
+	bundleRootPath   string
+	bundlePlaybookID string
+	apiHTTPBase      string
+	bundleYes        bool
 )
 
 // LoadConfig loads the configuration and applies settings
@@ -95,6 +110,19 @@ func GetGraph(playbookFile string, tags, skipTags []string, baseConfig *config.C
 		baseConfig.Tags.SkipTags = skipTags
 	}
 
+	// Support bundle URL: spage://bundle/<id>#<root_path>
+	if strings.HasPrefix(playbookFile, "spage://bundle/") {
+		localPath, cleanup, err := materializeBundleToTemp(playbookFile)
+		if err != nil {
+			return pkg.Graph{}, fmt.Errorf("failed to materialize bundle: %w", err)
+		}
+		// Best-effort cleanup when process exits
+		if cleanup != nil {
+			defer cleanup()
+		}
+		playbookFile = localPath
+	}
+
 	graph, err := pkg.NewGraphFromFile(playbookFile, baseConfig.RolesPath)
 	if err != nil {
 		return pkg.Graph{}, fmt.Errorf("failed to generate graph from playbook: %w", err)
@@ -111,6 +139,144 @@ func GetGraph(playbookFile string, tags, skipTags []string, baseConfig *config.C
 		return pkg.Graph{}, fmt.Errorf("failed to apply tag filtering: %w", err)
 	}
 	return filteredGraph, nil
+}
+
+// materializeBundleToTemp downloads a bundle archive from API and extracts it to a temp dir.
+// Returns absolute path to the root playbook file and a cleanup func.
+func materializeBundleToTemp(bundleRef string) (string, func(), error) {
+	const prefix = "spage://bundle/"
+	ref := strings.TrimPrefix(bundleRef, prefix)
+	parts := strings.SplitN(ref, "#", 2)
+	if len(parts) != 2 {
+		return "", nil, fmt.Errorf("invalid bundle ref: %s", bundleRef)
+	}
+	bundleID := parts[0]
+	rootPath := parts[1]
+
+	// Prefer config.api.http_base, fall back to env, then default
+	base := ""
+	if cfg != nil && cfg.API.HTTPBase != "" {
+		base = cfg.API.HTTPBase
+	}
+	if base == "" {
+		base = os.Getenv("SPAGE_API_HTTP_BASE")
+	}
+	if base == "" {
+		base = "http://localhost:8080"
+	}
+
+	// Extract archive to temp dir
+	tempDir, err := os.MkdirTemp("", "spage-bundle-")
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	cleanup := func() {
+		_ = os.RemoveAll(tempDir)
+	}
+
+	url := fmt.Sprintf("%s/api/bundles/%s/archive", strings.TrimRight(base, "/"), bundleID)
+	resp, err := http.Get(url)
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("failed to download bundle archive: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		cleanup()
+		return "", nil, fmt.Errorf("bundle archive http %d", resp.StatusCode)
+	}
+	if err := extractTarGz(resp.Body, tempDir); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("failed to extract bundle: %w", err)
+	}
+	absRoot := filepath.Join(tempDir, filepath.FromSlash(rootPath))
+	return absRoot, cleanup, nil
+}
+
+func extractTarGz(r io.Reader, dstDir string) error {
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = gz.Close() }()
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		clean := filepath.Clean(hdr.Name)
+		if strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
+			return fmt.Errorf("invalid path in archive: %s", clean)
+		}
+		outPath := filepath.Join(dstDir, clean)
+		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+			return err
+		}
+		f, err := os.Create(outPath)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(f, tr); err != nil {
+			_ = f.Close()
+			return err
+		}
+		_ = f.Close()
+	}
+	return nil
+}
+
+// createTarGzFromDir writes a tar.gz of srcDir into w, preserving relative paths
+func createTarGzFromDir(srcDir string, w io.Writer) error {
+	gw := gzip.NewWriter(w)
+	defer func() { _ = gw.Close() }()
+	tw := tar.NewWriter(gw)
+	defer func() { _ = tw.Close() }()
+
+	srcDir = filepath.Clean(srcDir)
+	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		rel, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if strings.HasPrefix(rel, ".git/") {
+			return nil
+		}
+		hdr := &tar.Header{
+			Name:    rel,
+			Mode:    int64(info.Mode().Perm()),
+			Size:    info.Size(),
+			ModTime: info.ModTime(),
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+		if _, err := io.Copy(tw, f); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func GetDaemonClient() (*daemon.Client, error) {
@@ -246,6 +412,118 @@ var runCmd = &cobra.Command{
 	},
 }
 
+// bundle parent and create subcommand
+var bundleCmd = &cobra.Command{
+	Use:   "bundle",
+	Short: "Bundle-related commands",
+}
+
+var bundleCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create a playbook bundle (tar.gz) and upload to API",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if bundleDir == "" || bundleRootPath == "" {
+			return fmt.Errorf("--dir and --root are required")
+		}
+
+		// Determine API base
+		// Prefer config.api.http_base, allow override via --api, then env
+		base := ""
+		if cfg != nil && cfg.API.HTTPBase != "" {
+			base = cfg.API.HTTPBase
+		}
+		if apiHTTPBase != "" {
+			base = apiHTTPBase
+		}
+		if base == "" {
+			base = os.Getenv("SPAGE_API_HTTP_BASE")
+		}
+		if base == "" {
+			base = "http://localhost:8080"
+		}
+
+		// Create tar.gz file on disk (temp)
+		tmpFile, err := os.CreateTemp("", "spage-bundle-*.tar.gz")
+		if err != nil {
+			return fmt.Errorf("failed to create temp bundle: %w", err)
+		}
+		defer func() { _ = os.Remove(tmpFile.Name()) }()
+		if err := createTarGzFromDir(bundleDir, tmpFile); err != nil {
+			_ = tmpFile.Close()
+			return fmt.Errorf("failed to create tar.gz: %w", err)
+		}
+		if _, err := tmpFile.Seek(0, io.SeekStart); err != nil {
+			_ = tmpFile.Close()
+			return fmt.Errorf("failed to rewind temp file: %w", err)
+		}
+
+		// Confirmation prompt unless --yes
+		if !bundleYes {
+			if info, err := tmpFile.Stat(); err == nil {
+				fmt.Printf("About to upload bundle:\n- dir: %s\n- root: %s\n- size: %d bytes\nProceed? [y/N]: ", bundleDir, bundleRootPath, info.Size())
+			} else {
+				fmt.Printf("About to upload bundle:\n- dir: %s\n- root: %s\nProceed? [y/N]: ", bundleDir, bundleRootPath)
+			}
+			reader := bufio.NewReader(os.Stdin)
+			line, _ := reader.ReadString('\n')
+			line = strings.TrimSpace(strings.ToLower(line))
+			if line != "y" && line != "yes" {
+				fmt.Println("Aborted.")
+				_ = tmpFile.Close()
+				return nil
+			}
+		}
+
+		// Prepare multipart request
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		fw, err := mw.CreateFormFile("file", filepath.Base(tmpFile.Name()))
+		if err != nil {
+			_ = tmpFile.Close()
+			return fmt.Errorf("failed to create form file: %w", err)
+		}
+		if _, err := io.Copy(fw, tmpFile); err != nil {
+			_ = tmpFile.Close()
+			return fmt.Errorf("failed to write file part: %w", err)
+		}
+		_ = tmpFile.Close()
+		if err := mw.WriteField("root_path", bundleRootPath); err != nil {
+			return fmt.Errorf("failed to write root_path: %w", err)
+		}
+		if bundlePlaybookID != "" {
+			if err := mw.WriteField("playbook_id", bundlePlaybookID); err != nil {
+				return fmt.Errorf("failed to write playbook_id: %w", err)
+			}
+		}
+		if err := mw.Close(); err != nil {
+			return fmt.Errorf("failed to finalize form: %w", err)
+		}
+
+		// POST to API
+		url := fmt.Sprintf("%s/api/bundles", strings.TrimRight(base, "/"))
+		req, err := http.NewRequest(http.MethodPost, url, &body)
+		if err != nil {
+			return fmt.Errorf("failed to build request: %w", err)
+		}
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("upload failed: %w", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusCreated {
+			b, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("upload failed: http %d: %s", resp.StatusCode, string(b))
+		}
+		var out map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			return fmt.Errorf("invalid response: %w", err)
+		}
+		fmt.Printf("Bundle created: id=%v content_sha256=%v\n", out["id"], out["content_sha256"])
+		return nil
+	},
+}
+
 func init() {
 	// Add config flag to root command so it's available to all subcommands
 	RootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "", "Config file path (default: ./spage.yaml)")
@@ -280,6 +558,18 @@ func init() {
 
 	RootCmd.AddCommand(generateCmd)
 	RootCmd.AddCommand(runCmd)
+
+	// Bundle create flags
+	bundleCreateCmd.Flags().StringVarP(&bundleDir, "dir", "d", "", "Directory to bundle (required)")
+	bundleCreateCmd.Flags().StringVarP(&bundleRootPath, "root", "r", "", "Root playbook path inside the bundle (required)")
+	bundleCreateCmd.Flags().StringVar(&bundlePlaybookID, "playbook-id", "", "Optional playbook ID to link the bundle to")
+	bundleCreateCmd.Flags().StringVar(&apiHTTPBase, "api", "", "API HTTP base (default uses SPAGE_API_HTTP_BASE or http://localhost:8080)")
+	bundleCreateCmd.Flags().BoolVarP(&bundleYes, "yes", "y", false, "Skip confirmation and upload immediately")
+	_ = bundleCreateCmd.MarkFlagRequired("dir")
+	_ = bundleCreateCmd.MarkFlagRequired("root")
+
+	bundleCmd.AddCommand(bundleCreateCmd)
+	RootCmd.AddCommand(bundleCmd)
 }
 
 // GetConfig returns the loaded configuration

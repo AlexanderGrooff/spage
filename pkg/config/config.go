@@ -15,6 +15,7 @@ type Config struct {
 	ExecutionMode       string                    `mapstructure:"execution_mode"`
 	Executor            string                    `mapstructure:"executor"` // "local" or "temporal"
 	Temporal            TemporalConfig            `mapstructure:"temporal"`
+	API                 APIConfig                 `mapstructure:"api"`
 	Daemon              DaemonConfig              `mapstructure:"daemon"`
 	Revert              bool                      `mapstructure:"revert"`
 	Tags                TagsConfig                `mapstructure:"tags"`
@@ -26,6 +27,12 @@ type Config struct {
 
 	// Internal fields for daemon reporting (not serialized)
 	daemonReporting interface{}
+}
+
+// APIConfig holds API-related configuration
+type APIConfig struct {
+	// Base URL for the Spage API HTTP server (used for bundles)
+	HTTPBase string `mapstructure:"http_base"`
 }
 
 // LoggingConfig holds logging-related configuration
@@ -137,6 +144,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("executor", "local")
 	v.SetDefault("logging.timestamps", true)
 	v.SetDefault("revert", false)
+
+	// API defaults
+	v.SetDefault("api.http_base", "http://localhost:8080")
 
 	// Temporal defaults
 	v.SetDefault("temporal.address", "") // Default to empty, SDK will use localhost:7233 or TEMPORAL_GRPC_ENDPOINT

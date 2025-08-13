@@ -130,8 +130,14 @@ func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cf
 		// For now, we'll store it in the config as a temporary solution
 		// This is not ideal but avoids breaking the interface
 		cfg.SetDaemonReporting(daemonClient)
-		ReportPlayStart(daemonClient, graph.PlaybookPath, inventoryFile, cfg.Executor)
-		defer ReportPlayCompletion(daemonClient)
+		if err := ReportPlayStart(daemonClient, graph.PlaybookPath, inventoryFile, cfg.Executor); err != nil {
+			common.LogWarn("failed to report play start", map[string]interface{}{"error": err.Error()})
+		}
+		defer func() {
+			if err := ReportPlayCompletion(daemonClient); err != nil {
+				common.LogWarn("failed to report play completion", map[string]interface{}{"error": err.Error()})
+			}
+		}()
 	}
 
 	err = executor.Execute(hostContexts, orderedGraph, cfg)

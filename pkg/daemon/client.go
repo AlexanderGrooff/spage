@@ -9,7 +9,6 @@ import (
 	"github.com/AlexanderGrooff/spage-protobuf/spage/core"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -77,13 +76,7 @@ func (c *Client) Connect() error {
 	}
 
 	// Create connection with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
-	defer cancel()
-
-	conn, err := grpc.DialContext(ctx, c.endpoint,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
-	)
+	conn, err := grpc.NewClient(c.endpoint)
 	if err != nil {
 		// Check if it's a connection error
 		if status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded {
@@ -111,7 +104,9 @@ func (c *Client) Disconnect() error {
 	// Close progress stream
 	c.streamMu.Lock()
 	if c.progressStream != nil {
-		c.progressStream.CloseSend()
+		if err := c.progressStream.CloseSend(); err != nil {
+			return fmt.Errorf("failed to close progress stream: %w", err)
+		}
 		c.progressStream = nil
 	}
 	c.streamMu.Unlock()
@@ -253,113 +248,6 @@ func (c *Client) UpdateTaskResult(taskResult *core.TaskResult) error {
 	update := &core.TaskProgressUpdate{
 		TaskId:    c.taskID, // Use the play ID for the TaskProgressUpdate.TaskId (this is actually the play ID)
 		Result:    taskResult,
-		Timestamp: timestamppb.Now(),
-	}
-
-	c.streamMu.RLock()
-	defer c.streamMu.RUnlock()
-
-	if c.progressStream != nil {
-		// Try to send the update with retry logic
-		var err error
-		for retries := 0; retries < 3; retries++ {
-			err = c.progressStream.Send(update)
-			if err == nil {
-				break
-			}
-
-			// If it's a connection error, try to reconnect
-			if status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded {
-				c.streamMu.RUnlock()
-				c.streamMu.Lock()
-				c.progressStream = nil // Reset stream to force reconnection
-				c.streamMu.Unlock()
-				c.streamMu.RLock()
-
-				// Try to reestablish connection
-				if reconnectErr := c.ensureProgressStream(); reconnectErr != nil {
-					return nil // Don't fail the operation
-				}
-				continue
-			}
-
-			// For other errors, don't retry
-			break
-		}
-
-		if err != nil {
-			// Silently ignore send failures - daemon might not be running
-			return nil
-		}
-	}
-
-	return nil
-}
-
-// UpdateTaskProgress sends a progress update to the daemon (simplified version)
-func (c *Client) UpdateTaskProgress(progress float64, metadata map[string]string) error {
-	if c == nil {
-		return nil // Return nil instead of error to avoid breaking task execution
-	}
-
-	// Check if we're connected first
-	c.mu.RLock()
-	connected := c.connected
-	c.mu.RUnlock()
-
-	if !connected {
-		// Try to connect, but don't fail if it doesn't work
-		if err := c.Connect(); err != nil {
-			// Silently ignore connection failures - daemon might not be running
-			return nil
-		}
-	}
-
-	// Ensure progress stream is established
-	if err := c.ensureProgressStream(); err != nil {
-		// Silently ignore stream establishment failures - daemon might not be running
-		return nil
-	}
-
-	// Determine task status from metadata if available
-	var taskStatus core.TaskStatus
-	var errorMsg string
-
-	if statusStr, ok := metadata["status"]; ok {
-		switch statusStr {
-		case "completed":
-			taskStatus = core.TaskStatus_TASK_STATUS_COMPLETED
-		case "failed":
-			taskStatus = core.TaskStatus_TASK_STATUS_FAILED
-			if errMsg, ok := metadata["error"]; ok {
-				errorMsg = errMsg
-			}
-		case "skipped":
-			taskStatus = core.TaskStatus_TASK_STATUS_SKIPPED
-		default:
-			taskStatus = core.TaskStatus_TASK_STATUS_RUNNING
-		}
-	} else {
-		// Fallback to progress-based logic for backward compatibility
-		if progress >= 100.0 {
-			taskStatus = core.TaskStatus_TASK_STATUS_COMPLETED
-		} else if progress < 0.0 {
-			taskStatus = core.TaskStatus_TASK_STATUS_FAILED
-			if errMsg, ok := metadata["error"]; ok {
-				errorMsg = errMsg
-			}
-		} else {
-			taskStatus = core.TaskStatus_TASK_STATUS_RUNNING
-		}
-	}
-
-	update := &core.TaskProgressUpdate{
-		TaskId: c.taskID,
-		Result: &core.TaskResult{
-			TaskId: c.taskID,
-			Status: taskStatus,
-			Error:  errorMsg,
-		},
 		Timestamp: timestamppb.Now(),
 	}
 
