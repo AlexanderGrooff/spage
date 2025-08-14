@@ -103,8 +103,8 @@ var RootCmd = &cobra.Command{
 			return err
 		}
 		// auto-fill api token from config once config is loaded
-		if apiToken == "" && cfg != nil && cfg.SpageApiToken != "" {
-			apiToken = cfg.SpageApiToken
+		if apiToken == "" && cfg != nil && cfg.ApiToken != "" {
+			apiToken = cfg.ApiToken
 		}
 		return nil
 	},
@@ -189,21 +189,24 @@ func materializeBundleToTemp(bundleRef string) (string, func(), error) {
 		cleanup()
 		return "", nil, err
 	}
-	if apiToken == "" && cfg != nil && cfg.SpageApiToken != "" {
-		apiToken = cfg.SpageApiToken
+	if apiToken == "" && cfg != nil && cfg.ApiToken != "" {
+		apiToken = cfg.ApiToken
 	}
 	if apiToken != "" {
 		req.Header.Set("Authorization", "Bearer "+apiToken)
 	}
+	common.LogDebug("Downloading bundle archive", map[string]interface{}{
+		"url": url,
+	})
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		cleanup()
-		return "", nil, fmt.Errorf("failed to download bundle archive: %w", err)
+		return "", nil, fmt.Errorf("failed to download bundle archive %s: %w", url, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		cleanup()
-		return "", nil, fmt.Errorf("bundle archive http %d", resp.StatusCode)
+		return "", nil, fmt.Errorf("bundle archive %s http %d", url, resp.StatusCode)
 	}
 	if err := extractTarGz(resp.Body, tempDir); err != nil {
 		cleanup()
@@ -501,8 +504,8 @@ var bundleUploadCmd = &cobra.Command{
 		}
 		// Resolve token: config or env
 		token := ""
-		if cfg != nil && cfg.SpageApiToken != "" {
-			token = cfg.SpageApiToken
+		if cfg != nil && cfg.ApiToken != "" {
+			token = cfg.ApiToken
 		}
 		if token == "" {
 			token = os.Getenv("SPAGE_API_TOKEN")

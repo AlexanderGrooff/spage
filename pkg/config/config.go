@@ -26,7 +26,7 @@ type Config struct {
 	PrivilegeEscalation PrivilegeEscalationConfig `mapstructure:"privilege_escalation"`
 
 	// API bearer token for CLI auth against spage-api
-	SpageApiToken string `mapstructure:"spage_api_token"`
+	ApiToken string `mapstructure:"api_token"`
 
 	// Internal fields for daemon reporting (not serialized)
 	daemonReporting interface{}
@@ -151,7 +151,7 @@ func setDefaults(v *viper.Viper) {
 	// API defaults
 	v.SetDefault("api.http_base", "http://localhost:1323")
 	// CLI/API auth token default (unset)
-	v.SetDefault("spage_api_token", "")
+	v.SetDefault("api_token", "")
 
 	// Temporal defaults
 	v.SetDefault("temporal.address", "") // Default to empty, SDK will use localhost:7233 or TEMPORAL_GRPC_ENDPOINT
