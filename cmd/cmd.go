@@ -424,6 +424,11 @@ var runCmd = &cobra.Command{
 			err = StartLocalExecutor(&graph, inventoryFile, cfg, daemonClient)
 		}
 		if err != nil {
+			if daemonClient != nil {
+				if err := pkg.ReportPlayError(daemonClient, err); err != nil {
+					common.LogWarn("failed to report play error", map[string]interface{}{"error": err.Error()})
+				}
+			}
 			common.LogError("Failed to run playbook", map[string]interface{}{
 				"error": err.Error(),
 			})

@@ -2,7 +2,6 @@ package pkg
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -201,10 +200,13 @@ func NewGraphFromFile(playbookPath string, rolesPaths string) (Graph, error) {
 		return Graph{}, fmt.Errorf("error reading YAML file %s: %v", absPlaybookPath, err)
 	}
 
-	currCwd := ChangeCWDToPlaybookDir(absPlaybookPath)
+	currCwd, err := ChangeCWDToPlaybookDir(absPlaybookPath)
+	if err != nil {
+		return Graph{}, fmt.Errorf("error changing directory to playbook path %s: %v", absPlaybookPath, err)
+	}
 	defer func() {
 		if err := os.Chdir(currCwd); err != nil {
-			log.Fatalf("Failed to change directory back to %s: %v", currCwd, err)
+			common.LogWarn("failed to change directory back to %s: %v", map[string]interface{}{"path": currCwd, "error": err.Error()})
 		}
 	}()
 

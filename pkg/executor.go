@@ -3,7 +3,6 @@ package pkg
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 
@@ -45,19 +44,19 @@ type GraphExecutor interface {
 	Revert(ctx context.Context, executedTasks []map[string]chan Task, hostContexts map[string]*HostContext, cfg *config.Config) error
 }
 
-func ChangeCWDToPlaybookDir(playbookPath string) string {
+func ChangeCWDToPlaybookDir(playbookPath string) (string, error) {
 	basePath := filepath.Dir(playbookPath)
 	currCwd, err := os.Getwd()
 	if err != nil {
-		log.Fatalf("Failed to get current working directory: %v", err)
+		return "", fmt.Errorf("failed to get current working directory: %v", err)
 	}
 
 	if err := os.Chdir(basePath); err != nil {
-		log.Fatalf("Failed to change directory to %s: %v", basePath, err)
+		return "", fmt.Errorf("failed to change directory to %s: %v", basePath, err)
 	}
 
 	common.LogDebug("Changed directory to playbook directory", map[string]interface{}{"path": basePath, "playbook": playbookPath})
-	return currCwd
+	return currCwd, nil
 }
 
 func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cfg *config.Config, daemonClientInterface interface{}) error {
@@ -109,10 +108,13 @@ func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cf
 		return err
 	}
 
-	currCwd := ChangeCWDToPlaybookDir(graph.PlaybookPath)
+	currCwd, err := ChangeCWDToPlaybookDir(graph.PlaybookPath)
+	if err != nil {
+		return err
+	}
 	defer func() {
 		if err := os.Chdir(currCwd); err != nil {
-			log.Fatalf("Failed to change directory back to %s: %v", currCwd, err)
+			common.LogWarn("failed to change directory back to %s: %v", map[string]interface{}{"path": currCwd, "error": err.Error()})
 		}
 	}()
 
@@ -136,11 +138,7 @@ func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cf
 	}
 
 	err = executor.Execute(hostContexts, orderedGraph, cfg)
-	if err != nil {
-		if err := ReportPlayError(daemonClient, err); err != nil {
-			common.LogWarn("failed to report play error", map[string]interface{}{"error": err.Error()})
-		}
-	} else {
+	if err == nil {
 		if err := ReportPlayCompletion(daemonClient); err != nil {
 			common.LogWarn("failed to report play completion", map[string]interface{}{"error": err.Error()})
 		}
