@@ -133,14 +133,18 @@ func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cf
 		if err := ReportPlayStart(daemonClient, graph.PlaybookPath, inventoryFile, cfg.Executor); err != nil {
 			common.LogWarn("failed to report play start", map[string]interface{}{"error": err.Error()})
 		}
-		defer func() {
-			if err := ReportPlayCompletion(daemonClient); err != nil {
-				common.LogWarn("failed to report play completion", map[string]interface{}{"error": err.Error()})
-			}
-		}()
 	}
 
 	err = executor.Execute(hostContexts, orderedGraph, cfg)
+	if err != nil {
+		if err := ReportPlayError(daemonClient, err); err != nil {
+			common.LogWarn("failed to report play error", map[string]interface{}{"error": err.Error()})
+		}
+	} else {
+		if err := ReportPlayCompletion(daemonClient); err != nil {
+			common.LogWarn("failed to report play completion", map[string]interface{}{"error": err.Error()})
+		}
+	}
 	return err
 }
 

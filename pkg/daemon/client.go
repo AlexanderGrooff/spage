@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/AlexanderGrooff/spage-protobuf/spage/core"
+	"github.com/AlexanderGrooff/spage/pkg/common"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -75,8 +77,17 @@ func (c *Client) Connect() error {
 		return nil
 	}
 
-	// Create connection with timeout
-	conn, err := grpc.NewClient(c.endpoint)
+	// Create connection with insecure credentials (daemon runs without TLS by default)
+	// Use a blocking dial with a timeout to surface connection errors immediately
+	ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
+	defer cancel()
+
+	conn, err := grpc.DialContext(
+		ctx,
+		c.endpoint,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
+	)
 	if err != nil {
 		// Check if it's a connection error
 		if status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded {
@@ -169,13 +180,23 @@ func (c *Client) RegisterPlayStart(playbook, inventory string, variables map[str
 }
 
 func (c *Client) RegisterPlayCompletion() error {
+	if err := c.ensureConnected(); err != nil {
+		if status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded {
+			return fmt.Errorf("daemon not available: %w", err)
+		}
+		return err
+	}
 	req := &core.RegisterPlayCompletionRequest{
 		PlayId: c.taskID,
+		Status: core.PlayStatus_PLAY_STATUS_COMPLETED,
 	}
 
 	ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
 	defer cancel()
 
+	common.LogDebug("Registering play completion", map[string]interface{}{
+		"play_id": c.taskID,
+	})
 	resp, err := c.client.RegisterPlayCompletion(ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to register play completion: %w", err)
@@ -192,14 +213,25 @@ func (c *Client) RegisterPlayCompletion() error {
 }
 
 // RegisterPlayError registers a play error with the daemon
-func (c *Client) RegisterPlayError() error {
+func (c *Client) RegisterPlayError(err error) error {
+	if err := c.ensureConnected(); err != nil {
+		if status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded {
+			return fmt.Errorf("daemon not available: %w", err)
+		}
+		return err
+	}
 	req := &core.RegisterPlayCompletionRequest{
 		PlayId: c.taskID,
+		Status: core.PlayStatus_PLAY_STATUS_FAILED,
+		Error:  err.Error(),
 	}
 
 	ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
 	defer cancel()
 
+	common.LogDebug("Registering play error", map[string]interface{}{
+		"play_id": c.taskID,
+	})
 	resp, err := c.client.RegisterPlayCompletion(ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to register play error: %w", err)
