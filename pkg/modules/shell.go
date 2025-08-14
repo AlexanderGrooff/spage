@@ -25,9 +25,9 @@ type ShellInput struct {
 }
 
 type ShellOutput struct {
-	Stdout  string `yaml:"stdout"`
-	Stderr  string `yaml:"stderr"`
-	Command string `yaml:"command"`
+	Stdout      string   `yaml:"stdout"`
+	Stderr      string   `yaml:"stderr"`
+	Command     string   `yaml:"command"`
 	StdoutLines []string `yaml:"stdout_lines"`
 	StderrLines []string `yaml:"stderr_lines"`
 	pkg.ModuleOutput
@@ -89,10 +89,10 @@ func (m ShellModule) templateAndExecute(command string, closure *pkg.Closure, pr
 	// Execute the command through a shell using the runtime layer's shell support
 	rc, stdout, stderr, err := closure.HostContext.RunCommandWithShell(templatedCmd, runAs, true)
 	output := ShellOutput{
-		Stdout:  stdout,
-		Stderr:  stderr,
-		Command: templatedCmd, // Store the original templated command
-		Rc:      rc,
+		Stdout:      stdout,
+		Stderr:      stderr,
+		Command:     templatedCmd, // Store the original templated command
+		Rc:          rc,
 		StdoutLines: strings.Split(stdout, "\n"),
 		StderrLines: strings.Split(stderr, "\n"),
 	}
