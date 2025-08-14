@@ -138,7 +138,7 @@ func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cf
 	}
 
 	err = executor.Execute(hostContexts, orderedGraph, cfg)
-	if err == nil {
+	if err == nil && daemonClient != nil {
 		if err := ReportPlayCompletion(daemonClient); err != nil {
 			common.LogWarn("failed to report play completion", map[string]interface{}{"error": err.Error()})
 		}
