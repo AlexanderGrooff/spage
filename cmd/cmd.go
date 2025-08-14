@@ -119,18 +119,7 @@ func GetGraph(playbookFile string, tags, skipTags []string, baseConfig *config.C
 		baseConfig.Tags.SkipTags = skipTags
 	}
 
-	// Support bundle URL: spage://bundle/<id>#<root_path>
-	if strings.HasPrefix(playbookFile, "spage://bundle/") {
-		localPath, cleanup, err := materializeBundleToTemp(playbookFile)
-		if err != nil {
-			return pkg.Graph{}, fmt.Errorf("failed to materialize bundle: %w", err)
-		}
-		// Best-effort cleanup when process exits
-		if cleanup != nil {
-			defer cleanup()
-		}
-		playbookFile = localPath
-	}
+	// Expect a local path here. Bundle resolution is handled by the caller (run/generate commands)
 
 	graph, err := pkg.NewGraphFromFile(playbookFile, baseConfig.RolesPath)
 	if err != nil {
@@ -353,6 +342,23 @@ var generateCmd = &cobra.Command{
 	Use:   "generate",
 	Short: "Generate a graph from a playbook and save it as Go code",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Resolve bundle references before building the graph
+		var cleanup func()
+		if strings.HasPrefix(playbookFile, "spage://bundle/") {
+			localPath, c, err := materializeBundleToTemp(playbookFile)
+			if err != nil {
+				common.LogError("Failed to materialize bundle", map[string]interface{}{
+					"error": err.Error(),
+				})
+				os.Exit(1)
+			}
+			cleanup = c
+			playbookFile = localPath
+		}
+		if cleanup != nil {
+			defer cleanup()
+		}
+
 		graph, err := GetGraph(playbookFile, tags, skipTags, cfg, becomeMode)
 		if err != nil {
 			common.LogError("Failed to generate graph", map[string]interface{}{
@@ -382,6 +388,23 @@ var runCmd = &cobra.Command{
 		daemonClient, err := GetDaemonClient()
 		if err != nil {
 			return fmt.Errorf("failed to get daemon client: %w", err)
+		}
+
+		// Resolve bundle references before building the graph
+		var cleanup func()
+		if strings.HasPrefix(playbookFile, "spage://bundle/") {
+			localPath, c, err := materializeBundleToTemp(playbookFile)
+			if err != nil {
+				if daemonClient != nil {
+					_ = daemonClient.RegisterPlayError(err)
+				}
+				return fmt.Errorf("failed to materialize bundle: %w", err)
+			}
+			cleanup = c
+			playbookFile = localPath
+		}
+		if cleanup != nil {
+			defer cleanup()
 		}
 
 		graph, err := GetGraph(playbookFile, tags, skipTags, cfg, becomeMode)
