@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,6 +28,19 @@ type HostContext struct {
 	sshPoolManager *sshpool.Manager
 	mu             sync.RWMutex
 }
+
+// Global source FS for reading playbook-relative assets (templates, copy src) when running from a bundle.
+var sourceFSHolder struct {
+	fs fs.FS
+}
+
+// Exported wrappers used by CLI without exposing internals elsewhere
+func SetSourceFSForCLI(fsys fs.FS) { setSourceFS(fsys) }
+func ClearSourceFSForCLI()         { clearSourceFS() }
+
+func setSourceFS(fsys fs.FS) { sourceFSHolder.fs = fsys }
+func clearSourceFS()         { sourceFSHolder.fs = nil }
+func getSourceFS() fs.FS     { return sourceFSHolder.fs }
 
 // GetOrCreateSSHPool returns an existing SSH pool or creates a new one
 func (c *HostContext) GetOrCreateSSHPool() (*desopssshpool.Pool, error) {
@@ -96,6 +110,20 @@ func InitializeHostContext(host *Host, cfg *config.Config) (*HostContext, error)
 }
 
 func ReadTemplateFile(filename string) (string, error) {
+	// If a source FS is configured, read from it using templates/ relative path semantics
+	if fsys := getSourceFS(); fsys != nil {
+		// Module file sources are typically relative to a templates dir when not absolute
+		rel := filename
+		if !filepath.IsAbs(filename) {
+			rel = filepath.Join("templates", filename)
+		}
+		// Convert to slash for fs.FS
+		b, err := fs.ReadFile(fsys, filepath.ToSlash(rel))
+		if err != nil {
+			return "", fmt.Errorf("failed to read file %s from FS: %w", rel, err)
+		}
+		return string(b), nil
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("failed to get current working directory: %w", err)
@@ -103,6 +131,19 @@ func ReadTemplateFile(filename string) (string, error) {
 	common.LogDebug("Reading template file in templates directory", map[string]interface{}{"filename": filename, "dir": filepath.Dir(filename), "cwd": cwd})
 	if !filepath.IsAbs(filename) {
 		return ReadLocalFile(filepath.Join("templates", filename))
+	}
+	return ReadLocalFile(filename)
+}
+
+// ReadSourceFile reads a file that may be part of the source bundle FS (if configured),
+// falling back to the local filesystem.
+func ReadSourceFile(filename string) (string, error) {
+	if fsys := getSourceFS(); fsys != nil {
+		b, err := fs.ReadFile(fsys, filepath.ToSlash(filename))
+		if err != nil {
+			return "", fmt.Errorf("failed to read file %s from FS: %w", filename, err)
+		}
+		return string(b), nil
 	}
 	return ReadLocalFile(filename)
 }

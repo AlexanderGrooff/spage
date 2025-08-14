@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"mime/multipart"
 	"net/http"
@@ -139,44 +140,22 @@ func GetGraph(playbookFile string, tags, skipTags []string, baseConfig *config.C
 	return filteredGraph, nil
 }
 
-// materializeBundleToTemp downloads a bundle archive from API and extracts it to a temp dir.
-// Returns absolute path to the root playbook file and a cleanup func.
-func materializeBundleToTemp(bundleRef string) (string, func(), error) {
+// materializeBundleToFS downloads a bundle archive and loads it into an in-memory fs.FS.
+// Returns the fs, the root playbook path within the FS, and a cleanup func (no-op).
+func materializeBundleToFS(bundleRef string) (fs.FS, string, func(), error) {
 	const prefix = "spage://bundle/"
 	ref := strings.TrimPrefix(bundleRef, prefix)
 	parts := strings.SplitN(ref, "#", 2)
 	if len(parts) != 2 {
-		return "", nil, fmt.Errorf("invalid bundle ref: %s", bundleRef)
+		return nil, "", nil, fmt.Errorf("invalid bundle ref: %s", bundleRef)
 	}
 	bundleID := parts[0]
 	rootPath := parts[1]
 
-	// Prefer config.api.http_base, fall back to env, then default
-	base := ""
-	if cfg != nil && cfg.API.HTTPBase != "" {
-		base = cfg.API.HTTPBase
-	}
-	if base == "" {
-		base = os.Getenv("SPAGE_API_HTTP_BASE")
-	}
-	if base == "" {
-		base = "http://localhost:8080"
-	}
-
-	// Extract archive to temp dir
-	tempDir, err := os.MkdirTemp("", "spage-bundle-")
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to create temp dir: %w", err)
-	}
-	cleanup := func() {
-		_ = os.RemoveAll(tempDir)
-	}
-
-	url := fmt.Sprintf("%s/api/bundles/%s/archive", strings.TrimRight(base, "/"), bundleID)
+	url := fmt.Sprintf("%s/api/bundles/%s/archive", strings.TrimRight(cfg.API.HTTPBase, "/"), bundleID)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		cleanup()
-		return "", nil, err
+		return nil, "", nil, err
 	}
 	if apiToken == "" && cfg != nil && cfg.ApiToken != "" {
 		apiToken = cfg.ApiToken
@@ -184,64 +163,20 @@ func materializeBundleToTemp(bundleRef string) (string, func(), error) {
 	if apiToken != "" {
 		req.Header.Set("Authorization", "Bearer "+apiToken)
 	}
-	common.LogDebug("Downloading bundle archive", map[string]interface{}{
-		"url": url,
-	})
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("failed to download bundle archive %s: %w", url, err)
+		return nil, "", nil, fmt.Errorf("failed to download bundle archive %s: %w", url, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		cleanup()
-		return "", nil, fmt.Errorf("bundle archive %s http %d", url, resp.StatusCode)
+		return nil, "", nil, fmt.Errorf("bundle archive %s http %d", url, resp.StatusCode)
 	}
-	if err := extractTarGz(resp.Body, tempDir); err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("failed to extract bundle: %w", err)
-	}
-	absRoot := filepath.Join(tempDir, filepath.FromSlash(rootPath))
-	return absRoot, cleanup, nil
-}
-
-func extractTarGz(r io.Reader, dstDir string) error {
-	gz, err := gzip.NewReader(r)
+	memfs, err := pkg.NewMemFSFromTarGz(resp.Body)
 	if err != nil {
-		return err
+		return nil, "", nil, fmt.Errorf("failed to load bundle into FS: %w", err)
 	}
-	defer func() { _ = gz.Close() }()
-	tr := tar.NewReader(gz)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		if hdr.Typeflag != tar.TypeReg {
-			continue
-		}
-		clean := filepath.Clean(hdr.Name)
-		if strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
-			return fmt.Errorf("invalid path in archive: %s", clean)
-		}
-		outPath := filepath.Join(dstDir, clean)
-		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
-			return err
-		}
-		f, err := os.Create(outPath)
-		if err != nil {
-			return err
-		}
-		if _, err := io.Copy(f, tr); err != nil {
-			_ = f.Close()
-			return err
-		}
-		_ = f.Close()
-	}
-	return nil
+	cleanup := func() {}
+	return memfs, filepath.ToSlash(rootPath), cleanup, nil
 }
 
 // createTarGzFromDir writes a tar.gz of srcDir into w, preserving relative paths
@@ -342,24 +277,29 @@ var generateCmd = &cobra.Command{
 	Use:   "generate",
 	Short: "Generate a graph from a playbook and save it as Go code",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Resolve bundle references before building the graph
+		// Resolve bundle references using FS (no disk extraction)
 		var cleanup func()
+		var graph pkg.Graph
+		var err error
 		if strings.HasPrefix(playbookFile, "spage://bundle/") {
-			localPath, c, err := materializeBundleToTemp(playbookFile)
+			fsys, rootPath, c, err := materializeBundleToFS(playbookFile)
 			if err != nil {
-				common.LogError("Failed to materialize bundle", map[string]interface{}{
-					"error": err.Error(),
-				})
+				common.LogError("Failed to load bundle FS", map[string]interface{}{"error": err.Error()})
 				os.Exit(1)
 			}
 			cleanup = c
-			playbookFile = localPath
+			pkg.SetSourceFSForCLI(fsys)
+			defer pkg.ClearSourceFSForCLI()
+			if cleanup != nil {
+				defer cleanup()
+			}
+			graph, err = pkg.NewGraphFromFS(fsys, rootPath, cfg.RolesPath)
+			if err != nil {
+				return fmt.Errorf("failed to generate graph: %w", err)
+			}
+		} else {
+			graph, err = GetGraph(playbookFile, tags, skipTags, cfg, becomeMode)
 		}
-		if cleanup != nil {
-			defer cleanup()
-		}
-
-		graph, err := GetGraph(playbookFile, tags, skipTags, cfg, becomeMode)
 		if err != nil {
 			common.LogError("Failed to generate graph", map[string]interface{}{
 				"error": err.Error(),
@@ -390,29 +330,39 @@ var runCmd = &cobra.Command{
 			return fmt.Errorf("failed to get daemon client: %w", err)
 		}
 
-		// Resolve bundle references before building the graph
+		// Resolve bundle references using FS (no disk extraction)
 		var cleanup func()
+		var graph pkg.Graph
 		if strings.HasPrefix(playbookFile, "spage://bundle/") {
-			localPath, c, err := materializeBundleToTemp(playbookFile)
+			fsys, rootPath, c, err := materializeBundleToFS(playbookFile)
 			if err != nil {
 				if daemonClient != nil {
 					_ = daemonClient.RegisterPlayError(err)
 				}
-				return fmt.Errorf("failed to materialize bundle: %w", err)
+				return fmt.Errorf("failed to load bundle FS: %w", err)
 			}
 			cleanup = c
-			playbookFile = localPath
-		}
-		if cleanup != nil {
-			defer cleanup()
-		}
-
-		graph, err := GetGraph(playbookFile, tags, skipTags, cfg, becomeMode)
-		if err != nil {
-			if daemonClient != nil {
-				_ = daemonClient.RegisterPlayError(err)
+			pkg.SetSourceFSForCLI(fsys)
+			defer pkg.ClearSourceFSForCLI()
+			if cleanup != nil {
+				defer cleanup()
 			}
-			return fmt.Errorf("failed to generate graph: %w", err)
+			graph, err = pkg.NewGraphFromFS(fsys, rootPath, cfg.RolesPath)
+			if err != nil {
+				if daemonClient != nil {
+					_ = daemonClient.RegisterPlayError(err)
+				}
+				return fmt.Errorf("failed to generate graph: %w", err)
+			}
+		} else {
+			var err error
+			graph, err = GetGraph(playbookFile, tags, skipTags, cfg, becomeMode)
+			if err != nil {
+				if daemonClient != nil {
+					_ = daemonClient.RegisterPlayError(err)
+				}
+				return fmt.Errorf("failed to generate graph: %w", err)
+			}
 		}
 		if checkMode {
 			if cfg.Facts == nil {

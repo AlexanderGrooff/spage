@@ -45,6 +45,16 @@ type GraphExecutor interface {
 }
 
 func ChangeCWDToPlaybookDir(playbookPath string) (string, error) {
+	// If running from an FS (bundle), PlaybookPath will not be a real file path.
+	// Heuristic: if it contains forward slashes and no path separator conversions are needed, and starts without '/',
+	// treat it as FS mode and skip chdir.
+	// if strings.Contains(playbookPath, "/") && !filepath.IsAbs(playbookPath) && filepath.Separator != '/' {
+	// 	// On platforms where separator differs, still attempt; for our case we skip chdir in FS mode.
+	// }
+	if getSourceFS() != nil {
+		// FS mode active: no-op
+		return os.Getwd()
+	}
 	basePath := filepath.Dir(playbookPath)
 	currCwd, err := os.Getwd()
 	if err != nil {

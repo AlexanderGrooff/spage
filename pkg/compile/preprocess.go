@@ -2,6 +2,7 @@ package compile
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,6 +100,214 @@ func readRoleData(roleDir string) ([]byte, error) {
 		}
 	}
 	return roleData, nil
+}
+
+// FS variants below allow preprocessing from an abstract fs.FS without touching disk
+
+// findRoleInPathsFS locates a role tasks dir within the FS
+func findRoleInPathsFS(fsys fs.FS, roleName string, rolesPaths []string, currentBasePath string) (string, error) {
+	for _, rolesPath := range rolesPaths {
+		var rolePath string
+		if filepath.IsAbs(rolesPath) {
+			// For fs.FS, treat absolute as is (caller should supply posix-like paths)
+			rolePath = filepath.ToSlash(filepath.Join(rolesPath, roleName, "tasks"))
+		} else {
+			rolePath = filepath.ToSlash(filepath.Join(currentBasePath, rolesPath, roleName, "tasks"))
+		}
+		// Check existence of main.yaml or main.yml
+		if _, err := fs.Stat(fsys, filepath.ToSlash(filepath.Join(rolePath, "main.yaml"))); err == nil {
+			return rolePath, nil
+		}
+		if _, err := fs.Stat(fsys, filepath.ToSlash(filepath.Join(rolePath, "main.yml"))); err == nil {
+			return rolePath, nil
+		}
+	}
+	return "", fmt.Errorf("role '%s' not found in any of the roles paths: %v", roleName, rolesPaths)
+}
+
+func readRoleDataFS(fsys fs.FS, roleDir string) ([]byte, error) {
+	// Try yaml then yml
+	if b, err := fs.ReadFile(fsys, filepath.ToSlash(filepath.Join(roleDir, "main.yaml"))); err == nil {
+		return b, nil
+	}
+	if b, err := fs.ReadFile(fsys, filepath.ToSlash(filepath.Join(roleDir, "main.yml"))); err == nil {
+		return b, nil
+	}
+	return nil, fmt.Errorf("role tasks file not found in %s", roleDir)
+}
+
+func processIncludeDirectiveFS(fsys fs.FS, includeValue interface{}, currentBasePath string, rolesPaths []string) ([]map[string]interface{}, error) {
+	if pathStr, ok := includeValue.(string); ok {
+		absPath := pathStr
+		if !filepath.IsAbs(pathStr) {
+			absPath = filepath.ToSlash(filepath.Join(currentBasePath, pathStr))
+		}
+		includedData, err := fs.ReadFile(fsys, absPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read included file %s: %w", absPath, err)
+		}
+		nestedBasePath := filepath.ToSlash(filepath.Dir(absPath))
+		nestedBlocks, err := PreprocessPlaybookFS(fsys, includedData, nestedBasePath, rolesPaths)
+		if err != nil {
+			return nil, fmt.Errorf("failed to preprocess included file %s: %w", absPath, err)
+		}
+		return nestedBlocks, nil
+	}
+	return nil, fmt.Errorf("invalid 'include' value: expected string, got %T", includeValue)
+}
+
+func processIncludeRoleDirectiveFS(fsys fs.FS, roleParams interface{}, currentBasePath string, rolesPaths []string) ([]map[string]interface{}, error) {
+	paramsMap, ok := roleParams.(map[string]interface{})
+	if !ok {
+		if roleNameStr, okStr := roleParams.(string); okStr {
+			paramsMap = map[string]interface{}{"name": roleNameStr}
+		} else {
+			return nil, fmt.Errorf("invalid 'include_role' value: expected map or string, got %T", roleParams)
+		}
+	}
+	roleName, nameOk := paramsMap["name"].(string)
+	if !nameOk || roleName == "" {
+		return nil, fmt.Errorf("missing or invalid 'name' in include_role directive")
+	}
+	roleTasksBasePath, err := findRoleInPathsFS(fsys, roleName, rolesPaths, currentBasePath)
+	if err != nil {
+		return nil, err
+	}
+	roleData, err := readRoleDataFS(fsys, roleTasksBasePath)
+	if err != nil {
+		return nil, err
+	}
+	roleBlocks, err := PreprocessPlaybookFS(fsys, roleData, roleTasksBasePath, rolesPaths)
+	if err != nil {
+		return nil, fmt.Errorf("failed to preprocess role '%s' tasks from %s: %w", roleName, roleTasksBasePath, err)
+	}
+	return roleBlocks, nil
+}
+
+// PreprocessPlaybookFS mirrors PreprocessPlaybook but reads from fs.FS and uses posix-style paths
+func PreprocessPlaybookFS(fsys fs.FS, data []byte, basePath string, rolesPaths []string) ([]map[string]interface{}, error) {
+	var initialBlocks []map[string]interface{}
+	if err := yaml.Unmarshal(data, &initialBlocks); err != nil {
+		return nil, fmt.Errorf("error unmarshaling YAML: %w", err)
+	}
+	var processedBlocks []map[string]interface{}
+	var processErrors []error
+	for _, block := range initialBlocks {
+		if _, hasHosts := block["hosts"]; hasHosts {
+			rootBlocks, err := processPlaybookRootFS(fsys, block, basePath, rolesPaths)
+			if err != nil {
+				processErrors = append(processErrors, fmt.Errorf("error processing playbook root: %w", err))
+			} else {
+				processedBlocks = append(processedBlocks, rootBlocks...)
+			}
+			continue
+		}
+		processed := false
+		for key, value := range block {
+			switch key {
+			case "include", "include_playbook", "import_tasks", "import_playbook", "include_tasks":
+				nestedBlocks, err := processIncludeDirectiveFS(fsys, value, basePath, rolesPaths)
+				if err != nil {
+					processErrors = append(processErrors, fmt.Errorf("error processing '%s' directive: %w", key, err))
+				} else {
+					processedBlocks = append(processedBlocks, nestedBlocks...)
+				}
+				processed = true
+			case "include_role", "import_role":
+				nestedBlocks, err := processIncludeRoleDirectiveFS(fsys, value, basePath, rolesPaths)
+				if err != nil {
+					processErrors = append(processErrors, fmt.Errorf("error processing '%s' directive: %w", key, err))
+				} else {
+					processedBlocks = append(processedBlocks, nestedBlocks...)
+				}
+				processed = true
+			}
+		}
+		if !processed {
+			processedBlocks = append(processedBlocks, block)
+		}
+	}
+	if len(processErrors) > 0 {
+		msgs := make([]string, len(processErrors))
+		for i, e := range processErrors {
+			msgs[i] = e.Error()
+		}
+		return nil, fmt.Errorf("errors during preprocessing:\n%s", strings.Join(msgs, "\n"))
+	}
+	return processedBlocks, nil
+}
+
+func processPlaybookRootFS(fsys fs.FS, playbookRoot map[string]interface{}, currentBasePath string, rolesPaths []string) ([]map[string]interface{}, error) {
+	if _, hasHosts := playbookRoot["hosts"]; !hasHosts {
+		return nil, fmt.Errorf("not a playbook root entry: missing 'hosts' field")
+	}
+	var result []map[string]interface{}
+	root_block := map[string]interface{}{
+		"is_root": true,
+	}
+	if vars, ok := playbookRoot["vars"]; ok {
+		root_block["vars"] = vars
+	}
+	result = append(result, root_block)
+	if roles, hasRoles := playbookRoot["roles"]; hasRoles {
+		rolesList, ok := roles.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("invalid 'roles' section: expected list, got %T", roles)
+		}
+		for _, roleEntry := range rolesList {
+			var roleName string
+			switch role := roleEntry.(type) {
+			case string:
+				roleName = role
+			case map[string]interface{}:
+				if name, ok := role["role"].(string); ok {
+					roleName = name
+				} else if name, ok := role["name"].(string); ok {
+					roleName = name
+				} else {
+					return nil, fmt.Errorf("invalid role entry: missing 'role' or 'name' field")
+				}
+			default:
+				return nil, fmt.Errorf("invalid role entry: expected string or map, got %T", roleEntry)
+			}
+			roleParams := map[string]interface{}{"name": roleName}
+			roleBlocks, err := processIncludeRoleDirectiveFS(fsys, roleParams, currentBasePath, rolesPaths)
+			if err != nil {
+				return nil, fmt.Errorf("failed to process role '%s': %w", roleName, err)
+			}
+			result = append(result, roleBlocks...)
+		}
+	}
+	for _, section := range []string{"pre_tasks", "tasks", "post_tasks"} {
+		if tasks, has := playbookRoot[section]; has {
+			tasksList, ok := tasks.([]interface{})
+			if !ok {
+				return nil, fmt.Errorf("invalid '%s' section: expected list, got %T", section, tasks)
+			}
+			for _, taskEntry := range tasksList {
+				taskMap, ok := taskEntry.(map[string]interface{})
+				if !ok {
+					return nil, fmt.Errorf("invalid task entry: expected map, got %T", taskEntry)
+				}
+				result = append(result, taskMap)
+			}
+		}
+	}
+	if handlers, hasHandlers := playbookRoot["handlers"]; hasHandlers {
+		handlersList, ok := handlers.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("invalid 'handlers' section: expected list, got %T", handlers)
+		}
+		for _, handlerEntry := range handlersList {
+			handlerMap, ok := handlerEntry.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("invalid handler entry: expected map, got %T", handlerEntry)
+			}
+			handlerMap["is_handler"] = true
+			result = append(result, handlerMap)
+		}
+	}
+	return result, nil
 }
 
 // processIncludeRoleDirective handles the 'include_role' directive during preprocessing.

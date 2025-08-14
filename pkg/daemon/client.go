@@ -77,16 +77,9 @@ func (c *Client) Connect() error {
 		return nil
 	}
 
-	// Create connection with insecure credentials (daemon runs without TLS by default)
-	// Use a blocking dial with a timeout to surface connection errors immediately
-	ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
-	defer cancel()
-
-	conn, err := grpc.DialContext(
-		ctx,
+	conn, err := grpc.NewClient(
 		c.endpoint,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
 	)
 	if err != nil {
 		// Check if it's a connection error

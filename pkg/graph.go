@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -252,6 +253,60 @@ func NewGraphFromFile(playbookPath string, rolesPaths string) (Graph, error) {
 		return Graph{}, fmt.Errorf("failed to generate graph: %w", err)
 	}
 	common.LogDebug("NewGraph generated graph.", map[string]interface{}{"graph": graph.String()})
+	return graph, nil
+}
+
+// NewGraphFromFS builds a graph from a playbook path within an fs.FS.
+// The playbookPath must be the POSIX-style path inside the provided FS.
+func NewGraphFromFS(sourceFS fs.FS, playbookPath string, rolesPaths string) (Graph, error) {
+	// Read playbook YAML from FS
+	data, err := fs.ReadFile(sourceFS, playbookPath)
+	if err != nil {
+		return Graph{}, fmt.Errorf("error reading YAML from FS %s: %v", playbookPath, err)
+	}
+
+	// Split roles paths from configuration
+	splitRolesPaths := func(rolesPaths string) []string {
+		if rolesPaths == "" {
+			return []string{"roles"}
+		}
+		paths := strings.Split(rolesPaths, ":")
+		var result []string
+		for _, p := range paths {
+			if strings.TrimSpace(p) != "" {
+				result = append(result, strings.TrimSpace(p))
+			}
+		}
+		if len(result) == 0 {
+			return []string{"roles"}
+		}
+		return result
+	}
+
+	// Use FS-aware preprocessing. Base path is directory of the playbook inside FS.
+	basePath := filepath.ToSlash(filepath.Dir(playbookPath))
+	processedNodes, err := compile.PreprocessPlaybookFS(sourceFS, data, basePath, splitRolesPaths(rolesPaths))
+	if err != nil {
+		return Graph{}, fmt.Errorf("error preprocessing playbook data from FS: %w", err)
+	}
+
+	attributes, err := ParsePlayAttributes(processedNodes)
+	if err != nil {
+		common.LogDebug("No root block found in playbook, using empty attributes", map[string]interface{}{"playbook": playbookPath})
+		attributes = make(map[string]interface{})
+	}
+	// Parse YAML nodes into tasks
+	tasks, err := TextToGraphNodes(processedNodes)
+	if err != nil {
+		return Graph{}, fmt.Errorf("error parsing preprocessed tasks: %w", err)
+	}
+
+	// Use playbookPath as-is to avoid OS cwd changes; executor must handle FS mode.
+	graph, err := NewGraph(tasks, attributes, playbookPath)
+	if err != nil {
+		return Graph{}, fmt.Errorf("failed to generate graph: %w", err)
+	}
+	common.LogDebug("NewGraphFromFS generated graph.", map[string]interface{}{"graph": graph.String()})
 	return graph, nil
 }
 
