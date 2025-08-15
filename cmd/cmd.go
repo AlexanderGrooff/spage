@@ -259,7 +259,7 @@ func GetDaemonClient() (*daemon.Client, error) {
 
 		daemonClient, err = daemon.NewClient(&daemon.Config{
 			Endpoint: daemonEndpoint,
-			TaskID:   playIDToUse,
+			PlayID:   playIDToUse,
 			Timeout:  cfg.Daemon.Timeout,
 		})
 		if err != nil {

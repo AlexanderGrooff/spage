@@ -22,7 +22,7 @@ type Client struct {
 
 	// Configuration
 	endpoint string
-	taskID   string
+	playID   string
 	timeout  time.Duration
 
 	// Connection management
@@ -41,14 +41,14 @@ type Client struct {
 // Config holds the client configuration
 type Config struct {
 	Endpoint string
-	TaskID   string
+	PlayID   string
 	Timeout  time.Duration
 }
 
 // NewClient creates a new gRPC client for daemon communication
 func NewClient(cfg *Config) (*Client, error) {
 	if cfg.Endpoint == "" {
-		cfg.Endpoint = "localhost:9091"
+		return nil, fmt.Errorf("endpoint is required")
 	}
 
 	if cfg.Timeout == 0 {
@@ -59,7 +59,7 @@ func NewClient(cfg *Config) (*Client, error) {
 
 	client := &Client{
 		endpoint: cfg.Endpoint,
-		taskID:   cfg.TaskID,
+		playID:   cfg.PlayID,
 		timeout:  cfg.Timeout,
 		ctx:      ctx,
 		cancel:   cancel,
@@ -138,7 +138,7 @@ func (c *Client) RegisterPlayStart(playbook, inventory string, variables map[str
 	}
 
 	req := &core.RegisterPlayRequest{
-		PlayId:    c.taskID,
+		PlayId:    c.playID,
 		Playbook:  playbook,
 		Inventory: inventory,
 		Variables: variables,
@@ -180,7 +180,7 @@ func (c *Client) RegisterPlayCompletion() error {
 		return err
 	}
 	req := &core.RegisterPlayCompletionRequest{
-		PlayId: c.taskID,
+		PlayId: c.playID,
 		Status: core.PlayStatus_PLAY_STATUS_COMPLETED,
 	}
 
@@ -188,7 +188,7 @@ func (c *Client) RegisterPlayCompletion() error {
 	defer cancel()
 
 	common.LogDebug("Registering play completion", map[string]interface{}{
-		"play_id": c.taskID,
+		"play_id": c.playID,
 	})
 	resp, err := c.client.RegisterPlayCompletion(ctx, req)
 	if err != nil {
@@ -214,7 +214,7 @@ func (c *Client) RegisterPlayError(err error) error {
 		return err
 	}
 	req := &core.RegisterPlayCompletionRequest{
-		PlayId: c.taskID,
+		PlayId: c.playID,
 		Status: core.PlayStatus_PLAY_STATUS_FAILED,
 		Error:  err.Error(),
 	}
@@ -223,7 +223,7 @@ func (c *Client) RegisterPlayError(err error) error {
 	defer cancel()
 
 	common.LogDebug("Registering play error", map[string]interface{}{
-		"play_id": c.taskID,
+		"play_id": c.playID,
 	})
 	resp, err := c.client.RegisterPlayCompletion(ctx, req)
 	if err != nil {
@@ -243,7 +243,7 @@ func (c *Client) RegisterPlayError(err error) error {
 // UpdateTaskResult sends a task result update to the daemon
 func (c *Client) UpdateTaskResult(taskResult *core.TaskResult) error {
 	if c == nil {
-		return nil // Return nil instead of error to avoid breaking task execution
+		return fmt.Errorf("cannot update task result: client is nil")
 	}
 
 	// Check if we're connected first
@@ -252,17 +252,14 @@ func (c *Client) UpdateTaskResult(taskResult *core.TaskResult) error {
 	c.mu.RUnlock()
 
 	if !connected {
-		// Try to connect, but don't fail if it doesn't work
 		if err := c.Connect(); err != nil {
-			// Silently ignore connection failures - daemon might not be running
-			return nil
+			return fmt.Errorf("failed to connect to daemon: %w", err)
 		}
 	}
 
 	// Ensure progress stream is established
 	if err := c.ensureProgressStream(); err != nil {
-		// Silently ignore stream establishment failures - daemon might not be running
-		return nil
+		return fmt.Errorf("failed to ensure progress stream: %w", err)
 	}
 
 	// Ensure the TaskResult has the correct TaskId (should be the actual task name/ID)
@@ -271,7 +268,7 @@ func (c *Client) UpdateTaskResult(taskResult *core.TaskResult) error {
 	}
 
 	update := &core.TaskProgressUpdate{
-		TaskId:    c.taskID, // Use the play ID for the TaskProgressUpdate.TaskId (this is actually the play ID)
+		TaskId:    c.playID, // Use the play ID for the TaskProgressUpdate.TaskId (this is actually the play ID)
 		Result:    taskResult,
 		Timestamp: timestamppb.Now(),
 	}
@@ -298,7 +295,7 @@ func (c *Client) UpdateTaskResult(taskResult *core.TaskResult) error {
 
 				// Try to reestablish connection
 				if reconnectErr := c.ensureProgressStream(); reconnectErr != nil {
-					return nil // Don't fail the operation
+					return fmt.Errorf("failed to reestablish progress stream: %w", reconnectErr)
 				}
 				continue
 			}
@@ -308,8 +305,7 @@ func (c *Client) UpdateTaskResult(taskResult *core.TaskResult) error {
 		}
 
 		if err != nil {
-			// Silently ignore send failures - daemon might not be running
-			return nil
+			return fmt.Errorf("failed to send task result update: %w", err)
 		}
 	}
 
@@ -418,9 +414,4 @@ func (c *Client) IsConnected() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.connected
-}
-
-// GetTaskID returns the task ID (which is also the play ID)
-func (c *Client) GetTaskID() string {
-	return c.taskID
 }

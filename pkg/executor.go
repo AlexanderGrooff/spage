@@ -136,16 +136,7 @@ func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cf
 		}
 	}
 
-	// Store daemon client in a context that can be accessed by executors
-	// We'll use a global variable or pass it through the config for now
-	if daemonClient != nil {
-		// For now, we'll store it in the config as a temporary solution
-		// This is not ideal but avoids breaking the interface
-		cfg.SetDaemonReporting(daemonClient)
-		if err := ReportPlayStart(daemonClient, graph.PlaybookPath, inventoryFile, cfg.Executor); err != nil {
-			common.LogWarn("failed to report play start", map[string]interface{}{"error": err.Error()})
-		}
-	}
+	go ReportPlayStart(daemonClient, graph.PlaybookPath, inventoryFile, cfg.Executor)
 
 	err = executor.Execute(hostContexts, orderedGraph, cfg)
 	if err == nil && daemonClient != nil {

@@ -5,6 +5,7 @@ import (
 	"runtime"
 
 	"github.com/AlexanderGrooff/spage-protobuf/spage/core"
+	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/daemon"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -23,7 +24,11 @@ func ReportTaskStart(client *daemon.Client, taskName, hostName string, execution
 		StartedAt: timestamppb.Now(),
 	}
 
-	return client.UpdateTaskResult(taskResult)
+	if err := client.UpdateTaskResult(taskResult); err != nil {
+		common.LogWarn("failed to report task start", map[string]interface{}{"error": err.Error()})
+		return err
+	}
+	return nil
 }
 
 // ReportTaskCompletion reports the completion of a task with metrics
@@ -69,7 +74,11 @@ func ReportTaskCompletion(client *daemon.Client, task Task, result TaskResult, h
 	}
 
 	// Use the new UpdateTaskResult method with the actual TaskResult
-	return client.UpdateTaskResult(taskResult)
+	if err := client.UpdateTaskResult(taskResult); err != nil {
+		common.LogWarn("failed to report task completion", map[string]interface{}{"error": err.Error()})
+		return err
+	}
+	return nil
 }
 
 func ReportTaskSkipped(client *daemon.Client, taskName, hostName string, executionLevel int) error {
@@ -83,34 +92,43 @@ func ReportTaskSkipped(client *daemon.Client, taskName, hostName string, executi
 		CompletedAt: timestamppb.Now(),
 	}
 
-	return client.UpdateTaskResult(taskResult)
+	if err := client.UpdateTaskResult(taskResult); err != nil {
+		common.LogWarn("failed to report task skipped", map[string]interface{}{"error": err.Error()})
+		return err
+	}
+	return nil
 }
 
-// ReportError reports an error to the daemon
-func ReportError(client *daemon.Client, executionLevel int, err error) error {
+func ReportPlayStart(client *daemon.Client, playbook, inventory, executor string) error {
 	if client == nil {
 		return nil
 	}
 
-	taskResult := &core.TaskResult{
-		TaskId:      "error", // Use a generic error task name
-		Status:      core.TaskStatus_TASK_STATUS_FAILED,
-		Error:       err.Error(),
-		CompletedAt: timestamppb.Now(),
+	if err := client.RegisterPlayStart(playbook, inventory, map[string]string{}, executor); err != nil {
+		common.LogWarn("failed to report play start", map[string]interface{}{"error": err.Error()})
+		return err
 	}
-
-	return client.UpdateTaskResult(taskResult)
-}
-
-// ReportExecutionStart reports the start of execution
-func ReportPlayStart(client *daemon.Client, playbook, inventory, executor string) error {
-	return client.RegisterPlayStart(playbook, inventory, map[string]string{}, executor)
+	return nil
 }
 
 func ReportPlayCompletion(client *daemon.Client) error {
-	return client.RegisterPlayCompletion()
+	if client == nil {
+		return nil
+	}
+	if err := client.RegisterPlayCompletion(); err != nil {
+		common.LogWarn("failed to report play completion", map[string]interface{}{"error": err.Error()})
+		return err
+	}
+	return nil
 }
 
 func ReportPlayError(client *daemon.Client, err error) error {
-	return client.RegisterPlayError(err)
+	if client == nil {
+		return nil
+	}
+	if err := client.RegisterPlayError(err); err != nil {
+		common.LogWarn("failed to report play error", map[string]interface{}{"error": err.Error()})
+		return err
+	}
+	return nil
 }

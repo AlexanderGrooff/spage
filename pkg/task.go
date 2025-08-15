@@ -399,22 +399,14 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	if client, ok := closure.Config.GetDaemonReporting().(*daemon.Client); ok {
 		daemonClient = client
 	}
-	if daemonClient != nil {
-		if err := ReportTaskStart(daemonClient, t.Name, closure.HostContext.Host.Name, 0); err != nil {
-			common.LogWarn("failed to report task start", map[string]interface{}{"error": err.Error()})
-		}
-	}
+	go ReportTaskStart(daemonClient, t.Name, closure.HostContext.Host.Name, 0)
 
 	startTime := time.Now()
 
 	shouldExecute, err := t.ShouldExecute(closure)
 	if err != nil {
 		res := TaskResult{Task: t, Closure: closure, Status: TaskStatusFailed, Error: err}
-		if daemonClient != nil {
-			if err := ReportTaskCompletion(daemonClient, t, res, closure.HostContext.Host.Name, -1); err != nil {
-				common.LogWarn("failed to report task completion", map[string]interface{}{"error": err.Error()})
-			}
-		}
+		go ReportTaskCompletion(daemonClient, t, res, closure.HostContext.Host.Name, -1)
 		return res
 	}
 	if !shouldExecute {
@@ -422,11 +414,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 			"task": t.Name,
 			"host": closure.HostContext.Host.Name,
 		})
-		if daemonClient != nil {
-			if err := ReportTaskSkipped(daemonClient, t.Name, closure.HostContext.Host.Name, 0); err != nil {
-				common.LogWarn("failed to report task skipped", map[string]interface{}{"error": err.Error()})
-			}
-		}
+		go ReportTaskSkipped(daemonClient, t.Name, closure.HostContext.Host.Name, 0)
 		return TaskResult{Task: t, Closure: closure, Status: TaskStatusSkipped}
 	}
 
@@ -478,11 +466,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	// If 'until' is not defined, execute once as normal.
 	if t.Until.Expression == "" {
 		res := t.executeOnce(taskClosure)
-		if daemonClient != nil {
-			if err := ReportTaskCompletion(daemonClient, t, res, closure.HostContext.Host.Name, -1); err != nil {
-				common.LogWarn("failed to report task completion", map[string]interface{}{"error": err.Error()})
-			}
-		}
+		go ReportTaskCompletion(daemonClient, t, res, closure.HostContext.Host.Name, -1)
 		return res
 	}
 
@@ -546,11 +530,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 			}
 			lastResult.Duration = time.Since(startTime) // Update total duration
 
-			if daemonClient != nil {
-				if err := ReportTaskCompletion(daemonClient, t, lastResult, closure.HostContext.Host.Name, -1); err != nil {
-					common.LogWarn("failed to report task completion", map[string]interface{}{"error": err.Error()})
-				}
-			}
+			go ReportTaskCompletion(daemonClient, t, lastResult, closure.HostContext.Host.Name, -1)
 			return lastResult
 		}
 
@@ -579,11 +559,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	}
 	lastResult.Duration = time.Since(startTime)
 
-	if daemonClient != nil {
-		if err := ReportTaskCompletion(daemonClient, t, lastResult, closure.HostContext.Host.Name, -1); err != nil {
-			common.LogWarn("failed to report task completion", map[string]interface{}{"error": err.Error()})
-		}
-	}
+	go ReportTaskCompletion(daemonClient, t, lastResult, closure.HostContext.Host.Name, -1)
 	return lastResult
 }
 
