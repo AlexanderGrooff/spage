@@ -1250,3 +1250,13 @@ func TestHostVarsPlaybook(t *testing.T) {
 		},
 	})
 }
+
+func TestOverwritingVariablesPlaybook(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/overwriting_variables.yaml",
+		configFile:   "sequential_no_revert.yaml",
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "overwriting_variables should succeed")
+		},
+	})
+}

@@ -1,0 +1,18 @@
+---
+- name: define var
+  set_fact:
+    var: 1
+
+- name: assert var is as initially defined
+  assert:
+    that:
+      - var == 1
+
+- name: overwrite var
+  set_fact:
+    var: 2
+
+- name: assert var is overwritten
+  assert:
+    that:
+      - var == 2
