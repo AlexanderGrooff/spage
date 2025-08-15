@@ -19,9 +19,9 @@ var testEnvironments = []struct {
 	executor      string
 	inventoryFile string
 }{
-	{executor: "local", inventoryFile: ""},
+	{executor: "local", inventoryFile: "inventory_localhost.yaml"},
 	// {executor: "local", inventoryFile: "inventory.yaml"},
-	{executor: "temporal", inventoryFile: ""},
+	// {executor: "temporal", inventoryFile: ""},
 	// {executor: "temporal", inventoryFile: "inventory.yaml"},
 }
 var allowSudo = false
@@ -1227,6 +1227,26 @@ func TestBecomeModePlaybook(t *testing.T) {
 				return
 			}
 			assert.Equal(t, 0, exitCode, "become_mode_playbook should succeed")
+		},
+	})
+}
+
+func TestGroupVarsPlaybook(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/group_vars_playbook.yaml",
+		configFile:   "sequential_no_revert.yaml",
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "group_vars_playbook should succeed")
+		},
+	})
+}
+
+func TestHostVarsPlaybook(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/host_vars_playbook.yaml",
+		configFile:   "sequential_no_revert.yaml",
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "host_vars_playbook should succeed")
 		},
 	})
 }

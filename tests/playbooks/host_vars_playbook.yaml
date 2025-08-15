@@ -1,0 +1,6 @@
+---
+- name: show variable from host vars
+  assert:
+    that: 
+      - host_var == "host_var_value"
+      - specific_host_var == "specific_host_var_value"

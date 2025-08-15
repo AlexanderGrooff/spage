@@ -1,0 +1,10 @@
+---
+- name: show variable from group vars
+  assert:
+    that: 
+      - dir_group_var == "dir_group_var_value"
+      - inventory_group_var == "specific_group_var_value"
+      - dir_allgroup_var == "dir_allgroup_var_value"
+      - inventory_allgroup_var == "specific_allgroup_var_value"
+      # - file_group_var == "file_group_var_value"
+      # - file_allgroup_var == "file_allgroup_var_value"
