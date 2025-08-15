@@ -571,8 +571,15 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 	}
 
 	// Get required inputs from graph attributes
-	for _, v := range graphAttributes["vars"].(map[string]interface{}) {
-		varsUsage := GetVariableUsageFromTemplate(v.(string))
+	for k, v := range graphAttributes["vars"].(map[string]interface{}) {
+		vStr, ok := v.(string)
+		if !ok {
+			common.LogDebug("failed to get variable usage from template", map[string]interface{}{
+				"error": fmt.Errorf("expected %s to be a string, got %T", k, v),
+			})
+			continue
+		}
+		varsUsage := GetVariableUsageFromTemplate(vStr)
 		g.RequiredInputs = append(g.RequiredInputs, varsUsage...)
 	}
 

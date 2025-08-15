@@ -1,3 +1,6 @@
+//go:build daemon
+// +build daemon
+
 package daemon
 
 import (
