@@ -261,12 +261,13 @@ func loadHostVars(inventoryDir string) (map[string]map[string]interface{}, error
 
 	for _, entry := range entries {
 		var hostName string
-		var varsToLoad map[string]interface{}
 
 		if entry.IsDir() {
 			// Handle host_vars/hostname/ directory structure
 			hostName = entry.Name()
-			varsToLoad = make(map[string]interface{})
+			if hostVars[hostName] == nil {
+				hostVars[hostName] = make(map[string]interface{})
+			}
 
 			hostDir := filepath.Join(hostVarsDir, hostName)
 			hostFiles, err := os.ReadDir(hostDir)
@@ -303,7 +304,7 @@ func loadHostVars(inventoryDir string) (map[string]map[string]interface{}, error
 
 				// Merge file variables into host variables
 				for k, v := range fileVars {
-					varsToLoad[k] = v
+					hostVars[hostName][k] = v
 				}
 			}
 		} else {
@@ -315,6 +316,9 @@ func loadHostVars(inventoryDir string) (map[string]map[string]interface{}, error
 
 			// Extract host name from filename (remove .yml/.yaml extension)
 			hostName = strings.TrimSuffix(strings.TrimSuffix(fileName, ".yml"), ".yaml")
+			if hostVars[hostName] == nil {
+				hostVars[hostName] = make(map[string]interface{})
+			}
 
 			filePath := filepath.Join(hostVarsDir, fileName)
 			fileVars, err := loadVariablesFromFile(filePath)
@@ -326,16 +330,15 @@ func loadHostVars(inventoryDir string) (map[string]map[string]interface{}, error
 				})
 				continue
 			}
-			varsToLoad = fileVars
+			for k, v := range fileVars {
+				hostVars[hostName][k] = v
+			}
 		}
-
-		if len(varsToLoad) > 0 {
-			hostVars[hostName] = varsToLoad
-			common.LogDebug("Loaded host variables", map[string]interface{}{
-				"host":       hostName,
-				"vars_count": len(varsToLoad),
-			})
-		}
+		
+		common.LogDebug("Loaded host variables", map[string]interface{}{
+			"host":       hostName,
+			"vars_count": len(hostVars[hostName]),
+		})
 	}
 
 	return hostVars, nil
@@ -681,6 +684,15 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 				var h *Host
 				if h = inventory.Hosts[name]; h != nil {
 					common.DebugOutput("Host %q already in inventory", name)
+					// Merge variables from the new host instance into the existing host
+					if host.Vars != nil {
+						if h.Vars == nil {
+							h.Vars = make(map[string]interface{})
+						}
+						for k, v := range host.Vars {
+							h.Vars[k] = v
+						}
+					}
 				} else {
 					h = host
 				}
@@ -834,8 +846,8 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 				}
 			}
 
-			// Load host variables
-			hostVars, err := loadHostVars(inventoryDir)
+			// Load host variables using same directory resolution as group_vars
+			hostVars, err := loadHostVars(groupVarsDir)
 			if err != nil {
 				common.LogWarn("Failed to load host variables", map[string]interface{}{
 					"directory": inventoryDir,

@@ -2,5 +2,7 @@
 - name: show variable from host vars
   assert:
     that: 
-      - host_var == "host_var_value"
-      - specific_host_var == "specific_host_var_value"
+      - dir_host_var == "dir_host_var_value"
+      - inventory_host_var == "inventory_host_var_value"
+      - file_host_var == "file_host_var_value"
+      - inventory_group_host_var == "inventory_group_host_var_value"
