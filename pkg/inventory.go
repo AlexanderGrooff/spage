@@ -161,12 +161,13 @@ func loadGroupVars(inventoryDir string) (map[string]map[string]interface{}, erro
 
 	for _, entry := range entries {
 		var groupName string
-		var varsToLoad map[string]interface{}
 
 		if entry.IsDir() {
 			// Handle group_vars/groupname/ directory structure
 			groupName = entry.Name()
-			varsToLoad = make(map[string]interface{})
+			if _, exists := groupVars[groupName]; !exists {
+				groupVars[groupName] = make(map[string]interface{})
+			}
 
 			groupDir := filepath.Join(groupVarsDir, groupName)
 			groupFiles, err := os.ReadDir(groupDir)
@@ -203,7 +204,7 @@ func loadGroupVars(inventoryDir string) (map[string]map[string]interface{}, erro
 
 				// Merge file variables into group variables
 				for k, v := range fileVars {
-					varsToLoad[k] = v
+					groupVars[groupName][k] = v
 				}
 			}
 		} else {
@@ -215,6 +216,9 @@ func loadGroupVars(inventoryDir string) (map[string]map[string]interface{}, erro
 
 			// Extract group name from filename (remove .yml/.yaml extension)
 			groupName = strings.TrimSuffix(strings.TrimSuffix(fileName, ".yml"), ".yaml")
+			if _, exists := groupVars[groupName]; !exists {
+				groupVars[groupName] = make(map[string]interface{})
+			}
 
 			filePath := filepath.Join(groupVarsDir, fileName)
 			fileVars, err := loadVariablesFromFile(filePath)
@@ -226,14 +230,12 @@ func loadGroupVars(inventoryDir string) (map[string]map[string]interface{}, erro
 				})
 				continue
 			}
-			varsToLoad = fileVars
-		}
-
-		if len(varsToLoad) > 0 {
-			groupVars[groupName] = varsToLoad
+			for k, v := range fileVars {
+				groupVars[groupName][k] = v
+			}
 			common.LogDebug("Loaded group variables", map[string]interface{}{
 				"group":      groupName,
-				"vars_count": len(varsToLoad),
+				"vars_count": len(fileVars),
 			})
 		}
 	}
