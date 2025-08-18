@@ -15,12 +15,12 @@ type Inventory struct {
 
 // Host represents a single host in the inventory
 type Host struct {
-	Name     string                 `json:"name"`
-	Host     string                 `yaml:"host"`
-	IsLocal  bool
-	Vars     map[string]interface{}
-	Groups   map[string]string      `yaml:"groups"`
-	Config   interface{}            // SSH configuration or other host-specific config
+	Name    string `json:"name"`
+	Host    string `yaml:"host"`
+	IsLocal bool
+	Vars    map[string]interface{}
+	Groups  map[string]string `yaml:"groups"`
+	Config  interface{}       // SSH configuration or other host-specific config
 }
 
 // Group represents a group of hosts in the inventory
@@ -37,7 +37,7 @@ func (h *Host) Prepare() {
 	if h.Groups == nil {
 		h.Groups = make(map[string]string)
 	}
-	
+
 	if h.Host == "localhost" || h.Host == "" {
 		h.IsLocal = true
 	}

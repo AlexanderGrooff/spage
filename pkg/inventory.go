@@ -77,7 +77,7 @@ func convertPluginInventoryToStandard(pluginInventory *plugins.Inventory) *types
 				group.Hosts[hostName] = host
 			}
 		}
-		
+
 		inventory.Groups[groupName] = group
 	}
 
@@ -537,7 +537,7 @@ func mergeInventories(inventories []*Inventory) *Inventory {
 
 // Use types from shared package
 type Inventory = types.Inventory
-type Host = types.Host  
+type Host = types.Host
 type Group = types.Group
 
 func LoadInventory(path string) (*Inventory, error) {
@@ -580,7 +580,7 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 	}
 
 	var inventories []*Inventory
-	
+
 	// Initialize plugin manager
 	pm := plugins.NewPluginManager()
 
@@ -603,13 +603,13 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 					"file":   filePath,
 					"plugin": pluginName,
 				})
-				
+
 				// Load inventory via plugin
 				pluginInventory, err := pm.LoadInventoryFromPlugin(context.Background(), fmt.Sprintf("%v", pluginName), pluginConfig)
 				if err != nil {
 					return nil, fmt.Errorf("failed to load inventory from plugin %s: %w", pluginName, err)
 				}
-				
+
 				// Convert plugin inventory to standard inventory format
 				inventory := convertPluginInventoryToStandard(pluginInventory)
 				inventory.Plugin = fmt.Sprintf("%v", pluginName)

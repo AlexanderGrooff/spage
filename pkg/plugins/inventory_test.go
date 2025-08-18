@@ -41,7 +41,7 @@ func TestPluginManager_DiscoverPlugins(t *testing.T) {
 		"spage-inventory-plugin-aws.so",
 		"spage-inventory-plugin-gcp.so",
 		"spage-inventory-plugin-docker.so",
-		"other-file.txt", // Should be ignored
+		"other-file.txt",  // Should be ignored
 		"not-a-plugin.so", // Should be ignored
 	}
 
@@ -74,16 +74,16 @@ func TestPluginManager_LoadPlugin_GoPluginNotFound(t *testing.T) {
 
 	// Test with non-existent Go plugin - should try Python fallback
 	result, err := pm.LoadPlugin(ctx, "nonexistent", config)
-	
+
 	// Two possible outcomes:
 	// 1. Error if ansible-inventory is not available or plugin fails
 	// 2. Success if ansible-inventory is available and returns default inventory
-	
+
 	if err != nil {
 		// Expected case: plugin loading failed
 		errorMsg := err.Error()
-		hasExpectedError := (strings.Contains(errorMsg, "ansible-inventory") || 
-			strings.Contains(errorMsg, "plugin") || 
+		hasExpectedError := (strings.Contains(errorMsg, "ansible-inventory") ||
+			strings.Contains(errorMsg, "plugin") ||
 			strings.Contains(errorMsg, "nonexistent") ||
 			strings.Contains(errorMsg, "not found") ||
 			strings.Contains(errorMsg, "failed"))
@@ -134,9 +134,9 @@ func TestPluginManager_LoadInventoryFromPlugin(t *testing.T) {
 
 	// Mock the LoadPlugin method by creating a test that doesn't actually call external plugins
 	// This would normally call pm.LoadPlugin, but we'll test the conversion logic directly
-	
+
 	inventory := convertPluginResultToInventory(pluginResult)
-	
+
 	// Test inventory structure
 	assert.NotNil(t, inventory)
 	assert.Len(t, inventory.Hosts, 2)
@@ -217,7 +217,7 @@ func convertPluginResultToInventory(pluginResult *PluginInventoryResult) *Invent
 				group.Hosts[hostName] = host
 			}
 		}
-		
+
 		inventory.Groups[groupName] = group
 	}
 

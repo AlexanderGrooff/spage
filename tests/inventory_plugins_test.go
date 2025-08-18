@@ -71,7 +71,7 @@ keyed_groups:
 
 	// Load plugin inventory - behavior depends on ansible-inventory availability
 	inventory, err = pkg.LoadInventoryWithPaths(pluginInventoryPath, "", "")
-	
+
 	if isAnsibleInventoryAvailable() {
 		// If ansible-inventory is available, should succeed with Python plugin fallback
 		assert.NoError(t, err)
@@ -176,11 +176,11 @@ compose:
   hostname: tags.Name | default(instance_id)
   environment: tags.Environment | default("unknown")`,
 			expected: map[string]interface{}{
-				"plugin": "aws_ec2",
+				"plugin":  "aws_ec2",
 				"regions": []interface{}{"us-west-2", "us-east-1"},
 				"filters": map[string]interface{}{
-					"tag:Environment":       "production",
-					"instance-state-name":   "running",
+					"tag:Environment":     "production",
+					"instance-state-name": "running",
 				},
 			},
 		},
@@ -211,7 +211,7 @@ labels:
 
 			// Try to load the plugin inventory - behavior depends on ansible-inventory availability
 			inventory, err := pkg.LoadInventoryWithPaths(inventoryPath, "", "")
-			
+
 			if isAnsibleInventoryAvailable() {
 				// If ansible-inventory is available, should succeed with Python plugin fallback
 				assert.NoError(t, err)
@@ -278,7 +278,7 @@ all:
 	assert.NotNil(t, localhost)
 
 	facts := inventory.GetInitialFactsForHost(localhost)
-	
+
 	// Should have inventory vars
 	assert.Equal(t, "static", facts["inventory_source"])
 	assert.Equal(t, false, facts["plugin_loaded"])
@@ -297,7 +297,7 @@ all:
 
 func TestInventoryPluginErrorHandling(t *testing.T) {
 	// Test various error conditions in plugin loading
-	
+
 	// Test Case 1: Malformed plugin configuration
 	tempDir, err := os.MkdirTemp("", "spage-plugin-error-test-*")
 	require.NoError(t, err)

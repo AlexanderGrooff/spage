@@ -18,15 +18,15 @@ import (
 type InventoryPlugin interface {
 	// Name returns the name of the plugin
 	Name() string
-	
+
 	// Execute runs the plugin with the given configuration and returns inventory data
 	Execute(ctx context.Context, config map[string]interface{}) (*PluginInventoryResult, error)
 }
 
 // PluginInventoryResult represents the result from an inventory plugin
 type PluginInventoryResult struct {
-	Hosts  map[string]*PluginHost       `json:"_meta"`
-	Groups map[string]*PluginGroup      `json:",inline"`
+	Hosts  map[string]*PluginHost  `json:"_meta"`
+	Groups map[string]*PluginGroup `json:",inline"`
 }
 
 // PluginHost represents a host from a plugin
@@ -35,7 +35,7 @@ type PluginHost struct {
 	Vars map[string]interface{} `json:"hostvars,omitempty"`
 }
 
-// PluginGroup represents a group from a plugin  
+// PluginGroup represents a group from a plugin
 type PluginGroup struct {
 	Hosts    []string               `json:"hosts,omitempty"`
 	Children []string               `json:"children,omitempty"`
@@ -139,7 +139,7 @@ func (pm *PluginManager) loadPythonPlugin(ctx context.Context, pluginName string
 
 	inventoryFile := filepath.Join(tempDir, "plugin_inventory.yml")
 	inventoryContent := fmt.Sprintf("plugin: %s\n", pluginName)
-	
+
 	// Add configuration parameters
 	for key, value := range config {
 		inventoryContent += fmt.Sprintf("%s: %v\n", key, value)
@@ -166,8 +166,8 @@ func (pm *PluginManager) loadPythonPlugin(ctx context.Context, pluginName string
 	}
 
 	common.LogDebug("Successfully loaded Python inventory plugin", map[string]interface{}{
-		"plugin":      pluginName,
-		"hosts_count": len(result.Hosts),
+		"plugin":       pluginName,
+		"hosts_count":  len(result.Hosts),
 		"groups_count": len(result.Groups),
 	})
 
@@ -178,17 +178,17 @@ func (pm *PluginManager) loadPythonPlugin(ctx context.Context, pluginName string
 func (pm *PluginManager) parseAnsibleInventoryOutput(output []byte) (*PluginInventoryResult, error) {
 	// Parse the JSON output from ansible-inventory --list
 	// Format documented at: https://docs.ansible.com/ansible/latest/dev_guide/developing_inventory.html
-	
+
 	var rawInventory map[string]interface{}
 	if err := json.Unmarshal(output, &rawInventory); err != nil {
 		return nil, fmt.Errorf("failed to parse ansible-inventory JSON output: %w", err)
 	}
-	
+
 	result := &PluginInventoryResult{
 		Hosts:  make(map[string]*PluginHost),
 		Groups: make(map[string]*PluginGroup),
 	}
-	
+
 	// Parse _meta section containing host variables
 	if metaData, hasMeta := rawInventory["_meta"]; hasMeta {
 		if metaMap, ok := metaData.(map[string]interface{}); ok {
@@ -206,20 +206,20 @@ func (pm *PluginManager) parseAnsibleInventoryOutput(output []byte) (*PluginInve
 			}
 		}
 	}
-	
+
 	// Parse groups (all top-level keys except _meta)
 	for groupName, groupData := range rawInventory {
 		if groupName == "_meta" {
 			continue // Skip _meta, already processed above
 		}
-		
+
 		if groupMap, ok := groupData.(map[string]interface{}); ok {
 			group := &PluginGroup{
 				Hosts:    []string{},
 				Children: []string{},
 				Vars:     make(map[string]interface{}),
 			}
-			
+
 			// Parse hosts list
 			if hostsData, hasHosts := groupMap["hosts"]; hasHosts {
 				if hostsList, ok := hostsData.([]interface{}); ok {
@@ -237,7 +237,7 @@ func (pm *PluginManager) parseAnsibleInventoryOutput(output []byte) (*PluginInve
 					}
 				}
 			}
-			
+
 			// Parse children groups
 			if childrenData, hasChildren := groupMap["children"]; hasChildren {
 				if childrenList, ok := childrenData.([]interface{}); ok {
@@ -248,46 +248,46 @@ func (pm *PluginManager) parseAnsibleInventoryOutput(output []byte) (*PluginInve
 					}
 				}
 			}
-			
+
 			// Parse group variables
 			if varsData, hasVars := groupMap["vars"]; hasVars {
 				if vars, ok := varsData.(map[string]interface{}); ok {
 					group.Vars = vars
 				}
 			}
-			
+
 			result.Groups[groupName] = group
 		}
 	}
-	
+
 	common.LogDebug("Parsed ansible-inventory output", map[string]interface{}{
 		"hosts_count":  len(result.Hosts),
 		"groups_count": len(result.Groups),
 	})
-	
+
 	return result, nil
 }
 
 // DiscoverPlugins discovers available inventory plugins
 func (pm *PluginManager) DiscoverPlugins() ([]string, error) {
 	var plugins []string
-	
+
 	// Discover Go plugins
 	for _, dir := range pm.pluginDirs {
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
 			continue
 		}
-		
+
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
 		}
-		
+
 		for _, entry := range entries {
 			if entry.IsDir() {
 				continue
 			}
-			
+
 			name := entry.Name()
 			if strings.HasPrefix(name, "spage-inventory-plugin-") && strings.HasSuffix(name, ".so") {
 				// Extract plugin name from filename
@@ -297,11 +297,11 @@ func (pm *PluginManager) DiscoverPlugins() ([]string, error) {
 			}
 		}
 	}
-	
+
 	common.LogDebug("Discovered inventory plugins", map[string]interface{}{
 		"plugins": plugins,
 	})
-	
+
 	return plugins, nil
 }
 
@@ -360,7 +360,7 @@ func (pm *PluginManager) LoadInventoryFromPlugin(ctx context.Context, pluginName
 				group.Hosts[hostName] = host
 			}
 		}
-		
+
 		inventory.Groups[groupName] = group
 	}
 
