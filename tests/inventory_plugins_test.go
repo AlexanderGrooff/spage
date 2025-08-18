@@ -46,7 +46,7 @@ webservers:
 	require.NoError(t, err)
 
 	// Load static inventory - should work normally
-	inventory, err := pkg.LoadInventoryWithPaths(staticInventoryPath, "", "")
+	inventory, err := pkg.LoadInventoryWithPaths(staticInventoryPath, "", "", "")
 	assert.NoError(t, err)
 	assert.NotNil(t, inventory)
 	assert.Contains(t, inventory.Hosts, "localhost")
@@ -70,7 +70,7 @@ keyed_groups:
 	require.NoError(t, err)
 
 	// Load plugin inventory - behavior depends on ansible-inventory availability
-	inventory, err = pkg.LoadInventoryWithPaths(pluginInventoryPath, "", "")
+	inventory, err = pkg.LoadInventoryWithPaths(pluginInventoryPath, "", "", "")
 
 	if isAnsibleInventoryAvailable() {
 		// If ansible-inventory is available, should succeed with Python plugin fallback
@@ -122,7 +122,7 @@ static_group:
 	require.NoError(t, err)
 
 	// Test loading static inventory with group_vars
-	inventory, err := pkg.LoadInventoryWithPaths(staticInventoryPath, "", "")
+	inventory, err := pkg.LoadInventoryWithPaths(staticInventoryPath, "", "", "")
 	assert.NoError(t, err)
 	assert.NotNil(t, inventory)
 
@@ -210,7 +210,7 @@ labels:
 			require.NoError(t, err)
 
 			// Try to load the plugin inventory - behavior depends on ansible-inventory availability
-			inventory, err := pkg.LoadInventoryWithPaths(inventoryPath, "", "")
+			inventory, err := pkg.LoadInventoryWithPaths("", inventoryPath, "", "")
 
 			if isAnsibleInventoryAvailable() {
 				// If ansible-inventory is available, should succeed with Python plugin fallback
@@ -269,7 +269,7 @@ all:
 	require.NoError(t, err)
 
 	// Load inventory with group_vars and host_vars support
-	inventory, err := pkg.LoadInventoryWithPaths(staticInventoryPath, "", "")
+	inventory, err := pkg.LoadInventoryWithPaths(staticInventoryPath, "", "", "")
 	assert.NoError(t, err)
 	assert.NotNil(t, inventory)
 
@@ -311,7 +311,7 @@ this is not valid yaml: [unclosed bracket`
 	require.NoError(t, err)
 
 	// Should fail to parse YAML
-	_, err = pkg.LoadInventoryWithPaths(malformedPath, "", "")
+	_, err = pkg.LoadInventoryWithPaths(malformedPath, "", "", "")
 	assert.Error(t, err)
 
 	// Test Case 2: Plugin without name
@@ -323,7 +323,7 @@ host: localhost`
 	require.NoError(t, err)
 
 	// Should handle empty plugin name gracefully
-	inventory, err := pkg.LoadInventoryWithPaths(noPluginNamePath, "", "")
+	inventory, err := pkg.LoadInventoryWithPaths(noPluginNamePath, "", "", "")
 	if isAnsibleInventoryAvailable() {
 		// If ansible-inventory is available, it handles empty plugin name by returning empty inventory
 		assert.NoError(t, err)

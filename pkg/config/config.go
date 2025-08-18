@@ -27,6 +27,9 @@ type Config struct {
 	// API bearer token for CLI auth against spage-api
 	ApiToken string `mapstructure:"api_token"`
 
+	// Host limit pattern for execution
+	Limit string `mapstructure:"limit"`
+
 	// Internal fields for daemon reporting (not serialized)
 	daemonReporting interface{}
 }
@@ -151,6 +154,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("api.http_base", "http://localhost:1323")
 	// CLI/API auth token default (unset)
 	v.SetDefault("api_token", "")
+
+	// Host limit pattern default (unset)
+	v.SetDefault("limit", "")
 
 	// Temporal defaults
 	v.SetDefault("temporal.address", "") // Default to empty, SDK will use localhost:7233 or TEMPORAL_GRPC_ENDPOINT

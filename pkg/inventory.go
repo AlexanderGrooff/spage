@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -541,10 +542,14 @@ type Host = types.Host
 type Group = types.Group
 
 func LoadInventory(path string) (*Inventory, error) {
-	return LoadInventoryWithPaths(path, "", ".")
+	return LoadInventoryWithPaths(path, "", ".", "")
 }
 
-func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir string) (*Inventory, error) {
+func LoadInventoryWithLimit(path string, limitPattern string) (*Inventory, error) {
+	return LoadInventoryWithPaths(path, "", ".", limitPattern)
+}
+
+func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir string, limitPattern string) (*Inventory, error) {
 	var filesToLoad []string
 
 	if path != "" {
@@ -572,11 +577,27 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 
 	if len(filesToLoad) == 0 {
 		common.LogDebug("No inventory file specified, assuming target is this machine", nil)
-		return &Inventory{
+		defaultInventory := &Inventory{
 			Hosts: map[string]*Host{
 				"localhost": {Name: "localhost", IsLocal: true, Host: "localhost"},
 			},
-		}, nil
+		}
+
+		// Apply host limiting to default inventory if specified
+		if limitPattern != "" {
+			common.LogInfo("Applying host limit pattern to default inventory", map[string]interface{}{
+				"pattern": limitPattern,
+			})
+			defaultInventory = filterInventoryByLimit(defaultInventory, limitPattern)
+			if len(defaultInventory.Hosts) == 0 {
+				return nil, fmt.Errorf("no hosts matched limit pattern: %s", limitPattern)
+			}
+			common.LogInfo("Filtered default inventory", map[string]interface{}{
+				"matched_hosts": len(defaultInventory.Hosts),
+			})
+		}
+
+		return defaultInventory, nil
 	}
 
 	var inventories []*Inventory
@@ -854,6 +875,20 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 		"total_groups": len(mergedInventory.Groups),
 	})
 
+	// Apply host limiting if specified
+	if limitPattern != "" {
+		common.LogInfo("Applying host limit pattern", map[string]interface{}{
+			"pattern": limitPattern,
+		})
+		mergedInventory = filterInventoryByLimit(mergedInventory, limitPattern)
+		if len(mergedInventory.Hosts) == 0 {
+			return nil, fmt.Errorf("no hosts matched limit pattern: %s", limitPattern)
+		}
+		common.LogInfo("Filtered inventory", map[string]interface{}{
+			"matched_hosts": len(mergedInventory.Hosts),
+		})
+	}
+
 	return mergedInventory, nil
 }
 
@@ -889,6 +924,113 @@ func GetContextForHost(inventory *Inventory, host *Host, cfg *config.Config) (*H
 	}
 
 	return ctx, nil
+}
+
+// filterInventoryByLimit filters hosts in inventory based on the limit pattern
+// Supports patterns like: hostname, group_name, hostname1:hostname2, *pattern, group:hostname
+func filterInventoryByLimit(inventory *Inventory, limitPattern string) *Inventory {
+	if limitPattern == "" {
+		return inventory
+	}
+
+	common.LogDebug("Filtering inventory with limit pattern", map[string]interface{}{
+		"pattern": limitPattern,
+	})
+
+	filteredInventory := &Inventory{
+		Hosts:  make(map[string]*Host),
+		Groups: make(map[string]*Group),
+		Vars:   inventory.Vars,
+	}
+
+	// Split patterns by comma (like Ansible does for -l flag)
+	patterns := strings.Split(limitPattern, ",")
+	matchedHosts := make(map[string]bool)
+
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+
+		// Check if pattern matches any hosts directly
+		for hostName, host := range inventory.Hosts {
+			if matchesHostPattern(hostName, pattern) {
+				matchedHosts[hostName] = true
+				filteredInventory.Hosts[hostName] = host
+			}
+		}
+
+		// Check if pattern matches any groups
+		for groupName, group := range inventory.Groups {
+			if matchesHostPattern(groupName, pattern) {
+				// Add all hosts in the matching group
+				for hostName, host := range group.Hosts {
+					if !matchedHosts[hostName] {
+						matchedHosts[hostName] = true
+						filteredInventory.Hosts[hostName] = host
+					}
+				}
+			}
+		}
+	}
+
+	// Copy all groups with their variables, but filter hosts within groups
+	for groupName, group := range inventory.Groups {
+		filteredGroup := &Group{
+			Vars:  group.Vars,
+			Hosts: make(map[string]*Host),
+		}
+
+		// Only include hosts that were matched
+		for hostName, host := range group.Hosts {
+			if matchedHosts[hostName] {
+				filteredGroup.Hosts[hostName] = host
+			}
+		}
+
+		// Preserve all groups, even if they have no matched hosts
+		filteredInventory.Groups[groupName] = filteredGroup
+	}
+
+	common.LogDebug("Filtered inventory", map[string]interface{}{
+		"original_hosts": len(inventory.Hosts),
+		"filtered_hosts": len(filteredInventory.Hosts),
+	})
+
+	return filteredInventory
+}
+
+// matchesHostPattern checks if a hostname matches a pattern
+// Supports glob-style patterns (* and ?)
+func matchesHostPattern(hostname, pattern string) bool {
+	// Direct match
+	if hostname == pattern {
+		return true
+	}
+
+	// Convert glob pattern to regex
+	if strings.Contains(pattern, "*") || strings.Contains(pattern, "?") {
+		// Escape special regex characters except * and ?
+		regexPattern := regexp.QuoteMeta(pattern)
+		// Convert glob wildcards to regex
+		regexPattern = strings.ReplaceAll(regexPattern, "\\*", ".*")
+		regexPattern = strings.ReplaceAll(regexPattern, "\\?", ".")
+		// Anchor the pattern
+		regexPattern = "^" + regexPattern + "$"
+
+		matched, err := regexp.MatchString(regexPattern, hostname)
+		if err != nil {
+			common.LogWarn("Invalid regex pattern", map[string]interface{}{
+				"pattern": pattern,
+				"error":   err.Error(),
+			})
+			return false
+		}
+		return matched
+	}
+
+	return false
 }
 
 func GetContextForRun(inventory *Inventory, graph *Graph, cfg *config.Config) (map[string]*HostContext, error) {

@@ -12,8 +12,12 @@ import (
 )
 
 func StartLocalExecutor(graph *pkg.Graph, inventoryFile string, cfg *config.Config, daemonClient interface{}) error {
+	return StartLocalExecutorWithLimit(graph, inventoryFile, cfg, daemonClient, "")
+}
+
+func StartLocalExecutorWithLimit(graph *pkg.Graph, inventoryFile string, cfg *config.Config, daemonClient interface{}, limitPattern string) error {
 	exec := executor.NewLocalGraphExecutor(&executor.LocalTaskRunner{})
-	err := pkg.ExecuteGraph(exec, graph, inventoryFile, cfg, daemonClient)
+	err := pkg.ExecuteGraphWithLimit(exec, graph, inventoryFile, cfg, daemonClient, limitPattern)
 	if err != nil {
 		fmt.Printf("Execution failed: %v\n", err)
 		return err

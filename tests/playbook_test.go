@@ -1267,7 +1267,7 @@ func TestInventoryPluginsSystem(t *testing.T) {
 		inventoryPath := "plugin_inventory_hostlist.yaml"
 
 		fmt.Printf("Testing inventory plugins system with: %s\n", inventoryPath)
-		inventory, err := pkg.LoadInventoryWithPaths(inventoryPath, "", "")
+		inventory, err := pkg.LoadInventoryWithPaths("", inventoryPath, "", "")
 
 		if err != nil {
 			// Check if this is due to ansible-inventory not being available
@@ -1334,7 +1334,7 @@ func TestInventoryPluginsSystem(t *testing.T) {
 		inventoryPath := "plugin_inventory_local_services.yaml"
 
 		fmt.Printf("Testing custom Go plugin with: %s\n", inventoryPath)
-		inventory, err := pkg.LoadInventoryWithPaths(inventoryPath, "", "")
+		inventory, err := pkg.LoadInventoryWithPaths("", inventoryPath, "", "")
 
 		// Key insight: ansible-inventory is more resilient than expected!
 		// It gracefully handles non-existent plugins by providing default inventory
@@ -1403,7 +1403,7 @@ config: test`
 		require.NoError(t, err)
 		defer os.Remove(tempFile)
 
-		inventory, err := pkg.LoadInventoryWithPaths(tempFile, "", "")
+		inventory, err := pkg.LoadInventoryWithPaths(tempFile, "", "", "")
 
 		// ansible-inventory is very resilient and may provide default inventory
 		// even for non-existent plugins, so we handle both cases

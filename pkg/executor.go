@@ -70,18 +70,22 @@ func ChangeCWDToPlaybookDir(playbookPath string) (string, error) {
 }
 
 func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cfg *config.Config, daemonClientInterface interface{}) error {
+	return ExecuteGraphWithLimit(executor, graph, inventoryFile, cfg, daemonClientInterface, "")
+}
+
+func ExecuteGraphWithLimit(executor GraphExecutor, graph *Graph, inventoryFile string, cfg *config.Config, daemonClientInterface interface{}, limitPattern string) error {
 	var inventory *Inventory
 	var err error
 
 	if inventoryFile != "" {
 		// Explicit inventory file provided
-		inventory, err = LoadInventory(inventoryFile)
+		inventory, err = LoadInventoryWithLimit(inventoryFile, limitPattern)
 	} else if cfg != nil && cfg.Inventory != "" {
 		// No explicit inventory file but inventory paths configured
-		inventory, err = LoadInventoryWithPaths("", cfg.Inventory, ".")
+		inventory, err = LoadInventoryWithPaths("", cfg.Inventory, ".", limitPattern)
 	} else {
 		// No inventory file and no inventory paths, fall back to default
-		inventory, err = LoadInventory("")
+		inventory, err = LoadInventoryWithLimit("", limitPattern)
 	}
 
 	if err != nil {

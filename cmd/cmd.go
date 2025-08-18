@@ -39,6 +39,7 @@ var (
 	diffMode      bool
 	extraVars     []string
 	becomeMode    bool
+	limitHosts    string // Host pattern to limit execution to
 
 	// Daemon communication flags
 	daemonGRPC string
@@ -364,6 +365,20 @@ var runCmd = &cobra.Command{
 				return fmt.Errorf("failed to generate graph: %w", err)
 			}
 		}
+
+		// Determine effective limit: command-line flag takes precedence over config
+		effectiveLimit := limitHosts
+		if effectiveLimit == "" && cfg.Limit != "" {
+			effectiveLimit = cfg.Limit
+		}
+
+		// Execute with host limiting handled in the executor layer
+		if effectiveLimit != "" {
+			common.LogInfo("Limiting hosts for execution", map[string]interface{}{
+				"limit": effectiveLimit,
+			})
+		}
+
 		if checkMode {
 			if cfg.Facts == nil {
 				cfg.Facts = make(map[string]interface{})
@@ -392,9 +407,9 @@ var runCmd = &cobra.Command{
 		}
 
 		if cfg.Executor == "temporal" {
-			err = StartTemporalExecutor(&graph, inventoryFile, cfg, daemonClient)
+			err = StartTemporalExecutorWithLimit(&graph, inventoryFile, cfg, daemonClient, effectiveLimit)
 		} else {
-			err = StartLocalExecutor(&graph, inventoryFile, cfg, daemonClient)
+			err = StartLocalExecutorWithLimit(&graph, inventoryFile, cfg, daemonClient, effectiveLimit)
 		}
 		if err != nil {
 			if daemonClient != nil {
@@ -431,7 +446,7 @@ This command supports both static inventory files and dynamic inventory plugins.
 			return fmt.Errorf("failed to load config: %w", err)
 		}
 		// Use our inventory loading system which supports plugins
-		inventory, err := pkg.LoadInventoryWithPaths(inventoryFile, cfg.Inventory, ".")
+		inventory, err := pkg.LoadInventoryWithPaths(inventoryFile, cfg.Inventory, ".", "")
 		if err != nil {
 			return fmt.Errorf("failed to load inventory: %w", err)
 		}
@@ -587,6 +602,8 @@ func init() {
 
 	generateCmd.Flags().StringVarP(&playbookFile, "playbook", "p", "", "Playbook file (required)")
 	generateCmd.Flags().StringVarP(&outputFile, "output", "o", "generated_tasks.go", "Output file (default: generated_tasks.go)")
+	generateCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file (default: localhost)")
+	generateCmd.Flags().StringVarP(&limitHosts, "limit", "l", "", "Limit selected hosts to an additional pattern")
 	generateCmd.Flags().StringSliceVarP(&tags, "tags", "t", []string{}, "Only include tasks with these tags (comma-separated)")
 	generateCmd.Flags().StringSliceVar(&skipTags, "skip-tags", []string{}, "Skip tasks with these tags (comma-separated)")
 	generateCmd.Flags().BoolVar(&becomeMode, "become", false, "Run all tasks with become: true and become_user: root")
@@ -598,6 +615,7 @@ func init() {
 	runCmd.Flags().StringVarP(&playbookFile, "playbook", "p", "", "Playbook file (required)")
 	runCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file (default: localhost)")
 	runCmd.Flags().StringVarP(&outputFile, "output", "o", "generated_tasks.go", "Output file (default: generated_tasks.go)")
+	runCmd.Flags().StringVarP(&limitHosts, "limit", "l", "", "Limit selected hosts to an additional pattern")
 	runCmd.Flags().StringSliceVarP(&tags, "tags", "t", []string{}, "Only include tasks with these tags (comma-separated)")
 	runCmd.Flags().StringSliceVar(&skipTags, "skip-tags", []string{}, "Skip tasks with these tags (comma-separated)")
 	runCmd.Flags().BoolVar(&checkMode, "check", false, "Enable check mode (dry run)")
