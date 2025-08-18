@@ -49,7 +49,13 @@ func (c *HostContext) GetOrCreateSSHPool() (*desopssshpool.Pool, error) {
 
 	if c.sshPoolManager == nil {
 		// Create SSH pool manager if it doesn't exist
-		c.sshPoolManager = sshpool.NewManager(c.Host.Config)
+		var cfg *config.Config
+		if c.Host.Config != nil {
+			if hostCfg, ok := c.Host.Config.(*config.Config); ok {
+				cfg = hostCfg
+			}
+		}
+		c.sshPoolManager = sshpool.NewManager(cfg)
 	}
 
 	// Get or create pool for this host
@@ -236,8 +242,14 @@ func (c *HostContext) RunCommand(command, username string) (int, string, string,
 }
 
 func (c *HostContext) RunCommandWithShell(command, username string, useShell bool) (int, string, string, error) {
+	var cfg *config.Config
+	if c.Host.Config != nil {
+		if hostCfg, ok := c.Host.Config.(*config.Config); ok {
+			cfg = hostCfg
+		}
+	}
 	if c.Host.IsLocal {
-		return runtime.RunLocalCommandWithShell(command, username, useShell, c.Host.Config)
+		return runtime.RunLocalCommandWithShell(command, username, useShell, cfg)
 	}
 
 	// Get SSH pool
@@ -246,7 +258,7 @@ func (c *HostContext) RunCommandWithShell(command, username string, useShell boo
 		return -1, "", "", fmt.Errorf("failed to get SSH pool for remote host %s: %w", c.Host.Host, err)
 	}
 
-	return runtime.RunRemoteCommandWithShell(pool, c.Host.Host, command, username, c.Host.Config, useShell)
+	return runtime.RunRemoteCommandWithShell(pool, c.Host.Host, command, username, cfg, useShell)
 }
 
 func EvaluateExpression(s string, closure *Closure) (interface{}, error) {

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
+	"github.com/AlexanderGrooff/spage/pkg/types"
 )
 
 // InventoryPlugin defines the interface that all inventory plugins must implement
@@ -114,7 +115,7 @@ func (pm *PluginManager) loadGoPlugin(ctx context.Context, pluginName string, co
 		return inventoryPlugin.Execute(ctx, config)
 	}
 
-	return nil, fmt.Errorf("Go plugin %s not found in any plugin directory", pluginName)
+	return nil, fmt.Errorf("go plugin %s not found in any plugin directory", pluginName)
 }
 
 // loadPythonPlugin attempts to load a Python/Ansible-based inventory plugin
@@ -316,6 +317,7 @@ func (pm *PluginManager) LoadInventoryFromPlugin(ctx context.Context, pluginName
 		Hosts:  make(map[string]*Host),
 		Groups: make(map[string]*Group),
 		Vars:   make(map[string]interface{}),
+		Plugin: pluginName,
 	}
 
 	// Convert plugin hosts to standard hosts
@@ -365,37 +367,7 @@ func (pm *PluginManager) LoadInventoryFromPlugin(ctx context.Context, pluginName
 	return inventory, nil
 }
 
-// These types need to be defined to avoid circular imports
-// They mirror the types in the pkg package but are defined here for plugin use
-
-type Inventory struct {
-	Hosts  map[string]*Host
-	Groups map[string]*Group
-	Vars   map[string]interface{}
-}
-
-type Host struct {
-	Name     string
-	Host     string
-	IsLocal  bool
-	Vars     map[string]interface{}
-	Groups   map[string]string
-}
-
-type Group struct {
-	Hosts map[string]*Host
-	Vars  map[string]interface{}
-}
-
-func (h *Host) Prepare() {
-	if h.Vars == nil {
-		h.Vars = make(map[string]interface{})
-	}
-	if h.Groups == nil {
-		h.Groups = make(map[string]string)
-	}
-	
-	if h.Host == "localhost" || h.Host == "" {
-		h.IsLocal = true
-	}
-}
+// Use shared types from pkg/types to avoid duplication
+type Inventory = types.Inventory
+type Host = types.Host
+type Group = types.Group

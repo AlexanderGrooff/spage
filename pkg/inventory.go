@@ -12,20 +12,21 @@ import (
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/config"
 	"github.com/AlexanderGrooff/spage/pkg/plugins"
+	"github.com/AlexanderGrooff/spage/pkg/types"
 	"gopkg.in/yaml.v3"
 )
 
 // convertPluginInventoryToStandard converts a plugin inventory to standard inventory format
-func convertPluginInventoryToStandard(pluginInventory *plugins.Inventory) *Inventory {
-	inventory := &Inventory{
-		Hosts:  make(map[string]*Host),
-		Groups: make(map[string]*Group),
+func convertPluginInventoryToStandard(pluginInventory *plugins.Inventory) *types.Inventory {
+	inventory := &types.Inventory{
+		Hosts:  make(map[string]*types.Host),
+		Groups: make(map[string]*types.Group),
 		Vars:   pluginInventory.Vars,
 	}
 
 	// Convert plugin hosts to standard hosts
 	for hostName, pluginHost := range pluginInventory.Hosts {
-		host := &Host{
+		host := &types.Host{
 			Name:    pluginHost.Name,
 			Host:    pluginHost.Host,
 			IsLocal: pluginHost.IsLocal,
@@ -44,8 +45,8 @@ func convertPluginInventoryToStandard(pluginInventory *plugins.Inventory) *Inven
 
 	// Convert plugin groups to standard groups
 	for groupName, pluginGroup := range pluginInventory.Groups {
-		group := &Group{
-			Hosts: make(map[string]*Host),
+		group := &types.Group{
+			Hosts: make(map[string]*types.Host),
 			Vars:  pluginGroup.Vars,
 		}
 		if group.Vars == nil {
@@ -58,7 +59,7 @@ func convertPluginInventoryToStandard(pluginInventory *plugins.Inventory) *Inven
 				group.Hosts[hostName] = host
 			} else {
 				// Convert plugin host to standard host
-				host := &Host{
+				host := &types.Host{
 					Name:    pluginHost.Name,
 					Host:    pluginHost.Host,
 					IsLocal: pluginHost.IsLocal,
@@ -534,146 +535,10 @@ func mergeInventories(inventories []*Inventory) *Inventory {
 	return merged
 }
 
-type Inventory struct {
-	Hosts  map[string]*Host       `yaml:"all"`
-	Vars   map[string]interface{} `yaml:"vars"`
-	Groups map[string]*Group      `yaml:"-"` // Groups are parsed manually from top-level keys
-}
-
-// UnmarshalYAML implements custom YAML unmarshaling for Inventory to handle top-level groups
-func (inv *Inventory) UnmarshalYAML(value *yaml.Node) error {
-	// Create a map to capture all YAML data
-	var rawData map[string]interface{}
-	if err := value.Decode(&rawData); err != nil {
-		return err
-	}
-
-	// Initialize maps
-	inv.Hosts = make(map[string]*Host)
-	inv.Vars = make(map[string]interface{})
-	inv.Groups = make(map[string]*Group)
-
-	// Process each top-level key
-	for key, val := range rawData {
-		switch key {
-		case "vars":
-			// Handle global variables
-			if varsData, ok := val.(map[string]interface{}); ok {
-				inv.Vars = varsData
-			}
-		default:
-			// All top-level keys (including "all") are groups with hosts and vars subkeys
-			if groupData, ok := val.(map[string]interface{}); ok {
-				var group Group
-				// Convert groupData to YAML bytes and unmarshal into Group
-				groupBytes, err := yaml.Marshal(groupData)
-				if err != nil {
-					return fmt.Errorf("failed to marshal group data for %s: %w", key, err)
-				}
-				if err := yaml.Unmarshal(groupBytes, &group); err != nil {
-					return fmt.Errorf("failed to unmarshal group %s: %w", key, err)
-				}
-				// Ensure hosts map is initialized
-				if group.Hosts == nil {
-					group.Hosts = make(map[string]*Host)
-				}
-
-				// For the "all" group, also add hosts to the inventory's main Hosts map
-				if key == "all" {
-					for hostName, host := range group.Hosts {
-						host.Name = hostName
-						inv.Hosts[hostName] = host
-					}
-				}
-
-				inv.Groups[key] = &group
-			}
-		}
-	}
-
-	return nil
-}
-
-type Host struct {
-	Name    string `json:"name"`
-	Host    string `yaml:"host"`
-	Vars    map[string]interface{}
-	Groups  map[string]string `yaml:"groups"`
-	IsLocal bool
-	Config  *config.Config // Store config for SSH connections
-}
-
-func (h Host) String() string {
-	return h.Name
-}
-
-// UnmarshalYAML implements custom YAML unmarshaling for Host to capture unknown fields into Vars
-func (h *Host) UnmarshalYAML(value *yaml.Node) error {
-	// Create a map to capture all YAML data
-	var rawData map[string]interface{}
-	if err := value.Decode(&rawData); err != nil {
-		return err
-	}
-
-	// Initialize Vars map if nil
-	if h.Vars == nil {
-		h.Vars = make(map[string]interface{})
-	}
-
-	// Process known fields
-	if host, ok := rawData["host"]; ok {
-		if hostStr, ok := host.(string); ok {
-			h.Host = hostStr
-		}
-	}
-
-	if groups, ok := rawData["groups"]; ok {
-		if groupsMap, ok := groups.(map[string]interface{}); ok {
-			if h.Groups == nil {
-				h.Groups = make(map[string]string)
-			}
-			for k, v := range groupsMap {
-				if vStr, ok := v.(string); ok {
-					h.Groups[k] = vStr
-				}
-			}
-		}
-	}
-
-	// Put all other fields into Vars (including ansible_ssh_private_key_file)
-	knownFields := map[string]bool{
-		"host":   true,
-		"groups": true,
-	}
-
-	for key, value := range rawData {
-		if !knownFields[key] {
-			h.Vars[key] = value
-		}
-	}
-
-	common.LogDebug("Processed host YAML data", map[string]interface{}{
-		"host":    h.Host,
-		"vars":    h.Vars,
-		"rawData": rawData,
-	})
-
-	return nil
-}
-
-func (h *Host) Prepare() {
-	if h.Vars == nil {
-		h.Vars = make(map[string]interface{})
-	}
-	if h.Groups == nil {
-		h.Groups = make(map[string]string)
-	}
-}
-
-type Group struct {
-	Hosts map[string]*Host       `yaml:"hosts"`
-	Vars  map[string]interface{} `yaml:"vars"`
-}
+// Use types from shared package
+type Inventory = types.Inventory
+type Host = types.Host  
+type Group = types.Group
 
 func LoadInventory(path string) (*Inventory, error) {
 	return LoadInventoryWithPaths(path, "", ".")
@@ -747,6 +612,7 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 				
 				// Convert plugin inventory to standard inventory format
 				inventory := convertPluginInventoryToStandard(pluginInventory)
+				inventory.Plugin = fmt.Sprintf("%v", pluginName)
 				inventories = append(inventories, inventory)
 				continue
 			}
@@ -991,17 +857,18 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 	return mergedInventory, nil
 }
 
-func (i Inventory) GetContextForHost(host *Host, cfg *config.Config) (*HostContext, error) {
+// GetContextForHost creates a host context from inventory and host data
+func GetContextForHost(inventory *Inventory, host *Host, cfg *config.Config) (*HostContext, error) {
 	ctx, err := InitializeHostContext(host, cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	for k, v := range i.Vars {
+	for k, v := range inventory.Vars {
 		ctx.Facts.Store(k, v)
 	}
 
-	for _, group := range i.Groups {
+	for _, group := range inventory.Groups {
 		if group.Hosts != nil {
 			if _, hostInGroup := group.Hosts[host.Name]; hostInGroup {
 				if group.Vars != nil {
@@ -1029,7 +896,7 @@ func GetContextForRun(inventory *Inventory, graph *Graph, cfg *config.Config) (m
 	contexts := make(map[string]*HostContext)
 	for _, host := range inventory.Hosts {
 		common.DebugOutput("Getting context for host %q", host.Name)
-		contexts[host.Name], err = inventory.GetContextForHost(host, cfg)
+		contexts[host.Name], err = GetContextForHost(inventory, host, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("could not get context for host '%s' (%s): %w", host.Name, host.Host, err)
 		}
@@ -1050,69 +917,4 @@ func GetContextForRun(inventory *Inventory, graph *Graph, cfg *config.Config) (m
 		}
 	}
 	return contexts, nil
-}
-
-// GetInitialFactsForHost gathers and layers facts for a specific host from the inventory.
-// It applies global inventory vars, then group vars, then host-specific vars.
-func (i Inventory) GetInitialFactsForHost(host *Host) map[string]interface{} {
-	facts := make(map[string]interface{})
-
-	// 1. Apply global inventory vars
-	for k, v := range i.Vars {
-		facts[k] = v
-	}
-
-	// 2. Apply group vars
-	// Need to consider group hierarchy if that's a feature, but for now, iterate all groups.
-	// If a host is in multiple groups, the behavior for conflicting vars might depend on group order or a defined precedence.
-	// For simplicity here, we assume simple group membership. Last group var applied for a host wins for group vars.
-	// Ansible has more complex group var precedence (e.g., parent groups, child groups).
-	// This implementation will iterate groups as found in i.Groups map (order not guaranteed).
-	// A more robust solution might sort group names or use the host.Groups field to determine relevant groups.
-
-	// Iterate over the host's declared groups first, if available and defined with precedence
-	// This part is a bit tricky without knowing exact group precedence rules Spage aims for.
-	// For now, we'll stick to iterating all defined groups and checking membership.
-	for groupName, group := range i.Groups { // groupName is from inventory.Groups map key
-		// Check if the current host is part of this group definition
-		// The inventory loading logic already flattens hosts, so direct check here is sufficient for vars.
-		// A host `h` from `i.Hosts` might have `h.Groups` map indicating its memberships.
-		if _, isMember := group.Hosts[host.Name]; isMember { // Check if host is explicitly listed in group's hosts
-			// Alternative: check if host.Groups map contains groupName
-			for k, v := range group.Vars {
-				facts[k] = v // Group vars override global vars
-			}
-		} else {
-			// Check if the host is associated with this group via its own host.Groups field
-			// This handles cases where groups are assigned to hosts, rather than hosts listed under groups.
-			if host.Groups != nil {
-				if _, assignedToGroup := host.Groups[groupName]; assignedToGroup {
-					for k, v := range group.Vars {
-						facts[k] = v
-					}
-				}
-			}
-		}
-	}
-
-	// 3. Apply host-specific vars (these have the highest precedence)
-	if host.Vars != nil {
-		for k, v := range host.Vars {
-			facts[k] = v // Host vars override group and global vars
-		}
-	}
-
-	common.LogDebug("Compiled initial facts for host", map[string]interface{}{
-		"host":        host.Name,
-		"facts_count": len(facts),
-	})
-	return facts
-}
-
-func (i Inventory) GetHostByName(name string) (*Host, error) {
-	host, ok := i.Hosts[name]
-	if !ok {
-		return nil, fmt.Errorf("host '%s' not found in inventory", name)
-	}
-	return host, nil
 }

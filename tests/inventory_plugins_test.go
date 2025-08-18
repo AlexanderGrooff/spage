@@ -2,6 +2,7 @@ package tests
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -10,6 +11,12 @@ import (
 
 	"github.com/AlexanderGrooff/spage/pkg"
 )
+
+// isAnsibleInventoryAvailable checks if the ansible-inventory command is available on the system
+func isAnsibleInventoryAvailable() bool {
+	_, err := exec.LookPath("ansible-inventory")
+	return err == nil
+}
 
 func TestInventoryPluginDetection(t *testing.T) {
 	// Create a temporary directory for test inventory files
@@ -62,11 +69,20 @@ keyed_groups:
 	err = os.WriteFile(pluginInventoryPath, []byte(pluginInventoryContent), 0644)
 	require.NoError(t, err)
 
-	// Load plugin inventory - should detect plugin but fail gracefully (no actual plugin available)
+	// Load plugin inventory - behavior depends on ansible-inventory availability
 	inventory, err = pkg.LoadInventoryWithPaths(pluginInventoryPath, "", "")
-	// Should return error because the plugin doesn't exist and ansible-inventory isn't available
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "aws_ec2")
+	
+	if isAnsibleInventoryAvailable() {
+		// If ansible-inventory is available, should succeed with Python plugin fallback
+		assert.NoError(t, err)
+		assert.NotNil(t, inventory)
+		// Plugin inventory may have no hosts if the plugin returns empty results
+		assert.Equal(t, "aws_ec2", inventory.Plugin)
+	} else {
+		// If ansible-inventory is not available, should get an error mentioning the plugin
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "aws_ec2")
+	}
 }
 
 func TestMixedStaticAndPluginInventory(t *testing.T) {
@@ -193,12 +209,19 @@ labels:
 			err := os.WriteFile(inventoryPath, []byte(tc.content), 0644)
 			require.NoError(t, err)
 
-			// Try to load the plugin inventory - will fail but should parse config correctly
-			_, err = pkg.LoadInventoryWithPaths(inventoryPath, "", "")
+			// Try to load the plugin inventory - behavior depends on ansible-inventory availability
+			inventory, err := pkg.LoadInventoryWithPaths(inventoryPath, "", "")
 			
-			// Should fail because plugins don't exist, but error should mention the plugin name
-			assert.Error(t, err)
-			assert.Contains(t, err.Error(), tc.expected["plugin"].(string))
+			if isAnsibleInventoryAvailable() {
+				// If ansible-inventory is available, should succeed with Python plugin fallback
+				assert.NoError(t, err)
+				assert.NotNil(t, inventory)
+				assert.Equal(t, tc.expected["plugin"].(string), inventory.Plugin)
+			} else {
+				// Should fail because plugins don't exist, but error should mention the plugin name
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tc.expected["plugin"].(string))
+			}
 		})
 	}
 }
@@ -259,7 +282,9 @@ all:
 	// Should have inventory vars
 	assert.Equal(t, "static", facts["inventory_source"])
 	assert.Equal(t, false, facts["plugin_loaded"])
-	assert.Equal(t, "localhost", facts["host"])
+	// Note: "host" field is set in YAML as "host: localhost", not as a fact
+	// The actual host address is stored in the Host struct, not in facts
+	assert.Equal(t, "localhost", localhost.Host)
 
 	// Should have group_vars applied (if group_vars loading is working)
 	// These might not be present if group_vars loading isn't fully integrated yet
@@ -298,6 +323,16 @@ host: localhost`
 	require.NoError(t, err)
 
 	// Should handle empty plugin name gracefully
-	_, err = pkg.LoadInventoryWithPaths(noPluginNamePath, "", "")
-	assert.Error(t, err)
+	inventory, err := pkg.LoadInventoryWithPaths(noPluginNamePath, "", "")
+	if isAnsibleInventoryAvailable() {
+		// If ansible-inventory is available, it handles empty plugin name by returning empty inventory
+		assert.NoError(t, err)
+		assert.NotNil(t, inventory)
+		// Should have empty inventory since plugin name is empty
+		assert.Equal(t, 0, len(inventory.Hosts))
+	} else {
+		// Should error due to missing ansible-inventory command
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "ansible-inventory")
+	}
 }
