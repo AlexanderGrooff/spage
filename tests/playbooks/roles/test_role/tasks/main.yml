@@ -14,13 +14,13 @@
 
 - name: slurp template
   slurp:
-    path: /tmp/spage/include_role_template.txt
+    src: /tmp/spage/include_role_template.txt
   register: template_content
   after: Task in Role with template
 
-- name: assert template content
+- name: assert template content  
   assert:
     that:
-      - template_content.content == "some template\n"
+      - template_content.content | b64decode == "some template\n"
   after: slurp template
   

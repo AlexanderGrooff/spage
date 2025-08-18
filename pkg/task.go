@@ -99,6 +99,10 @@ type Task struct {
 	Diff      *bool    `yaml:"diff,omitempty" json:"diff,omitempty"`
 	Notify    []string `yaml:"notify,omitempty" json:"notify,omitempty"`
 	IsHandler bool     `yaml:"is_handler,omitempty" json:"is_handler,omitempty"`
+
+	// Role context information for resource resolution
+	RoleName string `yaml:"_role_name,omitempty" json:"_role_name,omitempty"`
+	RolePath string `yaml:"_role_path,omitempty" json:"_role_path,omitempty"`
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface for Task.
@@ -369,6 +373,12 @@ func (t Task) ToCode() string {
 			sb.WriteString("}")
 		}
 		// Add cases for other expected list types if necessary (e.g., []string)
+	}
+	if t.RolePath != "" {
+		sb.WriteString(fmt.Sprintf(", RolePath: %q", t.RolePath))
+	}
+	if t.RoleName != "" {
+		sb.WriteString(fmt.Sprintf(", RoleName: %q", t.RoleName))
 	}
 
 	sb.WriteString("},\n") // Removed the trailing newline here as it's added later if needed

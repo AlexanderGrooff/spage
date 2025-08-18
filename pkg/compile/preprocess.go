@@ -265,6 +265,15 @@ func processIncludeRoleDirective(fsys fileSystem, roleParams interface{}, curren
 	if err != nil {
 		return nil, fmt.Errorf("failed to preprocess role '%s' tasks from %s: %w", roleName, roleTasksBasePath, err)
 	}
+
+	// Add role context information to each task block
+	for i := range roleBlocks {
+		if !isRoleDefaultsBlock(roleBlocks[i]) && !isRoleVarsBlock(roleBlocks[i]) && !isRootBlock(roleBlocks[i]) {
+			// This is a task block - add role context
+			roleBlocks[i]["_role_name"] = roleName
+			roleBlocks[i]["_role_path"] = roleBaseDir
+		}
+	}
 	result = append(result, roleBlocks...)
 
 	// 4. Load role handlers (executed at the end)
@@ -412,6 +421,19 @@ func processPlaybookRoot(fsys fileSystem, playbookRoot map[string]interface{}, c
 
 // preprocessorFunc defines the signature for functions that handle meta directives.
 type preprocessorFunc func(fsys fileSystem, value interface{}, basePath string, rolesPaths []string) ([]map[string]interface{}, error)
+
+// Block type detection functions
+func isRootBlock(block map[string]interface{}) bool {
+	return block["is_root"] == true
+}
+
+func isRoleDefaultsBlock(block map[string]interface{}) bool {
+	return block["is_role_defaults"] == true
+}
+
+func isRoleVarsBlock(block map[string]interface{}) bool {
+	return block["is_role_vars"] == true
+}
 
 // getPreprocessorRegistry returns the mapping of meta directive keywords to their processing functions.
 func getPreprocessorRegistry() map[string]preprocessorFunc {

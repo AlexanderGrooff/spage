@@ -42,6 +42,14 @@ func ConstructClosure(c *HostContext, t Task, cfg *config.Config) *Closure {
 		}
 	}
 
+	// Add role context to closure if available
+	if t.RoleName != "" {
+		closure.ExtraFacts["_spage_role_name"] = t.RoleName
+	}
+	if t.RolePath != "" {
+		closure.ExtraFacts["_spage_role_path"] = t.RolePath
+	}
+
 	return &closure
 }
 

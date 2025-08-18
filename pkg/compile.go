@@ -342,6 +342,8 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"diff",
 		"vars",
 		"is_handler",
+		"_role_name",
+		"_role_path",
 		"with_items",
 		"throttle", // Caught but ignored
 		"local_action",
@@ -364,6 +366,8 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			Register:   getStringFromMap(block, "register"),
 			DelegateTo: getStringFromMap(block, "delegate_to"),
 			IsHandler:  isHandlerBlock(block),
+			RoleName:   getStringFromMap(block, "_role_name"),
+			RolePath:   getStringFromMap(block, "_role_path"),
 			// Booleans (that might be strings like 'yes') are handled below
 		}
 
