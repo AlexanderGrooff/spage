@@ -23,4 +23,21 @@
     that:
       - template_content.content | b64decode == "some template\n"
   after: slurp template
+
+- name: Task in Role with file copy
+  copy:
+    src: rolefile.txt
+    dest: /tmp/spage/include_role_config.txt
+
+- name: slurp config file
+  slurp:
+    src: /tmp/spage/include_role_config.txt
+  register: config_content
+  after: Task in Role with file copy
+
+- name: assert config content
+  assert:
+    that:
+      - '"text in role file" in (config_content.content | b64decode)'
+  after: slurp config file
   

@@ -2,6 +2,7 @@ package modules
 
 import (
 	"fmt"
+	"path/filepath"
 	"reflect"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
@@ -78,6 +79,22 @@ func (o CopyOutput) Changed() bool {
 	return o.Contents.Changed() || o.Mode.Changed()
 }
 
+// readRoleAwareFile reads a file, checking role-specific paths first if the task is from a role
+func (m CopyModule) readRoleAwareFile(filename string, closure *pkg.Closure) (string, error) {
+	// If this is a role task, check role-specific files directory first
+	if rolePath, ok := closure.GetFact("_spage_role_path"); ok && rolePath != "" {
+		if rolePathStr, ok := rolePath.(string); ok {
+			roleFilePath := filepath.Join(rolePathStr, "files", filename)
+			if content, err := pkg.ReadLocalFile(roleFilePath); err == nil {
+				return content, nil
+			}
+		}
+	}
+	
+	// Fallback to default file resolution
+	return pkg.ReadLocalFile(filename)
+}
+
 func (m CopyModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
 	copyParams, ok := params.(CopyInput)
 	if !ok {
@@ -109,11 +126,15 @@ func (m CopyModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg
 	if copyParams.Src != "" {
 		// TODO: copy as user
 		common.DebugOutput("Copying %s to %s", copyParams.Src, copyParams.Dst)
-		if err := closure.HostContext.Copy(copyParams.Src, copyParams.Dst); err != nil {
-			return nil, fmt.Errorf("failed to copy %s to %s: %v", copyParams.Src, copyParams.Dst, err)
+		
+		// First, read contents using role-aware file resolution
+		if newContents, err = m.readRoleAwareFile(copyParams.Src, closure); err != nil {
+			return nil, fmt.Errorf("failed to read source file %s: %v", copyParams.Src, err)
 		}
-		if newContents, err = closure.HostContext.ReadFile(copyParams.Src, runAs); err != nil {
-			return nil, fmt.Errorf("failed to read %s: %v", copyParams.Src, err)
+		
+		// Write the contents to destination
+		if err := closure.HostContext.WriteFile(copyParams.Dst, newContents, runAs); err != nil {
+			return nil, fmt.Errorf("failed to write to %s: %v", copyParams.Dst, err)
 		}
 	}
 
