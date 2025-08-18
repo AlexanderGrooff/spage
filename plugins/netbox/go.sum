@@ -1,0 +1,4 @@
+github.com/netbox-community/go-netbox/v4 v4.3.0 h1:1kYHscOJG8+GJobC9OdgXX39zBKrBzUE5bxwMgxdlaQ=
+github.com/netbox-community/go-netbox/v4 v4.3.0/go.mod h1:1r1Dhs2sGD3izwvOBZwggFiEGLvyQ5hNgFR16nxsixg=
+gopkg.in/validator.v2 v2.0.1 h1:xF0KWyGWXm/LM2G1TrEjqOu4pa6coO9AlWSf3msVfDY=
+gopkg.in/validator.v2 v2.0.1/go.mod h1:lIUZBlB3Im4s/eYp39Ry/wkR02yOPhZ9IwIRBjuPuG8=

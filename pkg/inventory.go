@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -10,9 +11,77 @@ import (
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/config"
-
+	"github.com/AlexanderGrooff/spage/pkg/plugins"
 	"gopkg.in/yaml.v3"
 )
+
+// convertPluginInventoryToStandard converts a plugin inventory to standard inventory format
+func convertPluginInventoryToStandard(pluginInventory *plugins.Inventory) *Inventory {
+	inventory := &Inventory{
+		Hosts:  make(map[string]*Host),
+		Groups: make(map[string]*Group),
+		Vars:   pluginInventory.Vars,
+	}
+
+	// Convert plugin hosts to standard hosts
+	for hostName, pluginHost := range pluginInventory.Hosts {
+		host := &Host{
+			Name:    pluginHost.Name,
+			Host:    pluginHost.Host,
+			IsLocal: pluginHost.IsLocal,
+			Vars:    pluginHost.Vars,
+			Groups:  pluginHost.Groups,
+		}
+		if host.Vars == nil {
+			host.Vars = make(map[string]interface{})
+		}
+		if host.Groups == nil {
+			host.Groups = make(map[string]string)
+		}
+		host.Prepare()
+		inventory.Hosts[hostName] = host
+	}
+
+	// Convert plugin groups to standard groups
+	for groupName, pluginGroup := range pluginInventory.Groups {
+		group := &Group{
+			Hosts: make(map[string]*Host),
+			Vars:  pluginGroup.Vars,
+		}
+		if group.Vars == nil {
+			group.Vars = make(map[string]interface{})
+		}
+
+		// Link hosts to groups
+		for hostName, pluginHost := range pluginGroup.Hosts {
+			if host, exists := inventory.Hosts[hostName]; exists {
+				group.Hosts[hostName] = host
+			} else {
+				// Convert plugin host to standard host
+				host := &Host{
+					Name:    pluginHost.Name,
+					Host:    pluginHost.Host,
+					IsLocal: pluginHost.IsLocal,
+					Vars:    pluginHost.Vars,
+					Groups:  pluginHost.Groups,
+				}
+				if host.Vars == nil {
+					host.Vars = make(map[string]interface{})
+				}
+				if host.Groups == nil {
+					host.Groups = make(map[string]string)
+				}
+				host.Prepare()
+				inventory.Hosts[hostName] = host
+				group.Hosts[hostName] = host
+			}
+		}
+		
+		inventory.Groups[groupName] = group
+	}
+
+	return inventory
+}
 
 // splitInventoryPaths splits a colon-delimited inventory paths string into individual paths
 func splitInventoryPaths(inventoryPaths string) []string {
@@ -334,7 +403,7 @@ func loadHostVars(inventoryDir string) (map[string]map[string]interface{}, error
 				hostVars[hostName][k] = v
 			}
 		}
-		
+
 		common.LogDebug("Loaded host variables", map[string]interface{}{
 			"host":       hostName,
 			"vars_count": len(hostVars[hostName]),
@@ -646,6 +715,9 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 	}
 
 	var inventories []*Inventory
+	
+	// Initialize plugin manager
+	pm := plugins.NewPluginManager()
 
 	// Load all inventory files
 	for _, filePath := range filesToLoad {
@@ -658,6 +730,29 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 			log.Fatalf("Error reading YAML file %s: %v", filePath, err)
 		}
 
+		// Check if this is a plugin-based inventory
+		var pluginConfig map[string]interface{}
+		if err := yaml.Unmarshal(data, &pluginConfig); err == nil {
+			if pluginName, hasPlugin := pluginConfig["plugin"]; hasPlugin {
+				common.LogDebug("Detected plugin-based inventory", map[string]interface{}{
+					"file":   filePath,
+					"plugin": pluginName,
+				})
+				
+				// Load inventory via plugin
+				pluginInventory, err := pm.LoadInventoryFromPlugin(context.Background(), fmt.Sprintf("%v", pluginName), pluginConfig)
+				if err != nil {
+					return nil, fmt.Errorf("failed to load inventory from plugin %s: %w", pluginName, err)
+				}
+				
+				// Convert plugin inventory to standard inventory format
+				inventory := convertPluginInventoryToStandard(pluginInventory)
+				inventories = append(inventories, inventory)
+				continue
+			}
+		}
+
+		// Regular static inventory file
 		var inventory Inventory
 		inventory.Hosts = make(map[string]*Host)
 		inventory.Groups = make(map[string]*Group)

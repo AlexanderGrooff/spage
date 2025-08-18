@@ -413,6 +413,40 @@ var runCmd = &cobra.Command{
 	},
 }
 
+// inventory parent command
+var inventoryCmd = &cobra.Command{
+	Use:   "inventory",
+	Short: "Inventory-related commands",
+}
+
+// inventory list subcommand
+var inventoryListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all inventory hosts and groups in JSON format",
+	Long: `List all inventory hosts and groups in JSON format, similar to ansible-inventory --list.
+This command supports both static inventory files and dynamic inventory plugins.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		err := LoadConfig(configFile)
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+		// Use our inventory loading system which supports plugins
+		inventory, err := pkg.LoadInventoryWithPaths(inventoryFile, cfg.Inventory, ".")
+		if err != nil {
+			return fmt.Errorf("failed to load inventory: %w", err)
+		}
+
+		// Convert to ansible-inventory --list format
+		output, err := formatInventoryAsJSON(inventory)
+		if err != nil {
+			return fmt.Errorf("failed to format inventory: %w", err)
+		}
+
+		fmt.Println(output)
+		return nil
+	},
+}
+
 // bundle parent and create subcommand
 var bundleCmd = &cobra.Command{
 	Use:   "bundle",
@@ -581,6 +615,14 @@ func init() {
 
 	RootCmd.AddCommand(generateCmd)
 	RootCmd.AddCommand(runCmd)
+
+	// Inventory list flags
+	inventoryListCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file or directory")
+	_ = inventoryListCmd.MarkFlagRequired("inventory")
+
+	// Add inventory subcommands
+	inventoryCmd.AddCommand(inventoryListCmd)
+	RootCmd.AddCommand(inventoryCmd)
 
 	// Bundle create flags
 	bundleCreateCmd.Flags().StringVarP(&bundleDir, "dir", "d", "", "Directory to bundle (required)")
@@ -764,4 +806,71 @@ func parseExtraVars(extraVars []string) (map[string]interface{}, error) {
 	}
 
 	return result, nil
+}
+
+// formatInventoryAsJSON converts our inventory format to ansible-inventory --list JSON format
+func formatInventoryAsJSON(inventory *pkg.Inventory) (string, error) {
+	// Create the output structure similar to ansible-inventory --list
+	output := make(map[string]interface{})
+
+	// Add _meta with hostvars
+	meta := map[string]interface{}{
+		"hostvars": make(map[string]interface{}),
+	}
+
+	// Process hosts and collect their variables
+	for hostName, host := range inventory.Hosts {
+		if host.Vars != nil && len(host.Vars) > 0 {
+			meta["hostvars"].(map[string]interface{})[hostName] = host.Vars
+		}
+	}
+	output["_meta"] = meta
+
+	// Add groups
+	for groupName, group := range inventory.Groups {
+		groupData := make(map[string]interface{})
+
+		// Add hosts to group
+		if len(group.Hosts) > 0 {
+			hostList := make([]string, 0, len(group.Hosts))
+			for hostName := range group.Hosts {
+				hostList = append(hostList, hostName)
+			}
+			groupData["hosts"] = hostList
+		} else {
+			groupData["hosts"] = []string{}
+		}
+
+		// Add group variables
+		if group.Vars != nil && len(group.Vars) > 0 {
+			groupData["vars"] = group.Vars
+		}
+
+		output[groupName] = groupData
+	}
+
+	// Add all group containing all hosts (Ansible convention)
+	allHosts := make([]string, 0, len(inventory.Hosts))
+	for hostName := range inventory.Hosts {
+		allHosts = append(allHosts, hostName)
+	}
+
+	// If 'all' group doesn't exist, create it
+	if _, exists := output["all"]; !exists {
+		allGroup := map[string]interface{}{
+			"hosts": allHosts,
+		}
+		if inventory.Vars != nil && len(inventory.Vars) > 0 {
+			allGroup["vars"] = inventory.Vars
+		}
+		output["all"] = allGroup
+	}
+
+	// Convert to JSON
+	jsonBytes, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal inventory to JSON: %w", err)
+	}
+
+	return string(jsonBytes), nil
 }
