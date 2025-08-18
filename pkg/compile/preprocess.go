@@ -104,6 +104,79 @@ func readRoleData(fsys fileSystem, roleDir string) ([]byte, error) {
 	return nil, fmt.Errorf("role tasks file not found in %s", roleDir)
 }
 
+// readRoleResourceData reads data from a specific role resource directory (defaults, vars, handlers, etc.)
+func readRoleResourceData(fsys fileSystem, roleBaseDir, resourceType string) ([]byte, error) {
+	resourceDir := filepath.Join(roleBaseDir, resourceType)
+
+	// Try yaml then yml
+	if b, err := fsys.ReadFile(filepath.Join(resourceDir, "main.yaml")); err == nil {
+		return b, nil
+	}
+	if b, err := fsys.ReadFile(filepath.Join(resourceDir, "main.yml")); err == nil {
+		return b, nil
+	}
+	// Return nil if resource file doesn't exist (it's optional)
+	return nil, nil
+}
+
+// loadRoleDefaults loads role defaults and returns them as a vars block
+func loadRoleDefaults(fsys fileSystem, roleBaseDir string) (map[string]interface{}, error) {
+	defaultsData, err := readRoleResourceData(fsys, roleBaseDir, "defaults")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read role defaults: %w", err)
+	}
+	if defaultsData == nil {
+		return nil, nil // No defaults file
+	}
+
+	var defaults map[string]interface{}
+	if err := yaml.Unmarshal(defaultsData, &defaults); err != nil {
+		return nil, fmt.Errorf("failed to parse role defaults YAML: %w", err)
+	}
+	return defaults, nil
+}
+
+// loadRoleVars loads role vars and returns them as a vars block
+func loadRoleVars(fsys fileSystem, roleBaseDir string) (map[string]interface{}, error) {
+	varsData, err := readRoleResourceData(fsys, roleBaseDir, "vars")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read role vars: %w", err)
+	}
+	if varsData == nil {
+		return nil, nil // No vars file
+	}
+
+	var vars map[string]interface{}
+	if err := yaml.Unmarshal(varsData, &vars); err != nil {
+		return nil, fmt.Errorf("failed to parse role vars YAML: %w", err)
+	}
+	return vars, nil
+}
+
+// loadRoleHandlers loads role handlers and returns them as handler blocks
+func loadRoleHandlers(fsys fileSystem, roleBaseDir string, rolesPaths []string) ([]map[string]interface{}, error) {
+	handlersData, err := readRoleResourceData(fsys, roleBaseDir, "handlers")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read role handlers: %w", err)
+	}
+	if handlersData == nil {
+		return nil, nil // No handlers file
+	}
+
+	// Parse and preprocess the handlers
+	handlerBlocks, err := preprocessPlaybook(fsys, handlersData, filepath.Join(roleBaseDir, "handlers"), rolesPaths)
+	if err != nil {
+		return nil, fmt.Errorf("failed to preprocess role handlers: %w", err)
+	}
+
+	// Mark all blocks as handlers
+	for i := range handlerBlocks {
+		handlerBlocks[i]["is_handler"] = true
+	}
+
+	return handlerBlocks, nil
+}
+
 // processIncludeDirective handles the 'include' directive during preprocessing.
 func processIncludeDirective(fsys fileSystem, includeValue interface{}, currentBasePath string, rolesPaths []string) ([]map[string]interface{}, error) {
 	if pathStr, ok := includeValue.(string); ok {
@@ -148,6 +221,40 @@ func processIncludeRoleDirective(fsys fileSystem, roleParams interface{}, curren
 		return nil, err
 	}
 
+	// Get the role base directory (parent of tasks directory)
+	roleBaseDir := filepath.Dir(roleTasksBasePath)
+
+	var result []map[string]interface{}
+
+	// 1. Load role defaults (lowest precedence)
+	roleDefaults, err := loadRoleDefaults(fsys, roleBaseDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load role '%s' defaults: %w", roleName, err)
+	}
+	if roleDefaults != nil {
+		defaultsBlock := map[string]interface{}{
+			"is_role_defaults": true,
+			"role_name":        roleName,
+			"vars":             roleDefaults,
+		}
+		result = append(result, defaultsBlock)
+	}
+
+	// 2. Load role vars (higher precedence than defaults)
+	roleVars, err := loadRoleVars(fsys, roleBaseDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load role '%s' vars: %w", roleName, err)
+	}
+	if roleVars != nil {
+		varsBlock := map[string]interface{}{
+			"is_role_vars": true,
+			"role_name":    roleName,
+			"vars":         roleVars,
+		}
+		result = append(result, varsBlock)
+	}
+
+	// 3. Load role tasks
 	roleData, err := readRoleData(fsys, roleTasksBasePath)
 	if err != nil {
 		return nil, err
@@ -158,7 +265,18 @@ func processIncludeRoleDirective(fsys fileSystem, roleParams interface{}, curren
 	if err != nil {
 		return nil, fmt.Errorf("failed to preprocess role '%s' tasks from %s: %w", roleName, roleTasksBasePath, err)
 	}
-	return roleBlocks, nil
+	result = append(result, roleBlocks...)
+
+	// 4. Load role handlers (executed at the end)
+	roleHandlers, err := loadRoleHandlers(fsys, roleBaseDir, rolesPaths)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load role '%s' handlers: %w", roleName, err)
+	}
+	if roleHandlers != nil {
+		result = append(result, roleHandlers...)
+	}
+
+	return result, nil
 }
 
 // processPlaybookRoot handles the root level of an Ansible playbook with 'hosts' field
@@ -298,14 +416,21 @@ type preprocessorFunc func(fsys fileSystem, value interface{}, basePath string, 
 // getPreprocessorRegistry returns the mapping of meta directive keywords to their processing functions.
 func getPreprocessorRegistry() map[string]preprocessorFunc {
 	return map[string]preprocessorFunc{
-		"include":          processIncludeDirective,
-		"include_playbook": processIncludeDirective,
-		"import_tasks":     processIncludeDirective,
-		"import_playbook":  processIncludeDirective,
-		"include_tasks":    processIncludeDirective,
-		"include_role":     processIncludeRoleDirective,
-		"import_role":      processIncludeRoleDirective,
+		"include":         processIncludeDirective,
+		"import_tasks":    processIncludeDirective,
+		"import_playbook": processIncludeDirective,
+		"include_tasks":   processIncludeDirective,
+		"include_role":    processIncludeRoleDirective,
+		"import_role":     processIncludeRoleDirective,
 	}
+}
+
+func getRegistryKeys(registry map[string]preprocessorFunc) []string {
+	keys := make([]string, 0, len(registry))
+	for k := range registry {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // preprocessPlaybook takes raw playbook YAML data and a base path,

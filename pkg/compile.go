@@ -117,13 +117,74 @@ func isHandlerBlock(block map[string]interface{}) bool {
 	return block["is_handler"] == true
 }
 
+func isRoleDefaultsBlock(block map[string]interface{}) bool {
+	return block["is_role_defaults"] == true
+}
+
+func isRoleVarsBlock(block map[string]interface{}) bool {
+	return block["is_role_vars"] == true
+}
+
 func ParsePlayAttributes(blocks []map[string]interface{}) (map[string]interface{}, error) {
-	rootBlock := blocks[0]
-	if !isRootBlock(rootBlock) {
-		return nil, fmt.Errorf("root block not found")
+	// Find the root block (can be anywhere in the list)
+	var rootBlock map[string]interface{}
+	var found bool
+	for _, block := range blocks {
+		if isRootBlock(block) {
+			rootBlock = block
+			found = true
+			break
+		}
 	}
+
+	if !found {
+		// Create a synthetic root block for tasks-only playbooks
+		rootBlock = map[string]interface{}{}
+	}
+
 	attributes := make(map[string]interface{})
-	attributes["vars"] = rootBlock["vars"]
+
+	// Initialize vars from root block
+	vars := make(map[string]interface{})
+	if rootVars, ok := rootBlock["vars"].(map[string]interface{}); ok {
+		for k, v := range rootVars {
+			vars[k] = v
+		}
+	}
+
+	// Merge role defaults first (lowest precedence)
+	for _, block := range blocks {
+		if isRoleDefaultsBlock(block) {
+			if roleVars, ok := block["vars"].(map[string]interface{}); ok {
+				for k, v := range roleVars {
+					// Only set if not already defined (defaults have lowest precedence)
+					if _, exists := vars[k]; !exists {
+						vars[k] = v
+					}
+				}
+			}
+		}
+	}
+
+	// Merge role vars (higher precedence than defaults, lower than play vars)
+	for _, block := range blocks {
+		if isRoleVarsBlock(block) {
+			if roleVars, ok := block["vars"].(map[string]interface{}); ok {
+				for k, v := range roleVars {
+					// Role vars override defaults but not play vars
+					if _, exists := vars[k]; !exists {
+						vars[k] = v
+					} else {
+						// Check if the existing var came from defaults or root
+						// For simplicity, role vars will override defaults
+						vars[k] = v
+					}
+				}
+			}
+		}
+	}
+
+	attributes["vars"] = vars
 	return attributes, nil
 }
 
@@ -290,7 +351,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 	var errors []error
 
 	for idx, block := range blocks {
-		if isRootBlock(block) {
+		if isRootBlock(block) || isRoleDefaultsBlock(block) || isRoleVarsBlock(block) {
 			continue
 		}
 

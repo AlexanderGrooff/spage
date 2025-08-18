@@ -1,3 +1,26 @@
 - name: Task in Role
   shell:
     execute: echo "Task in Role" > /tmp/spage/include_role_task.txt
+
+- name: Task in Role with vars
+  assert:
+    that:
+      - role_wide_var == 123
+
+- name: Task in Role with template
+  template:
+    src: role_template.yaml
+    dest: /tmp/spage/include_role_template.txt
+
+- name: slurp template
+  slurp:
+    path: /tmp/spage/include_role_template.txt
+  register: template_content
+  after: Task in Role with template
+
+- name: assert template content
+  assert:
+    that:
+      - template_content.content == "some template\n"
+  after: slurp template
+  
