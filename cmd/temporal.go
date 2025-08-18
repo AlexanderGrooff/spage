@@ -129,7 +129,7 @@ func NewTemporalExecutorCmd(graph pkg.Graph) *cobra.Command {
 
 			log.Printf("Preparing to run Temporal worker. Workflow trigger from config: %t", spageAppConfig.Temporal.Trigger)
 
-			return StartTemporalExecutor(&filteredGraph, temporalInventoryFile, spageAppConfig, nil)
+			return StartTemporalExecutorWithLimit(&filteredGraph, temporalInventoryFile, spageAppConfig, nil, limitHosts)
 		},
 	}
 
@@ -141,6 +141,7 @@ func NewTemporalExecutorCmd(graph pkg.Graph) *cobra.Command {
 	temporalCmd.Flags().StringSliceVar(&temporalSkipTags, "skip-tags", []string{}, "Skip tasks with these tags (comma-separated)")
 	temporalCmd.Flags().StringSliceVarP(&temporalExtraVars, "extra-vars", "e", []string{}, "Set additional variables as key=value or YAML/JSON")
 	temporalCmd.Flags().BoolVar(&temporalBecomeMode, "become", false, "Run all tasks with become: true and become_user: root")
+	temporalCmd.Flags().StringVarP(&limitHosts, "limit", "l", "", "Limit execution to hosts matching the given pattern")
 
 	return temporalCmd
 }
