@@ -4,6 +4,8 @@
 package pkg
 
 import (
+	"time"
+
 	"github.com/AlexanderGrooff/spage/pkg/daemon"
 )
 
@@ -37,5 +39,11 @@ func ReportPlayCompletion(client *daemon.Client) error {
 
 // ReportPlayError is a no-op stub when daemon is not available
 func ReportPlayError(client *daemon.Client, err error) error {
+	return nil
+}
+
+// WaitForPendingReportsWithTimeout is a no-op stub when daemon is not available
+func WaitForPendingReportsWithTimeout(timeout time.Duration) error {
+	// No reports to wait for when daemon is not available
 	return nil
 }

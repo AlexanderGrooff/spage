@@ -409,14 +409,14 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	if client, ok := closure.Config.GetDaemonReporting().(*daemon.Client); ok {
 		daemonClient = client
 	}
-	go ReportTaskStart(daemonClient, t.Name, closure.HostContext.Host.Name, 0)
+	ReportTaskStart(daemonClient, t.Name, closure.HostContext.Host.Name, 0)
 
 	startTime := time.Now()
 
 	shouldExecute, err := t.ShouldExecute(closure)
 	if err != nil {
 		res := TaskResult{Task: t, Closure: closure, Status: TaskStatusFailed, Error: err}
-		go ReportTaskCompletion(daemonClient, t, res, closure.HostContext.Host.Name, -1)
+		ReportTaskCompletion(daemonClient, t, res, closure.HostContext.Host.Name, -1)
 		return res
 	}
 	if !shouldExecute {
@@ -424,7 +424,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 			"task": t.Name,
 			"host": closure.HostContext.Host.Name,
 		})
-		go ReportTaskSkipped(daemonClient, t.Name, closure.HostContext.Host.Name, 0)
+		ReportTaskSkipped(daemonClient, t.Name, closure.HostContext.Host.Name, 0)
 		return TaskResult{Task: t, Closure: closure, Status: TaskStatusSkipped}
 	}
 
@@ -476,7 +476,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	// If 'until' is not defined, execute once as normal.
 	if t.Until.Expression == "" {
 		res := t.executeOnce(taskClosure)
-		go ReportTaskCompletion(daemonClient, t, res, closure.HostContext.Host.Name, -1)
+		ReportTaskCompletion(daemonClient, t, res, closure.HostContext.Host.Name, -1)
 		return res
 	}
 
@@ -540,7 +540,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 			}
 			lastResult.Duration = time.Since(startTime) // Update total duration
 
-			go ReportTaskCompletion(daemonClient, t, lastResult, closure.HostContext.Host.Name, -1)
+			ReportTaskCompletion(daemonClient, t, lastResult, closure.HostContext.Host.Name, -1)
 			return lastResult
 		}
 
@@ -569,7 +569,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	}
 	lastResult.Duration = time.Since(startTime)
 
-	go ReportTaskCompletion(daemonClient, t, lastResult, closure.HostContext.Host.Name, -1)
+	ReportTaskCompletion(daemonClient, t, lastResult, closure.HostContext.Host.Name, -1)
 	return lastResult
 }
 

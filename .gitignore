@@ -24,3 +24,4 @@ node_modules
 /.ansible
 /*.tar.gz
 *.so
+.playwright-mcp

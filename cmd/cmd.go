@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/daemon"
@@ -405,6 +406,24 @@ var runCmd = &cobra.Command{
 			maps.Copy(cfg.Facts, extraFacts)
 
 		}
+
+		// Ensure all pending daemon reports complete before exit and close daemon client
+		defer func() {
+			if daemonClient != nil {
+				// Wait for reports with a reasonable timeout to prevent hanging
+				if err := pkg.WaitForPendingReportsWithTimeout(30 * time.Second); err != nil {
+					common.LogWarn("Timeout waiting for daemon reports", map[string]interface{}{
+						"error": err.Error(),
+					})
+				}
+				// Close the daemon client
+				if err := daemonClient.Close(); err != nil {
+					common.LogWarn("Failed to close daemon client", map[string]interface{}{
+						"error": err.Error(),
+					})
+				}
+			}
+		}()
 
 		if cfg.Executor == "temporal" {
 			err = StartTemporalExecutorWithLimit(&graph, inventoryFile, cfg, daemonClient, effectiveLimit)

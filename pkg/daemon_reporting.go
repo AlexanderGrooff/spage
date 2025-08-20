@@ -6,12 +6,17 @@ package pkg
 import (
 	"fmt"
 	"runtime"
+	"sync"
+	"time"
 
 	"github.com/AlexanderGrooff/spage-protobuf/spage/core"
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/daemon"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+// Global WaitGroup to track all reporting goroutines
+var reportingWaitGroup sync.WaitGroup
 
 // Utility functions for daemon reporting - use the Client directly
 
@@ -27,10 +32,13 @@ func ReportTaskStart(client *daemon.Client, taskName, hostName string, execution
 		StartedAt: timestamppb.Now(),
 	}
 
-	if err := client.UpdateTaskResult(taskResult); err != nil {
-		common.LogWarn("failed to report task start", map[string]interface{}{"error": err.Error()})
-		return err
-	}
+	reportingWaitGroup.Add(1)
+	go func() {
+		defer reportingWaitGroup.Done()
+		if err := client.UpdateTaskResult(taskResult); err != nil {
+			common.LogWarn("failed to report task start", map[string]interface{}{"error": err.Error()})
+		}
+	}()
 	return nil
 }
 
@@ -77,10 +85,13 @@ func ReportTaskCompletion(client *daemon.Client, task Task, result TaskResult, h
 	}
 
 	// Use the new UpdateTaskResult method with the actual TaskResult
-	if err := client.UpdateTaskResult(taskResult); err != nil {
-		common.LogWarn("failed to report task completion", map[string]interface{}{"error": err.Error()})
-		return err
-	}
+	reportingWaitGroup.Add(1)
+	go func() {
+		defer reportingWaitGroup.Done()
+		if err := client.UpdateTaskResult(taskResult); err != nil {
+			common.LogWarn("failed to report task completion", map[string]interface{}{"error": err.Error()})
+		}
+	}()
 	return nil
 }
 
@@ -95,10 +106,13 @@ func ReportTaskSkipped(client *daemon.Client, taskName, hostName string, executi
 		CompletedAt: timestamppb.Now(),
 	}
 
-	if err := client.UpdateTaskResult(taskResult); err != nil {
-		common.LogWarn("failed to report task skipped", map[string]interface{}{"error": err.Error()})
-		return err
-	}
+	reportingWaitGroup.Add(1)
+	go func() {
+		defer reportingWaitGroup.Done()
+		if err := client.UpdateTaskResult(taskResult); err != nil {
+			common.LogWarn("failed to report task skipped", map[string]interface{}{"error": err.Error()})
+		}
+	}()
 	return nil
 }
 
@@ -107,10 +121,13 @@ func ReportPlayStart(client *daemon.Client, playbook, inventory, executor string
 		return nil
 	}
 
-	if err := client.RegisterPlayStart(playbook, inventory, map[string]string{}, executor); err != nil {
-		common.LogWarn("failed to report play start", map[string]interface{}{"error": err.Error()})
-		return err
-	}
+	reportingWaitGroup.Add(1)
+	go func() {
+		defer reportingWaitGroup.Done()
+		if err := client.RegisterPlayStart(playbook, inventory, map[string]string{}, executor); err != nil {
+			common.LogWarn("failed to report play start", map[string]interface{}{"error": err.Error()})
+		}
+	}()
 	return nil
 }
 
@@ -118,10 +135,13 @@ func ReportPlayCompletion(client *daemon.Client) error {
 	if client == nil {
 		return nil
 	}
-	if err := client.RegisterPlayCompletion(); err != nil {
-		common.LogWarn("failed to report play completion", map[string]interface{}{"error": err.Error()})
-		return err
-	}
+	reportingWaitGroup.Add(1)
+	go func() {
+		defer reportingWaitGroup.Done()
+		if err := client.RegisterPlayCompletion(); err != nil {
+			common.LogWarn("failed to report play completion", map[string]interface{}{"error": err.Error()})
+		}
+	}()
 	return nil
 }
 
@@ -129,9 +149,29 @@ func ReportPlayError(client *daemon.Client, err error) error {
 	if client == nil {
 		return nil
 	}
-	if err := client.RegisterPlayError(err); err != nil {
-		common.LogWarn("failed to report play error", map[string]interface{}{"error": err.Error()})
-		return err
-	}
+	reportingWaitGroup.Add(1)
+	go func() {
+		defer reportingWaitGroup.Done()
+		if err := client.RegisterPlayError(err); err != nil {
+			common.LogWarn("failed to report play error", map[string]interface{}{"error": err.Error()})
+		}
+	}()
 	return nil
+}
+
+// WaitForPendingReportsWithTimeout waits for all pending daemon reports to complete
+// with a timeout to prevent indefinite hanging
+func WaitForPendingReportsWithTimeout(timeout time.Duration) error {
+	done := make(chan struct{})
+	go func() {
+		reportingWaitGroup.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-time.After(timeout):
+		return fmt.Errorf("timeout waiting for daemon reports to complete after %v", timeout)
+	}
 }
