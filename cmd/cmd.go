@@ -41,6 +41,7 @@ var (
 	extraVars     []string
 	becomeMode    bool
 	limitHosts    string // Host pattern to limit execution to
+	connectionType string // Connection type override (e.g., local)
 
 	// Daemon communication flags
 	daemonGRPC string
@@ -380,6 +381,11 @@ var runCmd = &cobra.Command{
 			})
 		}
 
+		// Apply connection override (CLI takes precedence)
+		if connectionType != "" {
+			cfg.Connection = connectionType
+		}
+
 		if checkMode {
 			if cfg.Facts == nil {
 				cfg.Facts = make(map[string]interface{})
@@ -641,6 +647,7 @@ func init() {
 	runCmd.Flags().BoolVar(&diffMode, "diff", false, "Enable diff mode")
 	runCmd.Flags().StringSliceVarP(&extraVars, "extra-vars", "e", []string{}, "Set additional variables as key=value or YAML/JSON, i.e. -e 'key1=value1' -e 'key2=value2' or -e '{\"key1\": \"value1\", \"key2\": \"value2\"}'")
 	runCmd.Flags().BoolVar(&becomeMode, "become", false, "Run all tasks with become: true and become_user: root")
+	runCmd.Flags().StringVar(&connectionType, "connection", "", "Connection type override (e.g., local)")
 
 	// Daemon communication flags
 	runCmd.Flags().StringVar(&daemonGRPC, "daemon-grpc", "", "Daemon gRPC endpoint (default: localhost:9091)")

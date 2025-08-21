@@ -51,3 +51,24 @@
       assert:
         that:
           - not collection_result_jinja.failed
+
+    - name: test tmpfile
+      tempfile:
+        state: directory
+        suffix: build
+      run_once: true
+      register: tmp_dir
+
+    - set_fact:
+        build_dir: '{{ tmp_dir.path }}/{{ inventory_hostname }}/'
+
+    - name: test file
+      file:
+        path: "{{ build_dir }}"
+        state: directory
+      register: file_result
+
+    - name: Verify file result
+      assert:
+        that:
+          - not file_result.failed

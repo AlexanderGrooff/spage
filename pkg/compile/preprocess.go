@@ -305,6 +305,23 @@ func processPlaybookRoot(fsys fileSystem, playbookRoot map[string]interface{}, c
 	if vars, ok := playbookRoot["vars"]; ok {
 		root_block["vars"] = vars
 	}
+
+	// Honor play-level connection: if present, inject into vars as ansible_connection
+	if connRaw, hasConn := playbookRoot["connection"]; hasConn {
+		if connStr, ok := connRaw.(string); ok && connStr != "" {
+			// Ensure vars map exists
+			if _, ok := root_block["vars"]; !ok {
+				root_block["vars"] = map[string]interface{}{}
+			}
+			if varsMap, ok := root_block["vars"].(map[string]interface{}); ok {
+				varsMap["ansible_connection"] = connStr
+				// Also store as 'connection' var for compatibility
+				varsMap["connection"] = connStr
+				root_block["vars"] = varsMap
+			}
+		}
+	}
+
 	result = append(result, root_block)
 
 	// Process 'roles' section if it exists

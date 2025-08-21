@@ -25,6 +25,9 @@ type Config struct {
 	PrivilegeEscalation PrivilegeEscalationConfig `mapstructure:"privilege_escalation"`
 	SSH                 SSHConfig                 `mapstructure:"ssh"`
 
+	// Connection type override (e.g., "local" to run tasks locally)
+	Connection string `mapstructure:"connection"`
+
 	// API bearer token for CLI auth against spage-api
 	ApiToken string `mapstructure:"api_token"`
 
@@ -177,6 +180,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("logging.format", "plain")
 	v.SetDefault("execution_mode", "sequential")
 	v.SetDefault("executor", "local")
+	// Connection default: empty means use default remote execution (ssh). Set to "local" to force local.
+	v.SetDefault("connection", "")
 	v.SetDefault("logging.timestamps", true)
 	v.SetDefault("revert", false)
 

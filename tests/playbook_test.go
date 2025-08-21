@@ -763,6 +763,18 @@ func TestAnsibleBuiltinPlaybook(t *testing.T) {
 	})
 }
 
+func TestConnectionLocalPlaybook(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/connection_local_playbook.yaml",
+		configFile:   "sequential_no_revert.yaml",
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "connection_local_playbook should succeed in env: %s, output: %s", envName, output)
+			assertFileExistsWithInventory(t, "/tmp/spage/connection_local_test.txt", inventory)
+			assertFileContainsWithInventory(t, "/tmp/spage/connection_local_test.txt", "local connection works", inventory)
+		},
+	})
+}
+
 func TestFailModulePlaybook(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
 		playbookFile: "playbooks/fail_playbook.yaml",

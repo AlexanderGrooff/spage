@@ -1022,6 +1022,20 @@ func GetContextForRun(inventory *Inventory, graph *Graph, cfg *config.Config) (m
 	var err error
 	contexts := make(map[string]*HostContext)
 	for _, host := range inventory.Hosts {
+        // Honor connection overrides before initializing host context
+        // 1) CLI/config override
+        if cfg != nil && strings.EqualFold(cfg.Connection, "local") {
+            host.IsLocal = true
+        } else {
+            // 2) Play-level connection from graph vars (preprocessed as ansible_connection)
+            if graph != nil && graph.Vars != nil {
+                if connVal, ok := graph.Vars["ansible_connection"]; ok {
+                    if connStr, ok := connVal.(string); ok && strings.EqualFold(connStr, "local") {
+                        host.IsLocal = true
+                    }
+                }
+            }
+        }
 		common.DebugOutput("Getting context for host %q", host.Name)
 		contexts[host.Name], err = GetContextForHost(inventory, host, cfg)
 		if err != nil {
