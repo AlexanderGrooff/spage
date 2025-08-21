@@ -324,120 +324,184 @@ func processPlaybookRoot(fsys fileSystem, playbookRoot map[string]interface{}, c
 
 	result = append(result, root_block)
 
-	// Process 'roles' section if it exists
-	if roles, hasRoles := playbookRoot["roles"]; hasRoles {
-		rolesList, ok := roles.([]interface{})
-		if !ok {
-			return nil, fmt.Errorf("invalid 'roles' section: expected list, got %T", roles)
-		}
+    // Prepare registry once for processing meta directives inside task lists
+    registry := getPreprocessorRegistry()
 
-		for _, roleEntry := range rolesList {
-			var roleName string
+    // Process 'roles' section if it exists
+    if roles, hasRoles := playbookRoot["roles"]; hasRoles {
+        rolesList, ok := roles.([]interface{})
+        if !ok {
+            return nil, fmt.Errorf("invalid 'roles' section: expected list, got %T", roles)
+        }
 
-			// Handle both simple string role names and role entries with parameters
-			switch role := roleEntry.(type) {
-			case string:
-				roleName = role
-			case map[string]interface{}:
-				if name, ok := role["role"].(string); ok {
-					roleName = name
-				} else if name, ok := role["name"].(string); ok {
-					roleName = name
-				} else {
-					return nil, fmt.Errorf("invalid role entry: missing 'role' or 'name' field")
-				}
-			default:
-				return nil, fmt.Errorf("invalid role entry: expected string or map, got %T", roleEntry)
-			}
+        for _, roleEntry := range rolesList {
+            var roleName string
 
-			// Use the existing include_role processor to handle the role
-			roleParams := map[string]interface{}{"name": roleName}
-			roleBlocks, err := processIncludeRoleDirective(fsys, roleParams, currentBasePath, rolesPaths)
-			if err != nil {
-				return nil, fmt.Errorf("failed to process role '%s': %w", roleName, err)
-			}
-			result = append(result, roleBlocks...)
-		}
-	}
+            // Handle both simple string role names and role entries with parameters
+            switch role := roleEntry.(type) {
+            case string:
+                roleName = role
+            case map[string]interface{}:
+                if name, ok := role["role"].(string); ok {
+                    roleName = name
+                } else if name, ok := role["name"].(string); ok {
+                    roleName = name
+                } else {
+                    return nil, fmt.Errorf("invalid role entry: missing 'role' or 'name' field")
+                }
+            default:
+                return nil, fmt.Errorf("invalid role entry: expected string or map, got %T", roleEntry)
+            }
 
-	// Process 'pre_tasks' section if it exists
-	if preTasks, hasPreTasks := playbookRoot["pre_tasks"]; hasPreTasks {
-		taskList, ok := preTasks.([]interface{})
-		if !ok {
-			return nil, fmt.Errorf("invalid 'pre_tasks' section: expected list, got %T", preTasks)
-		}
+            // Use the existing include_role processor to handle the role
+            roleParams := map[string]interface{}{"name": roleName}
+            roleBlocks, err := processIncludeRoleDirective(fsys, roleParams, currentBasePath, rolesPaths)
+            if err != nil {
+                return nil, fmt.Errorf("failed to process role '%s': %w", roleName, err)
+            }
+            result = append(result, roleBlocks...)
+        }
+    }
 
-		for _, taskEntry := range taskList {
-			taskMap, ok := taskEntry.(map[string]interface{})
-			if !ok {
-				return nil, fmt.Errorf("invalid task entry: expected map, got %T", taskEntry)
-			}
+    // Process 'pre_tasks' section if it exists
+    if preTasks, hasPreTasks := playbookRoot["pre_tasks"]; hasPreTasks {
+        taskList, ok := preTasks.([]interface{})
+        if !ok {
+            return nil, fmt.Errorf("invalid 'pre_tasks' section: expected list, got %T", preTasks)
+        }
 
-			// Each task is already a map, so just add it directly to the result
-			result = append(result, taskMap)
-		}
-	}
+        for _, taskEntry := range taskList {
+            taskMap, ok := taskEntry.(map[string]interface{})
+            if !ok {
+                return nil, fmt.Errorf("invalid task entry: expected map, got %T", taskEntry)
+            }
 
-	// Process 'tasks' section if it exists
-	if tasks, hasTasks := playbookRoot["tasks"]; hasTasks {
-		tasksList, ok := tasks.([]interface{})
-		if !ok {
-			return nil, fmt.Errorf("invalid 'tasks' section: expected list, got %T", tasks)
-		}
+            // Try to process meta directives inside the task
+            processed := false
+            for key, value := range taskMap {
+                if processor, ok := registry[key]; ok {
+                    nestedBlocks, err := processor(fsys, value, currentBasePath, rolesPaths)
+                    if err != nil {
+                        return nil, fmt.Errorf("failed to process '%s' in pre_tasks: %w", key, err)
+                    }
+                    result = append(result, nestedBlocks...)
+                    processed = true
+                    break
+                }
+            }
+            if !processed {
+                // Each task is already a map, so just add it directly to the result
+                result = append(result, taskMap)
+            }
+        }
+    }
 
-		for _, taskEntry := range tasksList {
-			taskMap, ok := taskEntry.(map[string]interface{})
-			if !ok {
-				return nil, fmt.Errorf("invalid task entry: expected map, got %T", taskEntry)
-			}
+    // Process 'tasks' section if it exists
+    if tasks, hasTasks := playbookRoot["tasks"]; hasTasks {
+        tasksList, ok := tasks.([]interface{})
+        if !ok {
+            return nil, fmt.Errorf("invalid 'tasks' section: expected list, got %T", tasks)
+        }
 
-			// Each task is already a map, so just add it directly to the result
-			result = append(result, taskMap)
-		}
-	}
+        for _, taskEntry := range tasksList {
+            taskMap, ok := taskEntry.(map[string]interface{})
+            if !ok {
+                return nil, fmt.Errorf("invalid task entry: expected map, got %T", taskEntry)
+            }
 
-	// Process 'post_tasks' section if it exists
-	if postTasks, haspostTasks := playbookRoot["post_tasks"]; haspostTasks {
-		taskList, ok := postTasks.([]interface{})
-		if !ok {
-			return nil, fmt.Errorf("invalid 'post_tasks' section: expected list, got %T", postTasks)
-		}
+            // Try to process meta directives inside the task
+            processed := false
+            for key, value := range taskMap {
+                if processor, ok := registry[key]; ok {
+                    nestedBlocks, err := processor(fsys, value, currentBasePath, rolesPaths)
+                    if err != nil {
+                        return nil, fmt.Errorf("failed to process '%s' in tasks: %w", key, err)
+                    }
+                    result = append(result, nestedBlocks...)
+                    processed = true
+                    break
+                }
+            }
+            if !processed {
+                // Each task is already a map, so just add it directly to the result
+                result = append(result, taskMap)
+            }
+        }
+    }
 
-		for _, taskEntry := range taskList {
-			taskMap, ok := taskEntry.(map[string]interface{})
-			if !ok {
-				return nil, fmt.Errorf("invalid task entry: expected map, got %T", taskEntry)
-			}
+    // Process 'post_tasks' section if it exists
+    if postTasks, haspostTasks := playbookRoot["post_tasks"]; haspostTasks {
+        taskList, ok := postTasks.([]interface{})
+        if !ok {
+            return nil, fmt.Errorf("invalid 'post_tasks' section: expected list, got %T", postTasks)
+        }
 
-			// Each task is already a map, so just add it directly to the result
-			result = append(result, taskMap)
-		}
-	}
+        for _, taskEntry := range taskList {
+            taskMap, ok := taskEntry.(map[string]interface{})
+            if !ok {
+                return nil, fmt.Errorf("invalid task entry: expected map, got %T", taskEntry)
+            }
 
-	// Process 'handlers' section if it exists
-	if handlers, hasHandlers := playbookRoot["handlers"]; hasHandlers {
-		handlersList, ok := handlers.([]interface{})
-		if !ok {
-			return nil, fmt.Errorf("invalid 'handlers' section: expected list, got %T", handlers)
-		}
+            // Try to process meta directives inside the task
+            processed := false
+            for key, value := range taskMap {
+                if processor, ok := registry[key]; ok {
+                    nestedBlocks, err := processor(fsys, value, currentBasePath, rolesPaths)
+                    if err != nil {
+                        return nil, fmt.Errorf("failed to process '%s' in post_tasks: %w", key, err)
+                    }
+                    result = append(result, nestedBlocks...)
+                    processed = true
+                    break
+                }
+            }
+            if !processed {
+                // Each task is already a map, so just add it directly to the result
+                result = append(result, taskMap)
+            }
+        }
+    }
 
-		for _, handlerEntry := range handlersList {
-			handlerMap, ok := handlerEntry.(map[string]interface{})
-			if !ok {
-				return nil, fmt.Errorf("invalid handler entry: expected map, got %T", handlerEntry)
-			}
+    // Process 'handlers' section if it exists
+    if handlers, hasHandlers := playbookRoot["handlers"]; hasHandlers {
+        handlersList, ok := handlers.([]interface{})
+        if !ok {
+            return nil, fmt.Errorf("invalid 'handlers' section: expected list, got %T", handlers)
+        }
 
-			// Mark this task as a handler
-			handlerMap["is_handler"] = true
-			result = append(result, handlerMap)
-		}
-	}
+        for _, handlerEntry := range handlersList {
+            handlerMap, ok := handlerEntry.(map[string]interface{})
+            if !ok {
+                return nil, fmt.Errorf("invalid handler entry: expected map, got %T", handlerEntry)
+            }
 
-	return result, nil
+            // Try to process meta directives inside the handler
+            processed := false
+            for key, value := range handlerMap {
+                if processor, ok := registry[key]; ok {
+                    nestedBlocks, err := processor(fsys, value, currentBasePath, rolesPaths)
+                    if err != nil {
+                        return nil, fmt.Errorf("failed to process '%s' in handlers: %w", key, err)
+                    }
+                    // Mark all resulting blocks as handlers
+                    for i := range nestedBlocks {
+                        nestedBlocks[i]["is_handler"] = true
+                    }
+                    result = append(result, nestedBlocks...)
+                    processed = true
+                    break
+                }
+            }
+            if !processed {
+                // Mark this task as a handler
+                handlerMap["is_handler"] = true
+                result = append(result, handlerMap)
+            }
+        }
+    }
+
+    return result, nil
 }
-
-// preprocessorFunc defines the signature for functions that handle meta directives.
-type preprocessorFunc func(fsys fileSystem, value interface{}, basePath string, rolesPaths []string) ([]map[string]interface{}, error)
 
 // Block type detection functions
 func isRootBlock(block map[string]interface{}) bool {
@@ -449,8 +513,11 @@ func isRoleDefaultsBlock(block map[string]interface{}) bool {
 }
 
 func isRoleVarsBlock(block map[string]interface{}) bool {
-	return block["is_role_vars"] == true
+    return block["is_role_vars"] == true
 }
+
+// preprocessorFunc defines the signature for functions that handle meta directives.
+type preprocessorFunc func(fsys fileSystem, value interface{}, basePath string, rolesPaths []string) ([]map[string]interface{}, error)
 
 // getPreprocessorRegistry returns the mapping of meta directive keywords to their processing functions.
 func getPreprocessorRegistry() map[string]preprocessorFunc {
