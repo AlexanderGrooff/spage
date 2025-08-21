@@ -351,8 +351,11 @@ func executeRemoteCommand(pool *desopssshpool.Pool, host, command string, opts *
 	// Execute the command
 	rc, stdout, stderr, err := executor.executeCommand(cmdToRun, false)
 
-	// Check for sudo password errors
+	// Check for authentication and sudo password errors
 	if err != nil {
+		if authErr := checkAuthenticationError(err, stderr, host); authErr != nil {
+			return rc, stdout, stderr, authErr
+		}
 		if sudoErr := checkSudoPasswordError(stderr, host); sudoErr != nil {
 			return rc, stdout, stderr, sudoErr
 		}
@@ -387,6 +390,24 @@ func executeInteractiveRemoteCommand(pool *desopssshpool.Pool, host, command str
 	// Execute the command
 	rc, stdout, stderr, err := executor.executeCommand(cmdToRun, true)
 	return rc, stdout, stderr, err
+}
+
+// checkAuthenticationError checks if the error is due to SSH authentication failure
+func checkAuthenticationError(execErr error, stderrOutput, host string) error {
+	if execErr == nil {
+		return nil
+	}
+
+	// Check for common SSH authentication error patterns
+	errorStr := execErr.Error()
+	if strings.Contains(errorStr, "ssh: handshake failed") ||
+		strings.Contains(errorStr, "ssh: unable to authenticate") ||
+		strings.Contains(errorStr, "permission denied") ||
+		strings.Contains(errorStr, "authentication failed") {
+		return fmt.Errorf("SSH authentication failed for host %s. Consider: 1) Checking SSH key setup, 2) Verifying SSH agent is running, 3) Using interactive password authentication, or 4) Checking host connectivity: %w", host, execErr)
+	}
+
+	return nil
 }
 
 // checkSudoPasswordError checks if the error is due to sudo asking for password

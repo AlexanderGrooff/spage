@@ -92,14 +92,15 @@ func ExecuteGraphWithLimit(executor GraphExecutor, graph *Graph, inventoryFile s
 		return err
 	}
 
-	if err := graph.CheckForRequiredInputs(inventory, cfg); err != nil {
-		return fmt.Errorf("failed to check inventory for required inputs: %w", err)
-	}
-
 	hostContexts, err := GetHostContexts(inventory, graph, cfg)
 	if err != nil {
 		return err
 	}
+
+	if err := graph.CheckForRequiredInputs(hostContexts); err != nil {
+		return fmt.Errorf("failed to check inventory for required inputs: %w", err)
+	}
+
 	defer func() {
 		for _, hc := range hostContexts {
 			if closeErr := hc.Close(); closeErr != nil {

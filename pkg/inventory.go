@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -713,158 +714,124 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 
 	// Load group_vars and host_vars from directories adjacent to inventory files
 	// We'll use the directory of the first inventory file as the base directory
-	if len(filesToLoad) > 0 {
-		// Get absolute path to inventory directory to ensure proper group_vars/host_vars resolution
-		inventoryPath, err := filepath.Abs(filesToLoad[0])
-		if err != nil {
-			common.LogWarn("Failed to get absolute path for inventory file", map[string]interface{}{
-				"file":  filesToLoad[0],
-				"error": err.Error(),
-			})
-			inventoryPath = filesToLoad[0] // Fallback to relative path
-		}
-		inventoryDir := filepath.Dir(inventoryPath)
-
-		// Load group variables - try both inventory directory and playbooks subdirectory
-		var groupVarsDir string
-		playbooksDir := filepath.Join(inventoryDir, "playbooks")
-		if _, err := os.Stat(filepath.Join(playbooksDir, "group_vars")); err == nil {
-			// group_vars directory exists in playbooks subdirectory
-			groupVarsDir = playbooksDir
-		} else {
-			// Fall back to inventory directory
-			groupVarsDir = inventoryDir
-		}
-
-		common.LogDebug("Attempting to load group_vars", map[string]interface{}{
-			"inventory_dir":  inventoryDir,
-			"group_vars_dir": groupVarsDir,
+	// Get absolute path to inventory directory to ensure proper group_vars/host_vars resolution
+	inventoryPath, err := filepath.Abs(filesToLoad[0])
+	if err != nil {
+		common.LogWarn("Failed to get absolute path for inventory file", map[string]interface{}{
+			"file":  filesToLoad[0],
+			"error": err.Error(),
 		})
-		groupVars, err := loadGroupVars(groupVarsDir)
-		if err != nil {
-			common.LogWarn("Failed to load group variables", map[string]interface{}{
-				"directory": inventoryDir,
-				"error":     err.Error(),
-			})
-		} else {
-			var groupNames []string
-			for k := range groupVars {
-				groupNames = append(groupNames, k)
-			}
-			common.LogDebug("Loaded group_vars", map[string]interface{}{
-				"directory":   inventoryDir,
-				"group_count": len(groupVars),
-				"groups":      groupNames,
-			})
-			if len(groupVars) > 0 {
-				// Handle the special 'all' group first - applies to all hosts like in Ansible
-				if allGroupVars, exists := groupVars["all"]; exists {
-					// Apply 'all' group variables to all hosts
-					for _, host := range mergedInventory.Hosts {
-						if host.Vars == nil {
-							host.Vars = make(map[string]interface{})
-						}
-						for k, v := range allGroupVars {
-							host.Vars[k] = v
-						}
-					}
+		inventoryPath = filesToLoad[0] // Fallback to relative path
+	}
+	inventoryDir := filepath.Dir(inventoryPath)
 
-					// Also create/update the 'all' group in the inventory
-					if allGroup, groupExists := mergedInventory.Groups["all"]; groupExists {
-						// Group already exists, merge variables
-						if allGroup.Vars == nil {
-							allGroup.Vars = make(map[string]interface{})
-						}
-						for k, v := range allGroupVars {
-							allGroup.Vars[k] = v
-						}
-					} else {
-						// Create the 'all' group with all hosts
-						allHosts := make(map[string]*Host)
-						for hostName, host := range mergedInventory.Hosts {
-							allHosts[hostName] = host
-						}
-						mergedInventory.Groups["all"] = &Group{
-							Hosts: allHosts,
-							Vars:  allGroupVars,
-						}
-					}
+	// Load group variables - try both inventory directory and playbooks subdirectory
+	var groupVarsDir string
+	playbooksDir := filepath.Join(inventoryDir, "playbooks")
+	if _, err := os.Stat(filepath.Join(playbooksDir, "group_vars")); err == nil {
+		// group_vars directory exists in playbooks subdirectory
+		groupVarsDir = playbooksDir
+	} else {
+		// Fall back to inventory directory
+		groupVarsDir = inventoryDir
+	}
 
-					common.LogDebug("Applied 'all' group_vars to all hosts (Ansible-style)", map[string]interface{}{
-						"vars_count": len(allGroupVars),
-						"host_count": len(mergedInventory.Hosts),
-					})
+	common.LogDebug("Attempting to load group_vars", map[string]interface{}{
+		"inventory_dir":  inventoryDir,
+		"group_vars_dir": groupVarsDir,
+	})
+	groupVars, err := loadGroupVars(groupVarsDir)
+	if err != nil {
+		common.LogWarn("Failed to load group variables", map[string]interface{}{
+			"directory": inventoryDir,
+			"error":     err.Error(),
+		})
+	} else if len(groupVars) > 0 {
+		// Merge 'all' group vars into the existing 'all' group (no host-by-host special-casing)
+		if allGroupVars, exists := groupVars["all"]; exists {
+			if allGroup, groupExists := mergedInventory.Groups["all"]; groupExists {
+				if allGroup.Vars == nil {
+					allGroup.Vars = make(map[string]interface{})
 				}
-
-				// Apply group variables to existing groups (excluding 'all' which was handled above)
-				for groupName, vars := range groupVars {
-					if groupName == "all" {
-						continue // Already handled above
-					}
-
-					if group, exists := mergedInventory.Groups[groupName]; exists {
-						// Group already exists, merge variables
-						if group.Vars == nil {
-							group.Vars = make(map[string]interface{})
-						}
-						for k, v := range vars {
-							group.Vars[k] = v
-						}
-						common.LogDebug("Applied group_vars to existing group", map[string]interface{}{
-							"group":      groupName,
-							"vars_count": len(vars),
-						})
-					} else {
-						// Create new group with variables
-						mergedInventory.Groups[groupName] = &Group{
-							Hosts: make(map[string]*Host),
-							Vars:  vars,
-						}
-						common.LogDebug("Created new group from group_vars", map[string]interface{}{
-							"group":      groupName,
-							"vars_count": len(vars),
-						})
-					}
+				maps.Copy(allGroup.Vars, allGroupVars)
+			} else {
+				// Create the 'all' group with current hosts; Vars from group_vars
+				allHosts := make(map[string]*Host)
+				for hostName, host := range mergedInventory.Hosts {
+					allHosts[hostName] = host
+				}
+				mergedInventory.Groups["all"] = &Group{
+					Hosts: allHosts,
+					Vars:  allGroupVars,
 				}
 			}
 
-			// Load host variables using same directory resolution as group_vars
-			hostVars, err := loadHostVars(groupVarsDir)
-			if err != nil {
-				common.LogWarn("Failed to load host variables", map[string]interface{}{
-					"directory": inventoryDir,
-					"error":     err.Error(),
+			common.LogDebug("Merged 'all' group_vars into 'all' group", map[string]interface{}{
+				"vars_count":     len(allGroupVars),
+				"all_group_vars": allGroupVars,
+			})
+		}
+
+		// Apply group variables to existing groups (excluding 'all' which is handled above)
+		for groupName, vars := range groupVars {
+			if groupName == "all" {
+				continue
+			}
+			if group, exists := mergedInventory.Groups[groupName]; exists {
+				if group.Vars == nil {
+					group.Vars = make(map[string]interface{})
+				}
+				maps.Copy(group.Vars, vars)
+				common.LogDebug("Applied group_vars to existing group", map[string]interface{}{
+					"group":      groupName,
+					"vars_count": len(vars),
 				})
-			} else if len(hostVars) > 0 {
-				// Apply host variables to existing hosts
-				for hostName, vars := range hostVars {
-					if host, exists := mergedInventory.Hosts[hostName]; exists {
-						// Host already exists, merge variables (host_vars take precedence)
-						if host.Vars == nil {
-							host.Vars = make(map[string]interface{})
-						}
-						for k, v := range vars {
-							host.Vars[k] = v
-						}
-						common.LogDebug("Applied host_vars to existing host", map[string]interface{}{
-							"host":       hostName,
-							"vars_count": len(vars),
-						})
-					} else {
-						// Create new host with variables
-						newHost := &Host{
-							Name: hostName,
-							Host: hostName, // Default host connection to hostname
-							Vars: vars,
-						}
-						newHost.Prepare()
-						mergedInventory.Hosts[hostName] = newHost
-						common.LogDebug("Created new host from host_vars", map[string]interface{}{
-							"host":       hostName,
-							"vars_count": len(vars),
-						})
-					}
+			} else {
+				mergedInventory.Groups[groupName] = &Group{
+					Hosts: make(map[string]*Host),
+					Vars:  vars,
 				}
+				common.LogDebug("Created new group from group_vars", map[string]interface{}{
+					"group":      groupName,
+					"vars_count": len(vars),
+				})
+			}
+		}
+	}
+
+	// Load host variables using same directory resolution as group_vars
+	hostVars, err := loadHostVars(groupVarsDir)
+	if err != nil {
+		common.LogWarn("Failed to load host variables", map[string]interface{}{
+			"directory": inventoryDir,
+			"error":     err.Error(),
+		})
+	} else if len(hostVars) > 0 {
+		// Apply host variables to existing hosts or create new ones
+		for hostName, vars := range hostVars {
+			if host, exists := mergedInventory.Hosts[hostName]; exists {
+				// Host already exists, merge variables (host_vars take precedence)
+				if host.Vars == nil {
+					host.Vars = make(map[string]interface{})
+				}
+				maps.Copy(host.Vars, vars)
+				common.LogDebug("Applied host_vars to existing host", map[string]interface{}{
+					"host":       hostName,
+					"vars_count": len(vars),
+				})
+			} else {
+				// Create new host with variables
+				newHost := &Host{
+					Name: hostName,
+					Host: hostName, // Default host connection to hostname
+					Vars: vars,
+				}
+				newHost.Prepare()
+				mergedInventory.Hosts[hostName] = newHost
+				common.LogDebug("Created new host from host_vars", map[string]interface{}{
+					"host":       hostName,
+					"vars_count": len(vars),
+				})
 			}
 		}
 	}
@@ -889,6 +856,40 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 		})
 	}
 
+	// Ensure 'all' group contains all hosts, and all hosts have 'all' group
+	if mergedInventory.Groups == nil {
+		mergedInventory.Groups = make(map[string]*Group)
+	}
+	if allGroup, exists := mergedInventory.Groups["all"]; exists {
+		if allGroup.Hosts == nil {
+			allGroup.Hosts = make(map[string]*Host)
+		}
+		for hostName, host := range mergedInventory.Hosts {
+			allGroup.Hosts[hostName] = host
+		}
+	} else {
+		allHosts := make(map[string]*Host)
+		for hostName, host := range mergedInventory.Hosts {
+			allHosts[hostName] = host
+		}
+		allGroup = &Group{
+			Hosts: allHosts,
+			Vars:  make(map[string]interface{}),
+		}
+		mergedInventory.Groups["all"] = allGroup
+	}
+	for _, host := range mergedInventory.Hosts {
+		host.Groups["all"] = "all"
+	}
+
+	for _, host := range mergedInventory.Hosts {
+		common.LogDebug("Inventory for host", map[string]interface{}{
+			"host":   host.Name,
+			"vars":   fmt.Sprintf("%+v", mergedInventory.GetInitialFactsForHost(host)),
+			"groups": fmt.Sprintf("%+v", host.Groups),
+		})
+	}
+
 	return mergedInventory, nil
 }
 
@@ -899,28 +900,12 @@ func GetContextForHost(inventory *Inventory, host *Host, cfg *config.Config) (*H
 		return nil, err
 	}
 
-	for k, v := range inventory.Vars {
+	for k, v := range cfg.Facts {
 		ctx.Facts.Store(k, v)
 	}
 
-	for _, group := range inventory.Groups {
-		if group.Hosts != nil {
-			if _, hostInGroup := group.Hosts[host.Name]; hostInGroup {
-				if group.Vars != nil {
-					for k, v := range group.Vars {
-						if _, exists := host.Vars[k]; !exists {
-							ctx.Facts.Store(k, v)
-						}
-					}
-				}
-			}
-		}
-	}
-
-	if host.Vars != nil {
-		for k, v := range host.Vars {
-			ctx.Facts.Store(k, v)
-		}
+	for k, v := range inventory.GetInitialFactsForHost(host) {
+		ctx.Facts.Store(k, v)
 	}
 
 	return ctx, nil

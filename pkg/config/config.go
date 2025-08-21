@@ -23,6 +23,7 @@ type Config struct {
 	RolesPath           string                    `mapstructure:"roles_path"` // Colon-delimited paths to search for roles
 	Inventory           string                    `mapstructure:"inventory"`  // Colon-delimited paths to search for inventory files
 	PrivilegeEscalation PrivilegeEscalationConfig `mapstructure:"privilege_escalation"`
+	SSH                 SSHConfig                 `mapstructure:"ssh"`
 
 	// API bearer token for CLI auth against spage-api
 	ApiToken string `mapstructure:"api_token"`
@@ -66,6 +67,35 @@ type TagsConfig struct {
 type PrivilegeEscalationConfig struct {
 	UseInteractive bool   `mapstructure:"use_interactive"` // Use -Su (interactive) vs -u (non-interactive)
 	BecomeFlags    string `mapstructure:"become_flags"`    // Additional flags to pass to become
+}
+
+// SSHConfig holds SSH-related configuration
+type SSHConfig struct {
+	// Legacy configuration (maintained for backwards compatibility)
+	UsePasswordFallback bool   `mapstructure:"use_password_fallback"` // Enable interactive password authentication as fallback
+	JumpHost            string `mapstructure:"jump_host"`            // SSH jump host (ProxyJump equivalent), use "none" to disable
+	JumpUser            string `mapstructure:"jump_user"`            // Username for jump host
+	JumpPort            int    `mapstructure:"jump_port"`            // Port for jump host (default 22)
+
+	// Authentication configuration
+	Auth SSHAuthConfig `mapstructure:"auth"`
+
+	// Advanced options (ssh_config style)
+	Options map[string]string `mapstructure:"options"`
+}
+
+// SSHAuthConfig holds SSH authentication method configuration
+type SSHAuthConfig struct {
+	Methods          []string          `mapstructure:"methods"`           // Ordered list of auth methods to try: "publickey", "password", "keyboard-interactive", "gssapi-with-mic", "none"
+	PublicKeys       []string          `mapstructure:"public_keys"`       // Paths to specific public key files (if empty, uses SSH agent + default keys)
+	PasswordAuth     bool              `mapstructure:"password"`          // Enable password authentication
+	KeyboardAuth     bool              `mapstructure:"keyboard"`          // Enable keyboard-interactive authentication
+	GSSAPIAuth       bool              `mapstructure:"gssapi"`            // Enable GSSAPI authentication
+	NoneAuth         bool              `mapstructure:"none"`              // Enable "none" authentication method
+	PreferredAuth    string            `mapstructure:"preferred"`         // Preferred authentication method
+	IdentitiesOnly   bool              `mapstructure:"identities_only"`   // Only use explicitly configured identities
+	PasswordPrompt   string            `mapstructure:"password_prompt"`   // Custom password prompt
+	AgentForwarding  bool              `mapstructure:"agent_forwarding"`  // Enable SSH agent forwarding
 }
 
 // DaemonConfig holds daemon communication configuration
@@ -183,6 +213,24 @@ func setDefaults(v *viper.Viper) {
 	// PrivilegeEscalation defaults
 	v.SetDefault("privilege_escalation.use_interactive", false) // Default to non-interactive (-u) for SSH sessions
 	v.SetDefault("privilege_escalation.become_flags", "")
+
+	// SSH defaults
+	v.SetDefault("ssh.use_password_fallback", false) // Default to disabled for security
+	v.SetDefault("ssh.jump_host", "")                // Default to no jump host
+	v.SetDefault("ssh.jump_user", "")                // Default to empty (use same user as main connection)
+	v.SetDefault("ssh.jump_port", 22)               // Default SSH port
+
+	// SSH Authentication defaults
+	v.SetDefault("ssh.auth.methods", []string{"publickey", "password"})
+	v.SetDefault("ssh.auth.public_keys", []string{})
+	v.SetDefault("ssh.auth.password", true)
+	v.SetDefault("ssh.auth.keyboard", false)
+	v.SetDefault("ssh.auth.gssapi", false)
+	v.SetDefault("ssh.auth.none", false)
+	v.SetDefault("ssh.auth.preferred", "publickey")
+	v.SetDefault("ssh.auth.identities_only", false)
+	v.SetDefault("ssh.auth.password_prompt", "")
+	v.SetDefault("ssh.auth.agent_forwarding", false)
 
 	// Daemon defaults
 	v.SetDefault("daemon.enabled", false) // Default to disabled

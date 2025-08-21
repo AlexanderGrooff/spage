@@ -1,0 +1,4 @@
+- name: role handler test
+  shell:
+    execute: echo "Role handler executed" > /tmp/spage/role_handler_executed.txt
+    revert: rm -f /tmp/spage/role_handler_executed.txt

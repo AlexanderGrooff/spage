@@ -18,6 +18,106 @@ func isAnsibleInventoryAvailable() bool {
 	return err == nil
 }
 
+// TestPluginInventoryWithGroupAndHostVarsMerged verifies that when loading an inventory
+// via a plugin (e.g., host_list), group_vars (including 'all' and a specific group) and
+// host_vars are all applied with correct precedence: all < group < host.
+func TestPluginInventoryWithGroupAndHostVarsMerged(t *testing.T) {
+    if !isAnsibleInventoryAvailable() {
+        t.Skip("ansible-inventory not available; skipping plugin integration test with group/host vars")
+    }
+
+    // Create a temporary directory for the test inventory setup
+    tempDir, err := os.MkdirTemp("", "spage-plugin-vars-merge-*")
+    require.NoError(t, err)
+    defer os.RemoveAll(tempDir)
+
+    // 1) Plugin inventory file: use host_list plugin to define three hosts
+    pluginInvPath := filepath.Join(tempDir, "01-plugin.yaml")
+    pluginInvContent := `plugin: host_list
+hosts:
+  - web01.example.com
+  - web02.example.com
+  - db01.example.com
+`
+    err = os.WriteFile(pluginInvPath, []byte(pluginInvContent), 0644)
+    require.NoError(t, err)
+
+    // 2) Static groups file to assign plugin hosts to groups so group_vars apply to members
+    staticGroupsPath := filepath.Join(tempDir, "02-static-groups.yaml")
+    staticGroupsContent := `web:
+  hosts:
+    web01.example.com: {}
+    web02.example.com: {}
+databases:
+  hosts:
+    db01.example.com: {}
+`
+    err = os.WriteFile(staticGroupsPath, []byte(staticGroupsContent), 0644)
+    require.NoError(t, err)
+
+    // 3) group_vars: both 'all' and a specific group ('web')
+    groupVarsDir := filepath.Join(tempDir, "group_vars")
+    err = os.MkdirAll(groupVarsDir, 0755)
+    require.NoError(t, err)
+
+    allVarsPath := filepath.Join(groupVarsDir, "all.yaml")
+    allVarsContent := `all_only: all_value
+shared: from_all
+`
+    err = os.WriteFile(allVarsPath, []byte(allVarsContent), 0644)
+    require.NoError(t, err)
+
+    webVarsPath := filepath.Join(groupVarsDir, "web.yaml")
+    webVarsContent := `web_only: web_value
+shared: from_web
+`
+    err = os.WriteFile(webVarsPath, []byte(webVarsContent), 0644)
+    require.NoError(t, err)
+
+    // 4) host_vars: web01 overrides 'shared' and has its own host-only var
+    hostVarsDir := filepath.Join(tempDir, "host_vars")
+    err = os.MkdirAll(hostVarsDir, 0755)
+    require.NoError(t, err)
+
+    web01VarsPath := filepath.Join(hostVarsDir, "web01.example.com.yaml")
+    web01VarsContent := `host_only: host_value
+shared: from_host
+`
+    err = os.WriteFile(web01VarsPath, []byte(web01VarsContent), 0644)
+    require.NoError(t, err)
+
+    // Load inventory from the directory (will pick up both plugin and static files)
+    inventory, err := pkg.LoadInventoryWithPaths("", tempDir, "", "")
+    require.NoError(t, err)
+    require.NotNil(t, inventory)
+
+    // Basic presence checks
+    require.Contains(t, inventory.Hosts, "web01.example.com")
+    require.Contains(t, inventory.Hosts, "web02.example.com")
+    require.Contains(t, inventory.Hosts, "db01.example.com")
+    require.Contains(t, inventory.Groups, "web")
+    require.Contains(t, inventory.Groups, "databases")
+
+    // Verify facts merging for a web group member with host_vars override
+    web01 := inventory.Hosts["web01.example.com"]
+    factsWeb01 := inventory.GetInitialFactsForHost(web01)
+
+    // From group_vars/all
+    assert.Equal(t, "all_value", factsWeb01["all_only"])
+    // From group_vars/web
+    assert.Equal(t, "web_value", factsWeb01["web_only"])
+    // Precedence check for 'shared': host_vars should override group_vars which override all
+    assert.Equal(t, "from_host", factsWeb01["shared"])
+    // Host-only var
+    assert.Equal(t, "host_value", factsWeb01["host_only"])
+
+    // Verify that a non-web host (db01) gets 'all' vars but not 'web' vars
+    db01 := inventory.Hosts["db01.example.com"]
+    factsDb01 := inventory.GetInitialFactsForHost(db01)
+    assert.Equal(t, "all_value", factsDb01["all_only"])     // from all
+    assert.Nil(t, factsDb01["web_only"], "db01 should not inherit web group vars")
+}
+
 func TestInventoryPluginDetection(t *testing.T) {
 	// Create a temporary directory for test inventory files
 	tempDir, err := os.MkdirTemp("", "spage-inventory-plugin-test-*")

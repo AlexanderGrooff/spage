@@ -12,7 +12,6 @@ import (
 	"github.com/AlexanderGrooff/jinja-go"
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/compile"
-	"github.com/AlexanderGrooff/spage/pkg/config"
 )
 
 // Don't look for dependencies for these vars
@@ -789,20 +788,15 @@ func checkCycle(taskName string, dependsOn map[string][]string, visited, recStac
 	return nil
 }
 
-func (g Graph) CheckForRequiredInputs(inventory *Inventory, cfg *config.Config) error {
-	common.DebugOutput("Checking inventory for required inputs %+v", inventory)
-	for _, host := range inventory.Hosts {
+func (g Graph) CheckForRequiredInputs(hostContexts map[string]*HostContext) error {
+	common.DebugOutput("Checking host contexts for required inputs")
+	for hostname, hostContext := range hostContexts {
 		for _, input := range g.RequiredInputs {
-			common.DebugOutput("Checking if required input %q is present in inventory for host %q", input, host.Name)
-
-			// Load variables from input like --check
-			if cfg.Facts[input] != nil {
-				continue
-			}
+			common.DebugOutput("Checking if required input %q is present in host context for host %q", input, hostname)
 
 			// All other required inputs should be present in the inventory
-			if _, ok := host.Vars[input]; !ok {
-				return fmt.Errorf("required input %q not found in inventory for host %q", input, host.Name)
+			if _, ok := hostContext.Facts.Load(input); !ok {
+				return fmt.Errorf("required input %q not found in host context for host %q", input, hostname)
 			}
 		}
 	}
