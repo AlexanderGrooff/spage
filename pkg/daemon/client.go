@@ -265,13 +265,9 @@ func (c *Client) UpdateTaskResult(taskResult *core.TaskResult) error {
 		return fmt.Errorf("failed to ensure progress stream: %w", err)
 	}
 
-	// Ensure the TaskResult has the correct TaskId (should be the actual task name/ID)
-	if taskResult.TaskId == "" {
-		taskResult.TaskId = "unknown-task"
-	}
-
 	update := &core.TaskProgressUpdate{
-		TaskId:    c.playID, // Use the play ID for the TaskProgressUpdate.TaskId (this is actually the play ID)
+		PlayId:    c.playID,
+		TaskId:    int32(taskResult.TaskId),
 		Result:    taskResult,
 		Timestamp: timestamppb.Now(),
 	}

@@ -409,7 +409,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	if client, ok := closure.Config.GetDaemonReporting().(*daemon.Client); ok {
 		daemonClient = client
 	}
-	ReportTaskStart(daemonClient, t.Name, closure.HostContext.Host.Name, 0)
+	ReportTaskStart(daemonClient, t.Id, t.Name, closure.HostContext.Host.Name, 0)
 
 	startTime := time.Now()
 
@@ -424,7 +424,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 			"task": t.Name,
 			"host": closure.HostContext.Host.Name,
 		})
-		ReportTaskSkipped(daemonClient, t.Name, closure.HostContext.Host.Name, 0)
+		ReportTaskSkipped(daemonClient, t.Id, t.Name, closure.HostContext.Host.Name, 0)
 		return TaskResult{Task: t, Closure: closure, Status: TaskStatusSkipped}
 	}
 

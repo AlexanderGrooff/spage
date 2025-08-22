@@ -38,6 +38,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	go.temporal.io/sdk v1.34.0
 	go.uber.org/zap v1.27.0
+	golang.org/x/term v0.34.0
 	google.golang.org/grpc v1.67.3
 	google.golang.org/protobuf v1.36.5
 )
@@ -59,7 +60,6 @@ require (
 	go.temporal.io/api v1.46.0 // indirect
 	golang.org/x/net v0.36.0 // indirect
 	golang.org/x/sync v0.11.0 // indirect
-	golang.org/x/term v0.34.0 // indirect
 	golang.org/x/time v0.8.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20241209162323-e6fa225c2576 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20241223144023-3abc09e42ca8 // indirect

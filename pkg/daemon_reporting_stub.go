@@ -13,7 +13,7 @@ import (
 // These are no-ops when daemon functionality is not available
 
 // ReportTaskStart is a no-op stub when daemon is not available
-func ReportTaskStart(client *daemon.Client, taskName, hostName string, executionLevel int) error {
+func ReportTaskStart(client *daemon.Client, taskId int, taskName, hostName string, executionLevel int) error {
 	return nil
 }
 
@@ -23,7 +23,7 @@ func ReportTaskCompletion(client *daemon.Client, task Task, result TaskResult, h
 }
 
 // ReportTaskSkipped is a no-op stub when daemon is not available
-func ReportTaskSkipped(client *daemon.Client, taskName, hostName string, executionLevel int) error {
+func ReportTaskSkipped(client *daemon.Client, taskId int, taskName, hostName string, executionLevel int) error {
 	return nil
 }
 

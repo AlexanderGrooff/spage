@@ -21,13 +21,14 @@ var reportingWaitGroup sync.WaitGroup
 // Utility functions for daemon reporting - use the Client directly
 
 // ReportTaskStart reports the start of a task execution
-func ReportTaskStart(client *daemon.Client, taskName, hostName string, executionLevel int) error {
+func ReportTaskStart(client *daemon.Client, taskId int, taskName, hostName string, executionLevel int) error {
 	if client == nil {
 		return nil
 	}
 
 	taskResult := &core.TaskResult{
-		TaskId:    taskName, // Use the actual task name
+		TaskId:    int32(taskId),
+		TaskName:  taskName,
 		Status:    core.TaskStatus_TASK_STATUS_RUNNING,
 		StartedAt: timestamppb.Now(),
 	}
@@ -61,7 +62,8 @@ func ReportTaskCompletion(client *daemon.Client, task Task, result TaskResult, h
 
 	// Create TaskResult from the actual result
 	taskResult := &core.TaskResult{
-		TaskId:      task.Name, // Use the actual task name
+		TaskId:      int32(task.Id),
+		TaskName:    task.Name,
 		Status:      taskStatus,
 		Error:       errorMsg,
 		Output:      fmt.Sprintf("%v", result.Output),
@@ -95,13 +97,14 @@ func ReportTaskCompletion(client *daemon.Client, task Task, result TaskResult, h
 	return nil
 }
 
-func ReportTaskSkipped(client *daemon.Client, taskName, hostName string, executionLevel int) error {
+func ReportTaskSkipped(client *daemon.Client, taskId int, taskName, hostName string, executionLevel int) error {
 	if client == nil {
 		return nil
 	}
 
 	taskResult := &core.TaskResult{
-		TaskId:      taskName, // Use the actual task name
+		TaskId:      int32(taskId),
+		TaskName:    taskName,
 		Status:      core.TaskStatus_TASK_STATUS_SKIPPED,
 		CompletedAt: timestamppb.Now(),
 	}
