@@ -1690,7 +1690,7 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *pkg.Graph, inventor
 	temporalRunner := NewTemporalTaskRunner(ctx)
 	e := &TemporalGraphExecutor{Runner: *temporalRunner}
 
-	err := pkg.ExecuteGraph(e, graphInput, inventoryFile, spageConfigInput, nil)
+	err := pkg.ExecuteGraph(e, graphInput, inventoryFile, spageConfigInput, spageConfigInput.GetDaemonReporting())
 
 	if err != nil {
 		logger.Error("SpageTemporalWorkflow failed", "error", err)

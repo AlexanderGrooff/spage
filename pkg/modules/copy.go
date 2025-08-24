@@ -90,7 +90,7 @@ func (m CopyModule) readRoleAwareFile(filename string, closure *pkg.Closure) (st
 			}
 		}
 	}
-	
+
 	// Fallback to default file resolution
 	return pkg.ReadLocalFile(filename)
 }
@@ -126,12 +126,12 @@ func (m CopyModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg
 	if copyParams.Src != "" {
 		// TODO: copy as user
 		common.DebugOutput("Copying %s to %s", copyParams.Src, copyParams.Dst)
-		
+
 		// First, read contents using role-aware file resolution
 		if newContents, err = m.readRoleAwareFile(copyParams.Src, closure); err != nil {
 			return nil, fmt.Errorf("failed to read source file %s: %v", copyParams.Src, err)
 		}
-		
+
 		// Write the contents to destination
 		if err := closure.HostContext.WriteFile(copyParams.Dst, newContents, runAs); err != nil {
 			return nil, fmt.Errorf("failed to write to %s: %v", copyParams.Dst, err)

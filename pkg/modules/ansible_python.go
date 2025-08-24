@@ -270,149 +270,150 @@ func (m AnsiblePythonModule) executePythonModule(params AnsiblePythonInput, clos
 }
 
 func (m AnsiblePythonModule) parseAnsibleOutput(output, moduleName string) AnsiblePythonOutput {
-    result := AnsiblePythonOutput{
-        Results: make(map[string]interface{}),
-    }
+	result := AnsiblePythonOutput{
+		Results: make(map[string]interface{}),
+	}
 
-    lines := strings.Split(output, "\n")
+	lines := strings.Split(output, "\n")
 
-    // Helper to count braces outside of string literals
-    countBraces := func(s string) int {
-        depth := 0
-        inStr := false
-        escaped := false
-        for _, r := range s {
-            if escaped {
-                escaped = false
-                continue
-            }
-            if r == '\\' && inStr {
-                escaped = true
-                continue
-            }
-            if r == '"' {
-                inStr = !inStr
-                continue
-            }
-            if !inStr {
-                if r == '{' {
-                    depth++
-                } else if r == '}' {
-                    depth--
-                }
-            }
-        }
-        return depth
-    }
+	// Helper to count braces outside of string literals
+	countBraces := func(s string) int {
+		depth := 0
+		inStr := false
+		escaped := false
+		for _, r := range s {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if r == '\\' && inStr {
+				escaped = true
+				continue
+			}
+			if r == '"' {
+				inStr = !inStr
+				continue
+			}
+			if !inStr {
+				switch r {
+				case '{':
+					depth++
+				case '}':
+					depth--
+				}
+			}
+		}
+		return depth
+	}
 
-    var buf strings.Builder
-    accumulating := false
-    braceDepth := 0
+	var buf strings.Builder
+	accumulating := false
+	braceDepth := 0
 
-    for _, line := range lines {
-        line = strings.TrimSpace(line)
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
 
-        // Look for JSON output in ansible verbose mode (single- or multi-line)
-        if !accumulating {
-            if strings.Contains(line, "=>") && strings.Contains(line, "{") {
-                jsonStart := strings.Index(line, "{")
-                if jsonStart != -1 {
-                    fragment := line[jsonStart:]
-                    buf.WriteString(fragment)
-                    braceDepth += countBraces(fragment)
-                    accumulating = true
+		// Look for JSON output in ansible verbose mode (single- or multi-line)
+		if !accumulating {
+			if strings.Contains(line, "=>") && strings.Contains(line, "{") {
+				jsonStart := strings.Index(line, "{")
+				if jsonStart != -1 {
+					fragment := line[jsonStart:]
+					buf.WriteString(fragment)
+					braceDepth += countBraces(fragment)
+					accumulating = true
 
-                    // If JSON is complete on one line, parse immediately
-                    if braceDepth == 0 {
-                        jsonStr := buf.String()
-                        var moduleResult map[string]interface{}
-                        if err := json.Unmarshal([]byte(jsonStr), &moduleResult); err == nil {
-                            result.Results = moduleResult
-                            if changed, ok := moduleResult["changed"].(bool); ok {
-                                result.WasChanged = changed
-                            }
-                            if failed, ok := moduleResult["failed"].(bool); ok {
-                                result.Failed = failed
-                            }
-                            if msg, ok := moduleResult["msg"].(string); ok {
-                                result.Msg = msg
-                            }
-                            break
-                        } else {
-                            // Reset and continue scanning other lines
-                            buf.Reset()
-                            accumulating = false
-                            braceDepth = 0
-                        }
-                    }
-                    // Continue to next line to accumulate multi-line JSON
-                    continue
-                }
-            }
-        } else {
-            // Accumulate subsequent lines until braces balance
-            buf.WriteString("\n")
-            buf.WriteString(line)
-            braceDepth += countBraces(line)
-            if braceDepth <= 0 {
-                jsonStr := buf.String()
-                var moduleResult map[string]interface{}
-                if err := json.Unmarshal([]byte(jsonStr), &moduleResult); err == nil {
-                    result.Results = moduleResult
-                    if changed, ok := moduleResult["changed"].(bool); ok {
-                        result.WasChanged = changed
-                    }
-                    if failed, ok := moduleResult["failed"].(bool); ok {
-                        result.Failed = failed
-                    }
-                    if msg, ok := moduleResult["msg"].(string); ok {
-                        result.Msg = msg
-                    }
-                    break
-                }
-                // Parsing failed: reset accumulation and fall through to other checks
-                buf.Reset()
-                accumulating = false
-                braceDepth = 0
-            }
-            // Move to next line while accumulating
-            continue
-        }
+					// If JSON is complete on one line, parse immediately
+					if braceDepth == 0 {
+						jsonStr := buf.String()
+						var moduleResult map[string]interface{}
+						if err := json.Unmarshal([]byte(jsonStr), &moduleResult); err == nil {
+							result.Results = moduleResult
+							if changed, ok := moduleResult["changed"].(bool); ok {
+								result.WasChanged = changed
+							}
+							if failed, ok := moduleResult["failed"].(bool); ok {
+								result.Failed = failed
+							}
+							if msg, ok := moduleResult["msg"].(string); ok {
+								result.Msg = msg
+							}
+							break
+						} else {
+							// Reset and continue scanning other lines
+							buf.Reset()
+							accumulating = false
+							braceDepth = 0
+						}
+					}
+					// Continue to next line to accumulate multi-line JSON
+					continue
+				}
+			}
+		} else {
+			// Accumulate subsequent lines until braces balance
+			buf.WriteString("\n")
+			buf.WriteString(line)
+			braceDepth += countBraces(line)
+			if braceDepth <= 0 {
+				jsonStr := buf.String()
+				var moduleResult map[string]interface{}
+				if err := json.Unmarshal([]byte(jsonStr), &moduleResult); err == nil {
+					result.Results = moduleResult
+					if changed, ok := moduleResult["changed"].(bool); ok {
+						result.WasChanged = changed
+					}
+					if failed, ok := moduleResult["failed"].(bool); ok {
+						result.Failed = failed
+					}
+					if msg, ok := moduleResult["msg"].(string); ok {
+						result.Msg = msg
+					}
+					break
+				}
+				// Parsing failed: reset accumulation and fall through to other checks
+				buf.Reset()
+				accumulating = false
+				braceDepth = 0
+			}
+			// Move to next line while accumulating
+			continue
+		}
 
-        // Look for module not found errors
-        if strings.Contains(line, "couldn't resolve module/action") {
-            result.Failed = true
-            result.Msg = fmt.Sprintf("Module '%s' not found in Ansible installation. This module may require additional Ansible collections or may not exist.", moduleName)
-            result.Results["ansible_error"] = "module_not_found"
-            break
-        }
+		// Look for module not found errors
+		if strings.Contains(line, "couldn't resolve module/action") {
+			result.Failed = true
+			result.Msg = fmt.Sprintf("Module '%s' not found in Ansible installation. This module may require additional Ansible collections or may not exist.", moduleName)
+			result.Results["ansible_error"] = "module_not_found"
+			break
+		}
 
-        // Look for general failure indicators
-        if strings.Contains(line, "FAILED!") {
-            result.Failed = true
-            if result.Msg == "" {
-                result.Msg = "Ansible execution failed"
-            }
-        }
+		// Look for general failure indicators
+		if strings.Contains(line, "FAILED!") {
+			result.Failed = true
+			if result.Msg == "" {
+				result.Msg = "Ansible execution failed"
+			}
+		}
 
-        // Look for ERROR! indicators
-        if strings.Contains(line, "ERROR!") {
-            result.Failed = true
-            if result.Msg == "" {
-                result.Msg = fmt.Sprintf("Ansible error: %s", line)
-            }
-        }
-    }
+		// Look for ERROR! indicators
+		if strings.Contains(line, "ERROR!") {
+			result.Failed = true
+			if result.Msg == "" {
+				result.Msg = fmt.Sprintf("Ansible error: %s", line)
+			}
+		}
+	}
 
-    // If we didn't find any structured output, use the raw output
-    if len(result.Results) == 0 {
-        result.Results["raw_output"] = output
-        if result.Msg == "" {
-            result.Msg = fmt.Sprintf("Executed %s via ansible-playbook", moduleName)
-        }
-    }
+	// If we didn't find any structured output, use the raw output
+	if len(result.Results) == 0 {
+		result.Results["raw_output"] = output
+		if result.Msg == "" {
+			result.Msg = fmt.Sprintf("Executed %s via ansible-playbook", moduleName)
+		}
+	}
 
-    return result
+	return result
 }
 
 func (m AnsiblePythonModule) ParameterAliases() map[string]string {

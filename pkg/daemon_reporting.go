@@ -1,6 +1,3 @@
-//go:build daemon
-// +build daemon
-
 package pkg
 
 import (
@@ -36,6 +33,7 @@ func ReportTaskStart(client *daemon.Client, taskId int, taskName, hostName strin
 	reportingWaitGroup.Add(1)
 	go func() {
 		defer reportingWaitGroup.Done()
+		common.LogDebug("Reporting task start", map[string]interface{}{"task_id": taskId, "task_name": taskName, "host_name": hostName})
 		if err := client.UpdateTaskResult(taskResult); err != nil {
 			common.LogWarn("failed to report task start", map[string]interface{}{"error": err.Error()})
 		}
@@ -87,9 +85,18 @@ func ReportTaskCompletion(client *daemon.Client, task Task, result TaskResult, h
 	}
 
 	// Use the new UpdateTaskResult method with the actual TaskResult
+	common.LogInfo("Starting report task completion", map[string]interface{}{
+		"task_id":   task.Id,
+		"task_name": task.Name,
+		"status":    taskStatus,
+		"error_msg": errorMsg,
+		"output":    result.Output,
+		"duration":  result.Duration,
+	})
 	reportingWaitGroup.Add(1)
 	go func() {
 		defer reportingWaitGroup.Done()
+		common.LogDebug("Reporting task completion", map[string]interface{}{"task_id": task.Id, "task_name": task.Name, "host_name": hostName})
 		if err := client.UpdateTaskResult(taskResult); err != nil {
 			common.LogWarn("failed to report task completion", map[string]interface{}{"error": err.Error()})
 		}
@@ -112,6 +119,7 @@ func ReportTaskSkipped(client *daemon.Client, taskId int, taskName, hostName str
 	reportingWaitGroup.Add(1)
 	go func() {
 		defer reportingWaitGroup.Done()
+		common.LogDebug("Reporting task skipped", map[string]interface{}{"task_id": taskId, "task_name": taskName, "host_name": hostName})
 		if err := client.UpdateTaskResult(taskResult); err != nil {
 			common.LogWarn("failed to report task skipped", map[string]interface{}{"error": err.Error()})
 		}
@@ -127,6 +135,7 @@ func ReportPlayStart(client *daemon.Client, playbook, inventory, executor string
 	reportingWaitGroup.Add(1)
 	go func() {
 		defer reportingWaitGroup.Done()
+		common.LogDebug("Reporting play start", map[string]interface{}{"playbook": playbook, "inventory": inventory, "executor": executor})
 		if err := client.RegisterPlayStart(playbook, inventory, map[string]string{}, executor); err != nil {
 			common.LogWarn("failed to report play start", map[string]interface{}{"error": err.Error()})
 		}
@@ -141,6 +150,7 @@ func ReportPlayCompletion(client *daemon.Client) error {
 	reportingWaitGroup.Add(1)
 	go func() {
 		defer reportingWaitGroup.Done()
+		common.LogDebug("Reporting play completion", map[string]interface{}{})
 		if err := client.RegisterPlayCompletion(); err != nil {
 			common.LogWarn("failed to report play completion", map[string]interface{}{"error": err.Error()})
 		}
@@ -155,6 +165,7 @@ func ReportPlayError(client *daemon.Client, err error) error {
 	reportingWaitGroup.Add(1)
 	go func() {
 		defer reportingWaitGroup.Done()
+		common.LogDebug("Reporting play error", map[string]interface{}{"error": err.Error()})
 		if err := client.RegisterPlayError(err); err != nil {
 			common.LogWarn("failed to report play error", map[string]interface{}{"error": err.Error()})
 		}
@@ -165,6 +176,7 @@ func ReportPlayError(client *daemon.Client, err error) error {
 // WaitForPendingReportsWithTimeout waits for all pending daemon reports to complete
 // with a timeout to prevent indefinite hanging
 func WaitForPendingReportsWithTimeout(timeout time.Duration) error {
+	common.LogDebug("waiting for pending reports", map[string]interface{}{"timeout": timeout})
 	done := make(chan struct{})
 	go func() {
 		reportingWaitGroup.Wait()

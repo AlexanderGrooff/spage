@@ -408,15 +408,22 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	var daemonClient *daemon.Client
 	if client, ok := closure.Config.GetDaemonReporting().(*daemon.Client); ok {
 		daemonClient = client
+	} else {
+		common.LogInfo("No daemon client found", map[string]interface{}{
+			"task":          t.Name,
+			"host":          closure.HostContext.Host.Name,
+			"client":        client,
+			"config_client": closure.Config.GetDaemonReporting(),
+		})
 	}
-	ReportTaskStart(daemonClient, t.Id, t.Name, closure.HostContext.Host.Name, 0)
+	_ = ReportTaskStart(daemonClient, t.Id, t.Name, closure.HostContext.Host.Name, 0)
 
 	startTime := time.Now()
 
 	shouldExecute, err := t.ShouldExecute(closure)
 	if err != nil {
 		res := TaskResult{Task: t, Closure: closure, Status: TaskStatusFailed, Error: err}
-		ReportTaskCompletion(daemonClient, t, res, closure.HostContext.Host.Name, -1)
+		_ = ReportTaskCompletion(daemonClient, t, res, closure.HostContext.Host.Name, -1)
 		return res
 	}
 	if !shouldExecute {
@@ -424,7 +431,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 			"task": t.Name,
 			"host": closure.HostContext.Host.Name,
 		})
-		ReportTaskSkipped(daemonClient, t.Id, t.Name, closure.HostContext.Host.Name, 0)
+		_ = ReportTaskSkipped(daemonClient, t.Id, t.Name, closure.HostContext.Host.Name, 0)
 		return TaskResult{Task: t, Closure: closure, Status: TaskStatusSkipped}
 	}
 
@@ -476,7 +483,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	// If 'until' is not defined, execute once as normal.
 	if t.Until.Expression == "" {
 		res := t.executeOnce(taskClosure)
-		ReportTaskCompletion(daemonClient, t, res, closure.HostContext.Host.Name, -1)
+		_ = ReportTaskCompletion(daemonClient, t, res, closure.HostContext.Host.Name, -1)
 		return res
 	}
 
@@ -540,7 +547,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 			}
 			lastResult.Duration = time.Since(startTime) // Update total duration
 
-			ReportTaskCompletion(daemonClient, t, lastResult, closure.HostContext.Host.Name, -1)
+			_ = ReportTaskCompletion(daemonClient, t, lastResult, closure.HostContext.Host.Name, -1)
 			return lastResult
 		}
 
@@ -569,7 +576,7 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	}
 	lastResult.Duration = time.Since(startTime)
 
-	ReportTaskCompletion(daemonClient, t, lastResult, closure.HostContext.Host.Name, -1)
+	_ = ReportTaskCompletion(daemonClient, t, lastResult, closure.HostContext.Host.Name, -1)
 	return lastResult
 }
 

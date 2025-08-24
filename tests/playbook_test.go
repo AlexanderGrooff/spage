@@ -1413,7 +1413,11 @@ config: test`
 		tempFile := "/tmp/test_nonexistent_plugin.yaml"
 		err := os.WriteFile(tempFile, []byte(tempContent), 0644)
 		require.NoError(t, err)
-		defer os.Remove(tempFile)
+		defer func() {
+			if err := os.Remove(tempFile); err != nil {
+				t.Logf("Failed to remove temp file: %v", err)
+			}
+		}()
 
 		inventory, err := pkg.LoadInventoryWithPaths(tempFile, "", "", "")
 

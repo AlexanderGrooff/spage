@@ -135,7 +135,13 @@ func (pm *PluginManager) loadPythonPlugin(ctx context.Context, pluginName string
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			common.LogDebug("Failed to remove temp directory", map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
+	}()
 
 	inventoryFile := filepath.Join(tempDir, "plugin_inventory.yml")
 	inventoryContent := fmt.Sprintf("plugin: %s\n", pluginName)

@@ -1,6 +1,3 @@
-//go:build daemon
-// +build daemon
-
 package daemon
 
 import (
@@ -33,8 +30,9 @@ type Client struct {
 	connected bool
 
 	// Progress streaming
-	progressStream core.SpageExecution_StreamTaskProgressClient
-	streamMu       sync.RWMutex
+	progressStream     core.SpageExecution_StreamTaskProgressClient
+	playProgressStream core.SpageExecution_StreamPlayProgressClient
+	streamMu           sync.RWMutex
 
 	// Context for graceful shutdown
 	ctx    context.Context
@@ -108,15 +106,12 @@ func (c *Client) Disconnect() error {
 		return nil
 	}
 
-	// Close progress stream
-	c.streamMu.Lock()
-	if c.progressStream != nil {
-		if err := c.progressStream.CloseSend(); err != nil {
-			return fmt.Errorf("failed to close progress stream: %w", err)
-		}
-		c.progressStream = nil
+	// Close progress streams gracefully
+	if err := c.CloseStreamsGracefully(); err != nil {
+		common.LogWarn("Failed to close streams gracefully", map[string]interface{}{
+			"error": err.Error(),
+		})
 	}
-	c.streamMu.Unlock()
 
 	// Close connection
 	if c.conn != nil {
@@ -130,7 +125,7 @@ func (c *Client) Disconnect() error {
 	return nil
 }
 
-// RegisterPlayStart registers the current play with the daemon
+// RegisterPlayStart registers the current play with the daemon via streaming
 func (c *Client) RegisterPlayStart(playbook, inventory string, variables map[string]string, executor string) error {
 	if err := c.ensureConnected(); err != nil {
 		// Check if it's a connection error
@@ -140,36 +135,52 @@ func (c *Client) RegisterPlayStart(playbook, inventory string, variables map[str
 		return err
 	}
 
-	req := &core.RegisterPlayRequest{
+	// Ensure play progress stream is established
+	if err := c.ensurePlayProgressStream(); err != nil {
+		return fmt.Errorf("failed to ensure play progress stream: %w", err)
+	}
+
+	update := &core.PlayProgressUpdate{
 		PlayId:    c.playID,
-		Playbook:  playbook,
-		Inventory: inventory,
-		Variables: variables,
-		Executor:  executor,
-		Metadata: map[string]string{
-			"playbook":  playbook,
-			"inventory": inventory,
-			"executor":  executor,
-		},
+		Status:    core.PlayStatus_PLAY_STATUS_PENDING,
+		Output:    "Play started",
+		Timestamp: timestamppb.Now(),
 	}
 
-	ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
-	defer cancel()
+	c.streamMu.RLock()
+	defer c.streamMu.RUnlock()
 
-	resp, err := c.client.RegisterPlay(ctx, req)
-	if err != nil {
-		// Check if it's a connection error
-		if status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded {
-			return fmt.Errorf("daemon not available: %w", err)
-		}
-		return fmt.Errorf("failed to register play: %w", err)
-	}
+	if c.playProgressStream != nil {
+		// Try to send the update with retry logic
+		var err error
+		for retries := 0; retries < 3; retries++ {
+			err = c.playProgressStream.Send(update)
+			if err == nil {
+				break
+			}
 
-	if !resp.Success {
-		if resp.Error != nil {
-			return fmt.Errorf("play registration failed: %s", resp.Error.Message)
+			// If it's a connection error, try to reconnect
+			if status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded {
+				c.streamMu.RUnlock()
+				c.streamMu.Lock()
+				c.playProgressStream = nil // Reset stream to force reconnection
+				c.streamMu.Unlock()
+				c.streamMu.RLock()
+
+				// Try to reestablish connection
+				if reconnectErr := c.ensurePlayProgressStream(); reconnectErr != nil {
+					return fmt.Errorf("failed to reestablish play progress stream: %w", reconnectErr)
+				}
+				continue
+			}
+
+			// For other errors, don't retry
+			break
 		}
-		return fmt.Errorf("play registration failed")
+
+		if err != nil {
+			return fmt.Errorf("failed to send play start update: %w", err)
+		}
 	}
 
 	return nil
@@ -182,33 +193,63 @@ func (c *Client) RegisterPlayCompletion() error {
 		}
 		return err
 	}
-	req := &core.RegisterPlayCompletionRequest{
-		PlayId: c.playID,
-		Status: core.PlayStatus_PLAY_STATUS_COMPLETED,
+
+	// Ensure play progress stream is established
+	if err := c.ensurePlayProgressStream(); err != nil {
+		return fmt.Errorf("failed to ensure play progress stream: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
-	defer cancel()
+	update := &core.PlayProgressUpdate{
+		PlayId:    c.playID,
+		Status:    core.PlayStatus_PLAY_STATUS_COMPLETED,
+		Output:    "Play completed",
+		Timestamp: timestamppb.Now(),
+	}
 
 	common.LogDebug("Registering play completion", map[string]interface{}{
 		"play_id": c.playID,
 	})
-	resp, err := c.client.RegisterPlayCompletion(ctx, req)
-	if err != nil {
-		return fmt.Errorf("failed to register play completion: %w", err)
-	}
 
-	if !resp.Success {
-		if resp.Error != nil {
-			return fmt.Errorf("play completion registration failed: %s", resp.Error.Message)
+	c.streamMu.RLock()
+	defer c.streamMu.RUnlock()
+
+	if c.playProgressStream != nil {
+		// Try to send the update with retry logic
+		var err error
+		for retries := 0; retries < 3; retries++ {
+			err = c.playProgressStream.Send(update)
+			if err == nil {
+				break
+			}
+
+			// If it's a connection error, try to reconnect
+			if status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded {
+				c.streamMu.RUnlock()
+				c.streamMu.Lock()
+				c.playProgressStream = nil // Reset stream to force reconnection
+				c.streamMu.Unlock()
+				c.streamMu.RLock()
+
+				// Try to reestablish connection
+				if reconnectErr := c.ensurePlayProgressStream(); reconnectErr != nil {
+					return fmt.Errorf("failed to reestablish play progress stream: %w", reconnectErr)
+				}
+				continue
+			}
+
+			// For other errors, don't retry
+			break
 		}
-		return fmt.Errorf("play completion registration failed")
+
+		if err != nil {
+			return fmt.Errorf("failed to send play completion update: %w", err)
+		}
 	}
 
 	return nil
 }
 
-// RegisterPlayError registers a play error with the daemon
+// RegisterPlayError registers a play error with the daemon via streaming
 func (c *Client) RegisterPlayError(err error) error {
 	if err := c.ensureConnected(); err != nil {
 		if status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded {
@@ -216,28 +257,58 @@ func (c *Client) RegisterPlayError(err error) error {
 		}
 		return err
 	}
-	req := &core.RegisterPlayCompletionRequest{
-		PlayId: c.playID,
-		Status: core.PlayStatus_PLAY_STATUS_FAILED,
-		Error:  err.Error(),
+
+	// Ensure play progress stream is established
+	if err := c.ensurePlayProgressStream(); err != nil {
+		return fmt.Errorf("failed to ensure play progress stream: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
-	defer cancel()
+	update := &core.PlayProgressUpdate{
+		PlayId:    c.playID,
+		Status:    core.PlayStatus_PLAY_STATUS_FAILED,
+		Error:     err.Error(),
+		Output:    "Play failed",
+		Timestamp: timestamppb.Now(),
+	}
 
 	common.LogDebug("Registering play error", map[string]interface{}{
 		"play_id": c.playID,
 	})
-	resp, err := c.client.RegisterPlayCompletion(ctx, req)
-	if err != nil {
-		return fmt.Errorf("failed to register play error: %w", err)
-	}
 
-	if !resp.Success {
-		if resp.Error != nil {
-			return fmt.Errorf("play error registration failed: %s", resp.Error.Message)
+	c.streamMu.RLock()
+	defer c.streamMu.RUnlock()
+
+	if c.playProgressStream != nil {
+		// Try to send the update with retry logic
+		var err error
+		for retries := 0; retries < 3; retries++ {
+			err = c.playProgressStream.Send(update)
+			if err == nil {
+				break
+			}
+
+			// If it's a connection error, try to reconnect
+			if status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded {
+				c.streamMu.RUnlock()
+				c.streamMu.Lock()
+				c.playProgressStream = nil // Reset stream to force reconnection
+				c.streamMu.Unlock()
+				c.streamMu.RLock()
+
+				// Try to reestablish connection
+				if reconnectErr := c.ensurePlayProgressStream(); reconnectErr != nil {
+					return fmt.Errorf("failed to reestablish play progress stream: %w", reconnectErr)
+				}
+				continue
+			}
+
+			// For other errors, don't retry
+			break
 		}
-		return fmt.Errorf("play error registration failed")
+
+		if err != nil {
+			return fmt.Errorf("failed to send play error update: %w", err)
+		}
 	}
 
 	return nil
@@ -248,6 +319,10 @@ func (c *Client) UpdateTaskResult(taskResult *core.TaskResult) error {
 	if c == nil {
 		return fmt.Errorf("cannot update task result: client is nil")
 	}
+	common.LogInfo("Updating task result", map[string]interface{}{
+		"task_id": taskResult.TaskId,
+		"status":  taskResult.Status,
+	})
 
 	// Check if we're connected first
 	c.mu.RLock()
@@ -363,6 +438,38 @@ func (c *Client) ensureProgressStream() error {
 	return nil
 }
 
+// ensurePlayProgressStream ensures the play progress stream is established
+func (c *Client) ensurePlayProgressStream() error {
+	if c == nil {
+		return fmt.Errorf("daemon client is nil")
+	}
+
+	if err := c.ensureConnected(); err != nil {
+		return err
+	}
+
+	c.streamMu.Lock()
+	defer c.streamMu.Unlock()
+
+	if c.playProgressStream != nil {
+		return nil
+	}
+
+	// Create play progress stream
+	stream, err := c.client.StreamPlayProgress(c.ctx)
+	if err != nil {
+		// Check if it's a connection error
+		if status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded {
+			return fmt.Errorf("daemon not available: %w", err)
+		}
+		return fmt.Errorf("failed to create play progress stream: %w", err)
+	}
+
+	c.playProgressStream = stream
+
+	return nil
+}
+
 // receiveProgressUpdates receives progress updates from the daemon
 func (c *Client) receiveProgressUpdates() {
 	for {
@@ -395,9 +502,9 @@ func (c *Client) receiveProgressUpdates() {
 
 		// Handle incoming progress updates (if needed)
 		if update.Result != nil {
-			fmt.Printf("Received task result: %s - %s\n", update.TaskId, update.Result.Status)
+			fmt.Printf("Received task result: %d - %s\n", update.TaskId, update.Result.Status)
 		} else {
-			fmt.Printf("Received progress update: %s\n", update.TaskId)
+			fmt.Printf("Received progress update: %d\n", update.TaskId)
 		}
 	}
 }
@@ -406,6 +513,59 @@ func (c *Client) receiveProgressUpdates() {
 func (c *Client) Close() error {
 	c.cancel()
 	return c.Disconnect()
+}
+
+// CloseStreamsGracefully closes the streams gracefully, waiting for any pending data
+func (c *Client) CloseStreamsGracefully() error {
+	c.streamMu.Lock()
+	defer c.streamMu.Unlock()
+
+	// Close progress stream gracefully
+	if c.progressStream != nil {
+		// CloseSend() closes the sending side of the stream
+		if err := c.progressStream.CloseSend(); err != nil {
+			common.LogWarn("Failed to close progress stream send", map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
+
+		c.progressStream = nil
+	}
+
+	// Close play progress stream gracefully
+	if c.playProgressStream != nil {
+		if err := c.playProgressStream.CloseSend(); err != nil {
+			common.LogWarn("Failed to close play progress stream send", map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
+
+		c.playProgressStream = nil
+	}
+
+	return nil
+}
+
+// WaitForStreamsToFinish waits for streams to finish processing any pending data
+func (c *Client) WaitForStreamsToFinish(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		c.streamMu.RLock()
+		hasProgressStream := c.progressStream != nil
+		hasPlayProgressStream := c.playProgressStream != nil
+		c.streamMu.RUnlock()
+
+		// If no streams are active, we're done
+		if !hasProgressStream && !hasPlayProgressStream {
+			return nil
+		}
+
+		// Wait a bit before checking again
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	return fmt.Errorf("timeout waiting for streams to finish after %v", timeout)
 }
 
 // IsConnected returns whether the client is connected to the daemon

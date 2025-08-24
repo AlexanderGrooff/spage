@@ -138,10 +138,11 @@ func ExecuteGraphWithLimit(executor GraphExecutor, graph *Graph, inventoryFile s
 	if daemonClientInterface != nil {
 		if client, ok := daemonClientInterface.(*daemon.Client); ok {
 			daemonClient = client
+			cfg.SetDaemonReporting(client)
 		}
 	}
 
-	ReportPlayStart(daemonClient, graph.PlaybookPath, inventoryFile, cfg.Executor)
+	_ = ReportPlayStart(daemonClient, graph.PlaybookPath, inventoryFile, cfg.Executor)
 
 	err = executor.Execute(hostContexts, orderedGraph, cfg)
 	if err == nil && daemonClient != nil {

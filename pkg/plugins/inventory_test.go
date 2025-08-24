@@ -25,7 +25,11 @@ func TestPluginManager_DiscoverPlugins(t *testing.T) {
 	// Create a temporary plugin directory for testing
 	tempDir, err := os.MkdirTemp("", "spage-plugin-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			t.Logf("Failed to remove temp dir: %v", err)
+		}
+	}()
 
 	pm := &PluginManager{
 		pluginDirs: []string{tempDir},

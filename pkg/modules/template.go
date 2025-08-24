@@ -116,7 +116,7 @@ func (m TemplateModule) readRoleAwareTemplateFile(filename string, closure *pkg.
 			}
 		}
 	}
-	
+
 	// Fallback to default template resolution
 	return pkg.ReadTemplateFile(filename)
 }

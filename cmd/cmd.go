@@ -29,18 +29,18 @@ import (
 )
 
 var (
-	playbookFile  string
-	outputFile    string
-	inventoryFile string
-	configFile    string
-	tags          []string
-	skipTags      []string
-	cfg           *config.Config // Store the loaded config
-	checkMode     bool
-	diffMode      bool
-	extraVars     []string
-	becomeMode    bool
-	limitHosts    string // Host pattern to limit execution to
+	playbookFile   string
+	outputFile     string
+	inventoryFile  string
+	configFile     string
+	tags           []string
+	skipTags       []string
+	cfg            *config.Config // Store the loaded config
+	checkMode      bool
+	diffMode       bool
+	extraVars      []string
+	becomeMode     bool
+	limitHosts     string // Host pattern to limit execution to
 	connectionType string // Connection type override (e.g., local)
 
 	// Daemon communication flags
@@ -340,7 +340,7 @@ var runCmd = &cobra.Command{
 			fsys, rootPath, c, err := materializeBundleToFS(playbookFile)
 			if err != nil {
 				if daemonClient != nil {
-					_ = daemonClient.RegisterPlayError(err)
+					_ = pkg.ReportPlayError(daemonClient, err)
 				}
 				return fmt.Errorf("failed to load bundle FS: %w", err)
 			}
@@ -353,7 +353,7 @@ var runCmd = &cobra.Command{
 			graph, err = pkg.NewGraphFromFS(fsys, rootPath, cfg.RolesPath)
 			if err != nil {
 				if daemonClient != nil {
-					_ = daemonClient.RegisterPlayError(err)
+					_ = pkg.ReportPlayError(daemonClient, err)
 				}
 				return fmt.Errorf("failed to generate graph: %w", err)
 			}
@@ -362,7 +362,7 @@ var runCmd = &cobra.Command{
 			graph, err = GetGraph(playbookFile, tags, skipTags, cfg, becomeMode)
 			if err != nil {
 				if daemonClient != nil {
-					_ = daemonClient.RegisterPlayError(err)
+					_ = pkg.ReportPlayError(daemonClient, err)
 				}
 				return fmt.Errorf("failed to generate graph: %w", err)
 			}
@@ -413,15 +413,9 @@ var runCmd = &cobra.Command{
 
 		}
 
-		// Ensure all pending daemon reports complete before exit and close daemon client
+		// Close daemon client on exit
 		defer func() {
 			if daemonClient != nil {
-				// Wait for reports with a reasonable timeout to prevent hanging
-				if err := pkg.WaitForPendingReportsWithTimeout(30 * time.Second); err != nil {
-					common.LogWarn("Timeout waiting for daemon reports", map[string]interface{}{
-						"error": err.Error(),
-					})
-				}
 				// Close the daemon client
 				if err := daemonClient.Close(); err != nil {
 					common.LogWarn("Failed to close daemon client", map[string]interface{}{
@@ -436,6 +430,7 @@ var runCmd = &cobra.Command{
 		} else {
 			err = StartLocalExecutorWithLimit(&graph, inventoryFile, cfg, daemonClient, effectiveLimit)
 		}
+
 		if err != nil {
 			if daemonClient != nil {
 				if err := pkg.ReportPlayError(daemonClient, err); err != nil {
@@ -445,8 +440,23 @@ var runCmd = &cobra.Command{
 			common.LogError("Failed to run playbook", map[string]interface{}{
 				"error": err.Error(),
 			})
+		}
 
-			os.Exit(1)
+		// Wait for all daemon reports to complete before proceeding
+		if daemonClient != nil {
+			// First wait for all pending reports to be sent
+			if err := pkg.WaitForPendingReportsWithTimeout(30 * time.Second); err != nil {
+				common.LogWarn("Timeout waiting for daemon reports", map[string]interface{}{
+					"error": err.Error(),
+				})
+			}
+
+			// Then wait for streams to finish processing any pending data
+			if err := daemonClient.WaitForStreamsToFinish(5 * time.Second); err != nil {
+				common.LogWarn("Timeout waiting for streams to finish", map[string]interface{}{
+					"error": err.Error(),
+				})
+			}
 		}
 
 		return nil
@@ -864,7 +874,7 @@ func formatInventoryAsJSON(inventory *pkg.Inventory) (string, error) {
 
 	// Process hosts and collect their variables
 	for hostName, host := range inventory.Hosts {
-		if host.Vars != nil && len(host.Vars) > 0 {
+		if host.Vars != nil {
 			meta["hostvars"].(map[string]interface{})[hostName] = host.Vars
 		}
 	}
@@ -886,7 +896,7 @@ func formatInventoryAsJSON(inventory *pkg.Inventory) (string, error) {
 		}
 
 		// Add group variables
-		if group.Vars != nil && len(group.Vars) > 0 {
+		if group.Vars != nil {
 			groupData["vars"] = group.Vars
 		}
 
@@ -904,7 +914,7 @@ func formatInventoryAsJSON(inventory *pkg.Inventory) (string, error) {
 		allGroup := map[string]interface{}{
 			"hosts": allHosts,
 		}
-		if inventory.Vars != nil && len(inventory.Vars) > 0 {
+		if inventory.Vars != nil {
 			allGroup["vars"] = inventory.Vars
 		}
 		output["all"] = allGroup

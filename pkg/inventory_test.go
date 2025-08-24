@@ -758,7 +758,11 @@ invalid: yaml: content
 	if err != nil {
 		t.Fatalf("Failed to create empty temp dir: %v", err)
 	}
-	defer os.RemoveAll(emptyDir)
+	defer func() {
+		if err := os.RemoveAll(emptyDir); err != nil {
+			t.Logf("Failed to remove empty temp dir: %v", err)
+		}
+	}()
 
 	emptyGroupVars, err := loadGroupVars(emptyDir)
 	if err != nil {

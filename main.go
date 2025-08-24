@@ -32,7 +32,7 @@ func main() {
 	case sig := <-sigChan:
 		fmt.Fprintf(os.Stderr, "Received signal %v, shutting down gracefully...\n", sig)
 		// Wait for any pending daemon reports to complete
-		pkg.WaitForPendingReportsWithTimeout(10 * time.Second)
+		_ = pkg.WaitForPendingReportsWithTimeout(10 * time.Second)
 		os.Exit(0)
 	}
 }
