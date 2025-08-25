@@ -30,6 +30,7 @@ type YumInput struct {
 	Disablerepo interface{} `yaml:"disablerepo"`  // List of repos to disable (string, comma-delimited string, or list)
 	Exclude     interface{} `yaml:"exclude"`      // List of packages to exclude (string, comma-delimited string, or list)
 	UpdateOnly  bool        `yaml:"update_only"`  // Only update packages, don't install/remove
+	Autoremove  bool        `yaml:"autoremove"`   // If true, remove leaf deps; allowed alone or with state=absent/removed
 	// Internal storage for parsed package list
 	PkgNames []string
 	// Internal storage for parsed repo lists
@@ -124,7 +125,7 @@ func (i *YumInput) ToCode() string {
 		excludeCode = "nil"
 	}
 
-	return fmt.Sprintf("&modules.YumInput{Name: %s, State: %q, UpdateCache: %t, Enablerepo: %s, Disablerepo: %s, Exclude: %s, UpdateOnly: %t, PkgNames: %s}",
+	return fmt.Sprintf("&modules.YumInput{Name: %s, State: %q, UpdateCache: %t, Enablerepo: %s, Disablerepo: %s, Exclude: %s, UpdateOnly: %t, Autoremove: %t, PkgNames: %s}",
 		nameCode,
 		i.State,
 		i.UpdateCache,
@@ -132,6 +133,7 @@ func (i *YumInput) ToCode() string {
 		disablerepoCode,
 		excludeCode,
 		i.UpdateOnly,
+		i.Autoremove,
 		pkgNamesCode,
 	)
 }
@@ -169,9 +171,9 @@ func (i *YumInput) ProvidesVariables() []string {
 func (i *YumInput) parseAndValidatePackages() error {
 	i.PkgNames = []string{}
 	if i.Name == nil {
-		// Allowed if update_cache is true
-		if !i.UpdateCache {
-			return fmt.Errorf("yum module requires 'name' or 'update_cache=true'")
+		// Allowed if update_cache is true, or when autoremove is set
+		if !i.UpdateCache && !i.Autoremove {
+			return fmt.Errorf("yum module requires 'name' or 'update_cache=true' (unless 'autoremove=true')")
 		}
 		return nil
 	}
@@ -182,14 +184,14 @@ func (i *YumInput) parseAndValidatePackages() error {
 		strList, err := pkg.JinjaStringToStringList(v)
 		if err == nil {
 			i.PkgNames = append(i.PkgNames, strList...)
-		} else if v == "" && !i.UpdateCache {
+		} else if v == "" && !i.UpdateCache && !i.Autoremove {
 			return fmt.Errorf("yum module requires non-empty 'name' or 'update_cache=true'")
 		}
 		if err != nil && v != "" {
 			i.PkgNames = append(i.PkgNames, v)
 		}
 	case []interface{}:
-		if len(v) == 0 && !i.UpdateCache {
+		if len(v) == 0 && !i.UpdateCache && !i.Autoremove {
 			return fmt.Errorf("yum module requires non-empty 'name' list or 'update_cache=true'")
 		}
 		for idx, item := range v {
@@ -203,7 +205,7 @@ func (i *YumInput) parseAndValidatePackages() error {
 			}
 		}
 	case []string:
-		if len(v) == 0 && !i.UpdateCache {
+		if len(v) == 0 && !i.UpdateCache && !i.Autoremove {
 			return fmt.Errorf("yum module requires non-empty 'name' list or 'update_cache=true'")
 		}
 		for idx, nameStr := range v {
@@ -217,7 +219,7 @@ func (i *YumInput) parseAndValidatePackages() error {
 	}
 
 	// Check if PkgNames is empty when update_cache is false
-	if len(i.PkgNames) == 0 && !i.UpdateCache {
+	if len(i.PkgNames) == 0 && !i.UpdateCache && !i.Autoremove {
 		return fmt.Errorf("yum module requires at least one package name or 'update_cache=true'")
 	}
 
@@ -374,6 +376,10 @@ func (i *YumInput) Validate() error {
 		// Valid states
 	default:
 		return fmt.Errorf("invalid state %q for yum module, must be one of: present, absent, latest, installed, removed", i.State)
+	}
+	// Autoremove may be used alone, or with state absent/removed when packages are specified
+	if i.Autoremove && len(i.PkgNames) > 0 && !(i.State == "absent" || i.State == "removed") {
+		return fmt.Errorf("invalid combination: 'autoremove' must be used alone or with state 'absent'/'removed'")
 	}
 	return nil
 }
@@ -566,6 +572,19 @@ func (m YumModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.
 		overallChanged = overallChanged || cacheChanged
 	}
 
+	// If autoremove is requested without explicit packages, run it directly
+	if yumParams.Autoremove && len(templatedPkgNames) == 0 {
+		common.LogDebug("Running yum autoremove (no packages specified)", map[string]interface{}{"host": closure.HostContext.Host.Name})
+		_, _, autoChanged, err := runYumCommand(closure.HostContext, runAs, templatedEnablerepo, templatedDisablerepo, templatedExclude, "autoremove")
+		if err != nil {
+			return nil, fmt.Errorf("failed to run yum autoremove: %w", err)
+		}
+		overallChanged = overallChanged || autoChanged
+		output.State = "autoremoved"
+		output.WasChanged = overallChanged
+		return output, nil
+	}
+
 	if len(templatedPkgNames) == 0 || yumParams.UpdateOnly {
 		// Only update_cache was requested
 		output.State = "cache_updated"
@@ -623,6 +642,16 @@ func (m YumModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.
 		finalState = "removed"
 	}
 
+	// If requested, perform an autoremove to clean up leaf dependencies after removals
+	if yumParams.Autoremove {
+		common.LogDebug("Running yum autoremove to clean dependencies", map[string]interface{}{"host": closure.HostContext.Host.Name})
+		_, _, autoChanged, err := runYumCommand(closure.HostContext, runAs, templatedEnablerepo, templatedDisablerepo, templatedExclude, "autoremove")
+		if err != nil {
+			return nil, fmt.Errorf("failed to run yum autoremove after removal: %w", err)
+		}
+		overallChanged = overallChanged || autoChanged
+	}
+
 	output.State = finalState
 	output.WasChanged = overallChanged
 	// TODO: Fetch installed versions for output.Versions if applicable
@@ -655,14 +684,12 @@ func (m YumModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.C
 
 	// Re-template package names for revert context
 	templatedPkgNames := []string{}
-	if yumParams.PkgNames != nil {
-		for _, name := range yumParams.PkgNames {
-			templatedName, err := pkg.TemplateString(name, closure)
-			if err != nil {
-				return nil, fmt.Errorf("failed to template package name '%s' for revert: %w", name, err)
-			}
-			templatedPkgNames = append(templatedPkgNames, templatedName)
+	for _, name := range yumParams.PkgNames {
+		templatedName, err := pkg.TemplateString(name, closure)
+		if err != nil {
+			return nil, fmt.Errorf("failed to template package name '%s' for revert: %w", name, err)
 		}
+		templatedPkgNames = append(templatedPkgNames, templatedName)
 	}
 
 	// Re-template repository names
@@ -686,14 +713,12 @@ func (m YumModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.C
 
 	// Re-template exclude packages for revert context
 	templatedExclude := []string{}
-	if yumParams.ExcludeList != nil {
-		for _, pkgName := range yumParams.ExcludeList {
-			templatedPkgName, err := pkg.TemplateString(pkgName, closure)
-			if err != nil {
-				return nil, fmt.Errorf("failed to template exclude package '%s' for revert: %w", pkgName, err)
-			}
-			templatedExclude = append(templatedExclude, templatedPkgName)
+	for _, pkgName := range yumParams.ExcludeList {
+		templatedPkgName, err := pkg.TemplateString(pkgName, closure)
+		if err != nil {
+			return nil, fmt.Errorf("failed to template exclude package '%s' for revert: %w", pkgName, err)
 		}
+		templatedExclude = append(templatedExclude, templatedPkgName)
 	}
 
 	if len(templatedPkgNames) == 0 || !yumParams.HasRevert() {
@@ -751,6 +776,7 @@ func (i *YumInput) UnmarshalYAML(node *yaml.Node) error {
 			Enablerepo  interface{} `yaml:"enablerepo"`
 			Disablerepo interface{} `yaml:"disablerepo"`
 			Exclude     interface{} `yaml:"exclude"`
+			Autoremove  *bool       `yaml:"autoremove"`
 		}
 		var tmp YumInputMap
 		if err := node.Decode(&tmp); err != nil {
@@ -781,6 +807,9 @@ func (i *YumInput) UnmarshalYAML(node *yaml.Node) error {
 		}
 		if tmp.Exclude != nil {
 			i.Exclude = tmp.Exclude
+		}
+		if tmp.Autoremove != nil {
+			i.Autoremove = *tmp.Autoremove
 		}
 
 		// Parse and validate both packages and repositories

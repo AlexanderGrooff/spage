@@ -16,7 +16,6 @@ func TestYumInput_ModuleInputCompatibility(t *testing.T) {
 		Enablerepo:  []string{"epel"},
 		Disablerepo: []string{"updates"},
 	}
-
 	// Ensure it implements ConcreteModuleInputProvider
 	var _ pkg.ConcreteModuleInputProvider = yum
 
@@ -40,6 +39,149 @@ func TestYumInput_ModuleInputCompatibility(t *testing.T) {
 
 	// ProvidesVariables should return nil or empty
 	assert.Nil(t, mi.ProvidesVariables())
+}
+
+func TestYumInput_AutoremoveValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   *YumInput
+		wantErr bool
+	}{
+		{
+			name: "autoremove alone is valid",
+			input: &YumInput{
+				Autoremove: true,
+			},
+			wantErr: false,
+		},
+		{
+			name: "autoremove with absent is valid",
+			input: &YumInput{
+				Name:       "curl",
+				State:      "absent",
+				Autoremove: true,
+			},
+			wantErr: false,
+		},
+		{
+			name: "autoremove with removed is valid",
+			input: &YumInput{
+				Name:       "curl",
+				State:      "removed",
+				Autoremove: true,
+			},
+			wantErr: false,
+		},
+		{
+			name: "autoremove with present is invalid",
+			input: &YumInput{
+				Name:       "curl",
+				State:      "present",
+				Autoremove: true,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.input.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestYumInput_AutoremoveUnmarshal(t *testing.T) {
+	tests := []struct {
+		name       string
+		yamlStr    string
+		wantNames  []string
+		wantState  string
+		wantAuto   bool
+		validateOK bool
+	}{
+		{
+			name: "autoremove only",
+			yamlStr: `
+autoremove: true
+`,
+			wantNames:  []string{},
+			wantState:  "present",
+			wantAuto:   true,
+			validateOK: true,
+		},
+		{
+			name: "remove with autoremove",
+			yamlStr: `
+name: [curl, wget]
+state: absent
+autoremove: true
+`,
+			wantNames:  []string{"curl", "wget"},
+			wantState:  "absent",
+			wantAuto:   true,
+			validateOK: true,
+		},
+		{
+			name: "present with autoremove (invalid on validate)",
+			yamlStr: `
+name: curl
+state: present
+autoremove: true
+`,
+			wantNames:  []string{"curl"},
+			wantState:  "present",
+			wantAuto:   true,
+			validateOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got YumInput
+
+			var node yaml.Node
+			err := yaml.Unmarshal([]byte(tt.yamlStr), &node)
+			if err != nil {
+				t.Fatalf("Failed to parse YAML: %v", err)
+			}
+			if len(node.Content) > 0 {
+				err = got.UnmarshalYAML(node.Content[0])
+			} else {
+				err = got.UnmarshalYAML(&node)
+			}
+			assert.NoError(t, err)
+
+			assert.Equal(t, tt.wantNames, got.PkgNames)
+			assert.Equal(t, tt.wantState, got.State)
+			assert.Equal(t, tt.wantAuto, got.Autoremove)
+
+			// Validate combinations
+			err = got.Validate()
+			if tt.validateOK {
+				assert.NoError(t, err)
+			} else {
+				assert.Error(t, err)
+			}
+		})
+	}
+}
+
+func TestYumInput_AutoremoveToCode(t *testing.T) {
+	in := &YumInput{
+		Name:       "curl",
+		State:      "absent",
+		Autoremove: true,
+	}
+	err := in.Validate()
+	assert.NoError(t, err)
+
+	code := in.ToCode()
+	assert.Contains(t, code, "Autoremove: true", "Generated code should include Autoremove flag")
 }
 
 func TestYumInput_Validation(t *testing.T) {
