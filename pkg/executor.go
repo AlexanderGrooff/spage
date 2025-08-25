@@ -3,12 +3,12 @@ package pkg
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/config"
+	"github.com/AlexanderGrooff/spage/pkg/daemon"
 )
 
 // GenericOutput is a flexible map-based implementation of pkg.ModuleOutput.
@@ -44,48 +44,63 @@ type GraphExecutor interface {
 	Revert(ctx context.Context, executedTasks []map[string]chan Task, hostContexts map[string]*HostContext, cfg *config.Config) error
 }
 
-func ChangeCWDToPlaybookDir(playbookPath string) string {
+func ChangeCWDToPlaybookDir(playbookPath string) (string, error) {
+	// If running from an FS (bundle), PlaybookPath will not be a real file path.
+	// Heuristic: if it contains forward slashes and no path separator conversions are needed, and starts without '/',
+	// treat it as FS mode and skip chdir.
+	// if strings.Contains(playbookPath, "/") && !filepath.IsAbs(playbookPath) && filepath.Separator != '/' {
+	// 	// On platforms where separator differs, still attempt; for our case we skip chdir in FS mode.
+	// }
+	if getSourceFS() != nil {
+		// FS mode active: no-op
+		return os.Getwd()
+	}
 	basePath := filepath.Dir(playbookPath)
 	currCwd, err := os.Getwd()
 	if err != nil {
-		log.Fatalf("Failed to get current working directory: %v", err)
+		return "", fmt.Errorf("failed to get current working directory: %v", err)
 	}
 
 	if err := os.Chdir(basePath); err != nil {
-		log.Fatalf("Failed to change directory to %s: %v", basePath, err)
+		return "", fmt.Errorf("failed to change directory to %s: %v", basePath, err)
 	}
 
 	common.LogDebug("Changed directory to playbook directory", map[string]interface{}{"path": basePath, "playbook": playbookPath})
-	return currCwd
+	return currCwd, nil
 }
 
-func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cfg *config.Config) error {
+func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cfg *config.Config, daemonClientInterface interface{}) error {
+	return ExecuteGraphWithLimit(executor, graph, inventoryFile, cfg, daemonClientInterface, "")
+}
+
+func ExecuteGraphWithLimit(executor GraphExecutor, graph *Graph, inventoryFile string, cfg *config.Config, daemonClientInterface interface{}, limitPattern string) error {
 	var inventory *Inventory
 	var err error
 
 	if inventoryFile != "" {
 		// Explicit inventory file provided
-		inventory, err = LoadInventory(inventoryFile)
+		inventory, err = LoadInventoryWithLimit(inventoryFile, limitPattern)
 	} else if cfg != nil && cfg.Inventory != "" {
 		// No explicit inventory file but inventory paths configured
-		inventory, err = LoadInventoryWithPaths("", cfg.Inventory, ".")
+		inventory, err = LoadInventoryWithPaths("", cfg.Inventory, ".", limitPattern)
 	} else {
 		// No inventory file and no inventory paths, fall back to default
-		inventory, err = LoadInventory("")
+		inventory, err = LoadInventoryWithLimit("", limitPattern)
 	}
 
 	if err != nil {
 		return err
-	}
-
-	if err := graph.CheckForRequiredInputs(inventory, cfg); err != nil {
-		return fmt.Errorf("failed to check inventory for required inputs: %w", err)
 	}
 
 	hostContexts, err := GetHostContexts(inventory, graph, cfg)
 	if err != nil {
 		return err
 	}
+
+	if err := graph.CheckForRequiredInputs(hostContexts); err != nil {
+		return fmt.Errorf("failed to check inventory for required inputs: %w", err)
+	}
+
 	defer func() {
 		for _, hc := range hostContexts {
 			if closeErr := hc.Close(); closeErr != nil {
@@ -108,14 +123,33 @@ func ExecuteGraph(executor GraphExecutor, graph *Graph, inventoryFile string, cf
 		return err
 	}
 
-	currCwd := ChangeCWDToPlaybookDir(graph.PlaybookPath)
+	currCwd, err := ChangeCWDToPlaybookDir(graph.PlaybookPath)
+	if err != nil {
+		return err
+	}
 	defer func() {
 		if err := os.Chdir(currCwd); err != nil {
-			log.Fatalf("Failed to change directory back to %s: %v", currCwd, err)
+			common.LogWarn("failed to change directory back to %s: %v", map[string]interface{}{"path": currCwd, "error": err.Error()})
 		}
 	}()
 
+	// Create daemon client if provided
+	var daemonClient *daemon.Client
+	if daemonClientInterface != nil {
+		if client, ok := daemonClientInterface.(*daemon.Client); ok {
+			daemonClient = client
+			cfg.SetDaemonReporting(client)
+		}
+	}
+
+	_ = ReportPlayStart(daemonClient, graph.PlaybookPath, inventoryFile, cfg.Executor)
+
 	err = executor.Execute(hostContexts, orderedGraph, cfg)
+	if err == nil && daemonClient != nil {
+		if err := ReportPlayCompletion(daemonClient); err != nil {
+			common.LogWarn("failed to report play completion", map[string]interface{}{"error": err.Error()})
+		}
+	}
 	return err
 }
 

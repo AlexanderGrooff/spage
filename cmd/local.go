@@ -11,9 +11,13 @@ import (
 	"github.com/AlexanderGrooff/spage/pkg/executor"
 )
 
-func StartLocalExecutor(graph *pkg.Graph, inventoryFile string, cfg *config.Config) error {
+func StartLocalExecutor(graph *pkg.Graph, inventoryFile string, cfg *config.Config, daemonClient interface{}) error {
+	return StartLocalExecutorWithLimit(graph, inventoryFile, cfg, daemonClient, "")
+}
+
+func StartLocalExecutorWithLimit(graph *pkg.Graph, inventoryFile string, cfg *config.Config, daemonClient interface{}, limitPattern string) error {
 	exec := executor.NewLocalGraphExecutor(&executor.LocalTaskRunner{})
-	err := pkg.ExecuteGraph(exec, graph, inventoryFile, cfg)
+	err := pkg.ExecuteGraphWithLimit(exec, graph, inventoryFile, cfg, daemonClient, limitPattern)
 	if err != nil {
 		fmt.Printf("Execution failed: %v\n", err)
 		return err
@@ -90,7 +94,7 @@ func NewLocalExecutorCmd(graph pkg.Graph) *cobra.Command {
 				return fmt.Errorf("failed to apply tag filtering: %w", err)
 			}
 
-			return StartLocalExecutor(&filteredGraph, localInventoryFile, cfg)
+			return StartLocalExecutorWithLimit(&filteredGraph, localInventoryFile, cfg, nil, limitHosts)
 		},
 	}
 
@@ -102,6 +106,7 @@ func NewLocalExecutorCmd(graph pkg.Graph) *cobra.Command {
 	localCmd.Flags().StringSliceVar(&localSkipTags, "skip-tags", []string{}, "Skip tasks with these tags (comma-separated)")
 	localCmd.Flags().StringSliceVarP(&localExtraVars, "extra-vars", "e", []string{}, "Set additional variables as key=value or YAML/JSON")
 	localCmd.Flags().BoolVar(&localBecomeMode, "become", false, "Run all tasks with become: true and become_user: root")
+	localCmd.Flags().StringVarP(&limitHosts, "limit", "l", "", "Limit execution to hosts matching the given pattern")
 
 	return localCmd
 }

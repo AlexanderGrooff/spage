@@ -196,7 +196,7 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 	// Initialize handler tracker with handlers from the graph
 	hostCtx.InitializeHandlerTracker(input.Handlers)
 
-	closure := pkg.ConstructClosure(hostCtx, input.TaskDefinition) // Assumes ConstructClosure is in package pkg
+	closure := pkg.ConstructClosure(hostCtx, input.TaskDefinition, input.SpageCoreConfig) // Assumes ConstructClosure is in package pkg
 
 	if input.LoopItem != nil {
 		loopVarName := "item"
@@ -356,7 +356,7 @@ func ExecuteSpageRunOnceLoopActivity(ctx context.Context, input SpageRunOnceLoop
 
 	// Execute each loop iteration
 	for i, loopItem := range input.LoopItems {
-		closure := pkg.ConstructClosure(hostCtx, input.TaskDefinition)
+		closure := pkg.ConstructClosure(hostCtx, input.TaskDefinition, input.SpageCoreConfig)
 
 		if loopItem != nil {
 			loopVarName := "item"
@@ -795,7 +795,7 @@ func RevertSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*Sp
 	// Initialize handler tracker with handlers from the graph
 	hostCtx.InitializeHandlerTracker(input.Handlers)
 
-	closure := pkg.ConstructClosure(hostCtx, input.TaskDefinition)
+	closure := pkg.ConstructClosure(hostCtx, input.TaskDefinition, input.SpageCoreConfig)
 
 	if input.LoopItem != nil {
 		loopVarName := "item"
@@ -1097,7 +1097,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 			}
 
 			// Execute only on the first host
-			closures, err := GetTaskClosures(task, firstHostCtx)
+			closures, err := GetTaskClosures(task, firstHostCtx, cfg)
 			if err != nil {
 				errMsg := fmt.Errorf("critical error: failed to get task closures for run_once task '%s' on host '%s': %w", task.Name, firstHostName, err)
 				common.LogError("Dispatch error for run_once task", map[string]interface{}{"error": errMsg})
@@ -1146,7 +1146,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 
 		// Normal task execution for non-run_once tasks
 		for hostName, hostCtx := range hostContexts {
-			closures, err := GetTaskClosures(task, hostCtx)
+			closures, err := GetTaskClosures(task, hostCtx, cfg)
 			if err != nil {
 				errMsg := fmt.Errorf("critical error: failed to get task closures for task '%s' on host '%s': %w. Aborting level", task.Name, hostName, err)
 				common.LogError("Dispatch error in loadLevelTasks", map[string]interface{}{"error": errMsg})
@@ -1421,7 +1421,7 @@ func (e *TemporalGraphExecutor) executeHandlers(
 			}
 
 			// Create closure for the handler using the existing host context (which has connection info)
-			handlerClosure := pkg.ConstructClosure(hostCtx, handler)
+			handlerClosure := pkg.ConstructClosure(hostCtx, handler, cfg)
 
 			// Execute the handler using the temporal task runner
 			result := e.Runner.ExecuteTask(workflowCtx, handler, handlerClosure, cfg)
@@ -1690,7 +1690,7 @@ func SpageTemporalWorkflow(ctx workflow.Context, graphInput *pkg.Graph, inventor
 	temporalRunner := NewTemporalTaskRunner(ctx)
 	e := &TemporalGraphExecutor{Runner: *temporalRunner}
 
-	err := pkg.ExecuteGraph(e, graphInput, inventoryFile, spageConfigInput)
+	err := pkg.ExecuteGraph(e, graphInput, inventoryFile, spageConfigInput, spageConfigInput.GetDaemonReporting())
 
 	if err != nil {
 		logger.Error("SpageTemporalWorkflow failed", "error", err)

@@ -20,10 +20,15 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func StartTemporalExecutor(graph *pkg.Graph, inventoryFile string, spageAppConfig *config.Config) error {
+func StartTemporalExecutor(graph *pkg.Graph, inventoryFile string, spageAppConfig *config.Config, daemonClient interface{}) error {
+	return StartTemporalExecutorWithLimit(graph, inventoryFile, spageAppConfig, daemonClient, "")
+}
+
+func StartTemporalExecutorWithLimit(graph *pkg.Graph, inventoryFile string, spageAppConfig *config.Config, daemonClient interface{}, limitPattern string) error {
 	log.Printf("Preparing to run Temporal worker. Workflow trigger from config: %t", spageAppConfig.Temporal.Trigger)
 
 	// Prepare options for the Temporal worker runner
+	// Note: Temporal executor will handle limit filtering through ExecuteGraphWithLimit
 	options := executor.RunSpageTemporalWorkerAndWorkflowOptions{
 		Graph:            graph, // This is the graph code injected above
 		InventoryPath:    inventoryFile,
@@ -39,7 +44,6 @@ func StartTemporalExecutor(graph *pkg.Graph, inventoryFile string, spageAppConfi
 	}
 	return nil
 }
-
 
 var (
 	temporalConfigFile    string
@@ -125,7 +129,7 @@ func NewTemporalExecutorCmd(graph pkg.Graph) *cobra.Command {
 
 			log.Printf("Preparing to run Temporal worker. Workflow trigger from config: %t", spageAppConfig.Temporal.Trigger)
 
-			return StartTemporalExecutor(&filteredGraph, temporalInventoryFile, spageAppConfig)
+			return StartTemporalExecutorWithLimit(&filteredGraph, temporalInventoryFile, spageAppConfig, nil, limitHosts)
 		},
 	}
 
@@ -137,6 +141,7 @@ func NewTemporalExecutorCmd(graph pkg.Graph) *cobra.Command {
 	temporalCmd.Flags().StringSliceVar(&temporalSkipTags, "skip-tags", []string{}, "Skip tasks with these tags (comma-separated)")
 	temporalCmd.Flags().StringSliceVarP(&temporalExtraVars, "extra-vars", "e", []string{}, "Set additional variables as key=value or YAML/JSON")
 	temporalCmd.Flags().BoolVar(&temporalBecomeMode, "become", false, "Run all tasks with become: true and become_user: root")
+	temporalCmd.Flags().StringVarP(&limitHosts, "limit", "l", "", "Limit execution to hosts matching the given pattern")
 
 	return temporalCmd
 }

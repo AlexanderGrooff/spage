@@ -2,6 +2,7 @@ package modules
 
 import (
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strings"
 
@@ -44,6 +45,7 @@ func (i TemplateInput) ToCode() string {
 func (i TemplateInput) GetVariableUsage() []string {
 	usedVars := []string{}
 	// TODO: what if the filename itself is templated? Then we cannot read the file until we have context
+	// Note: GetVariableUsage doesn't have access to closure/role context, so falls back to default template resolution
 	template, err := pkg.ReadTemplateFile(i.Src)
 	if err == nil {
 		usedVars = append(usedVars, pkg.GetVariableUsageFromTemplate(template)...)
@@ -103,9 +105,25 @@ func (o TemplateOutput) Changed() bool {
 	return o.Contents.Changed()
 }
 
+// readRoleAwareTemplateFile reads a template file, checking role-specific paths first if the task is from a role
+func (m TemplateModule) readRoleAwareTemplateFile(filename string, closure *pkg.Closure) (string, error) {
+	// If this is a role task, check role-specific templates directory first
+	if rolePath, ok := closure.GetFact("_spage_role_path"); ok && rolePath != "" {
+		if rolePathStr, ok := rolePath.(string); ok {
+			roleTemplatePath := filepath.Join(rolePathStr, "templates", filename)
+			if content, err := pkg.ReadLocalFile(roleTemplatePath); err == nil {
+				return content, nil
+			}
+		}
+	}
+
+	// Fallback to default template resolution
+	return pkg.ReadTemplateFile(filename)
+}
+
 func (m TemplateModule) templateContentsToFile(src, dest string, closure *pkg.Closure, runAs string) (string, string, error) {
-	// Get contents from src
-	contents, err := pkg.ReadTemplateFile(src)
+	// Get contents from src, checking role-specific paths if available
+	contents, err := m.readRoleAwareTemplateFile(src, closure)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to read template file %s: %v", src, err)
 	}

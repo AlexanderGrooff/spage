@@ -2,7 +2,7 @@ package pkg
 
 import (
 	"fmt"
-	"log"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,7 +12,6 @@ import (
 	"github.com/AlexanderGrooff/jinja-go"
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/compile"
-	"github.com/AlexanderGrooff/spage/pkg/config"
 )
 
 // Don't look for dependencies for these vars
@@ -201,10 +200,13 @@ func NewGraphFromFile(playbookPath string, rolesPaths string) (Graph, error) {
 		return Graph{}, fmt.Errorf("error reading YAML file %s: %v", absPlaybookPath, err)
 	}
 
-	currCwd := ChangeCWDToPlaybookDir(absPlaybookPath)
+	currCwd, err := ChangeCWDToPlaybookDir(absPlaybookPath)
+	if err != nil {
+		return Graph{}, fmt.Errorf("error changing directory to playbook path %s: %v", absPlaybookPath, err)
+	}
 	defer func() {
 		if err := os.Chdir(currCwd); err != nil {
-			log.Fatalf("Failed to change directory back to %s: %v", currCwd, err)
+			common.LogWarn("failed to change directory back to %s: %v", map[string]interface{}{"path": currCwd, "error": err.Error()})
 		}
 	}()
 
@@ -250,6 +252,60 @@ func NewGraphFromFile(playbookPath string, rolesPaths string) (Graph, error) {
 		return Graph{}, fmt.Errorf("failed to generate graph: %w", err)
 	}
 	common.LogDebug("NewGraph generated graph.", map[string]interface{}{"graph": graph.String()})
+	return graph, nil
+}
+
+// NewGraphFromFS builds a graph from a playbook path within an fs.FS.
+// The playbookPath must be the POSIX-style path inside the provided FS.
+func NewGraphFromFS(sourceFS fs.FS, playbookPath string, rolesPaths string) (Graph, error) {
+	// Read playbook YAML from FS
+	data, err := fs.ReadFile(sourceFS, playbookPath)
+	if err != nil {
+		return Graph{}, fmt.Errorf("error reading YAML from FS %s: %v", playbookPath, err)
+	}
+
+	// Split roles paths from configuration
+	splitRolesPaths := func(rolesPaths string) []string {
+		if rolesPaths == "" {
+			return []string{"roles"}
+		}
+		paths := strings.Split(rolesPaths, ":")
+		var result []string
+		for _, p := range paths {
+			if strings.TrimSpace(p) != "" {
+				result = append(result, strings.TrimSpace(p))
+			}
+		}
+		if len(result) == 0 {
+			return []string{"roles"}
+		}
+		return result
+	}
+
+	// Use FS-aware preprocessing. Base path is directory of the playbook inside FS.
+	basePath := filepath.ToSlash(filepath.Dir(playbookPath))
+	processedNodes, err := compile.PreprocessPlaybookFS(sourceFS, data, basePath, splitRolesPaths(rolesPaths))
+	if err != nil {
+		return Graph{}, fmt.Errorf("error preprocessing playbook data from FS: %w", err)
+	}
+
+	attributes, err := ParsePlayAttributes(processedNodes)
+	if err != nil {
+		common.LogDebug("No root block found in playbook, using empty attributes", map[string]interface{}{"playbook": playbookPath})
+		attributes = make(map[string]interface{})
+	}
+	// Parse YAML nodes into tasks
+	tasks, err := TextToGraphNodes(processedNodes)
+	if err != nil {
+		return Graph{}, fmt.Errorf("error parsing preprocessed tasks: %w", err)
+	}
+
+	// Use playbookPath as-is to avoid OS cwd changes; executor must handle FS mode.
+	graph, err := NewGraph(tasks, attributes, playbookPath)
+	if err != nil {
+		return Graph{}, fmt.Errorf("failed to generate graph: %w", err)
+	}
+	common.LogDebug("NewGraphFromFS generated graph.", map[string]interface{}{"graph": graph.String()})
 	return graph, nil
 }
 
@@ -514,8 +570,15 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 	}
 
 	// Get required inputs from graph attributes
-	for _, v := range graphAttributes["vars"].(map[string]interface{}) {
-		varsUsage := GetVariableUsageFromTemplate(v.(string))
+	for k, v := range graphAttributes["vars"].(map[string]interface{}) {
+		vStr, ok := v.(string)
+		if !ok {
+			common.LogDebug("failed to get variable usage from template", map[string]interface{}{
+				"error": fmt.Errorf("expected %s to be a string, got %T", k, v),
+			})
+			continue
+		}
+		varsUsage := GetVariableUsageFromTemplate(vStr)
 		g.RequiredInputs = append(g.RequiredInputs, varsUsage...)
 	}
 
@@ -725,20 +788,15 @@ func checkCycle(taskName string, dependsOn map[string][]string, visited, recStac
 	return nil
 }
 
-func (g Graph) CheckForRequiredInputs(inventory *Inventory, cfg *config.Config) error {
-	common.DebugOutput("Checking inventory for required inputs %+v", inventory)
-	for _, host := range inventory.Hosts {
+func (g Graph) CheckForRequiredInputs(hostContexts map[string]*HostContext) error {
+	common.DebugOutput("Checking host contexts for required inputs")
+	for hostname, hostContext := range hostContexts {
 		for _, input := range g.RequiredInputs {
-			common.DebugOutput("Checking if required input %q is present in inventory for host %q", input, host.Name)
-
-			// Load variables from input like --check
-			if cfg.Facts[input] != nil {
-				continue
-			}
+			common.DebugOutput("Checking if required input %q is present in host context for host %q", input, hostname)
 
 			// All other required inputs should be present in the inventory
-			if _, ok := host.Vars[input]; !ok {
-				return fmt.Errorf("required input %q not found in inventory for host %q", input, host.Name)
+			if _, ok := hostContext.Facts.Load(input); !ok {
+				return fmt.Errorf("required input %q not found in host context for host %q", input, hostname)
 			}
 		}
 	}

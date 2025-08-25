@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,7 +44,7 @@ security:
 					Format:     "plain",
 					Timestamps: true,
 				},
-				ExecutionMode: "parallel",
+				ExecutionMode: "sequential",
 				Executor:      "local",
 				Temporal: TemporalConfig{
 					Address:          "",
@@ -51,7 +52,7 @@ security:
 					WorkflowIDPrefix: "spage-workflow",
 					Trigger:          false,
 				},
-				Revert: true,
+				Revert: false,
 				Tags: TagsConfig{
 					Tags:     []string{},
 					SkipTags: []string{},
@@ -60,6 +61,12 @@ security:
 				HostKeyChecking: true,
 				RolesPath:       "",
 				Inventory:       "",
+				Daemon: DaemonConfig{
+					Enabled:  false,
+					Endpoint: "localhost:9091",
+					PlayID:   "",
+					Timeout:  3 * time.Second,
+				},
 			},
 		},
 		{
@@ -72,7 +79,7 @@ security:
 					Format:     "plain",
 					Timestamps: true,
 				},
-				ExecutionMode: "parallel",
+				ExecutionMode: "sequential",
 				Executor:      "local",
 				Temporal: TemporalConfig{
 					Address:          "",
@@ -80,7 +87,7 @@ security:
 					WorkflowIDPrefix: "spage-workflow",
 					Trigger:          false,
 				},
-				Revert: true,
+				Revert: false,
 				Tags: TagsConfig{
 					Tags:     []string{},
 					SkipTags: []string{},
@@ -89,6 +96,12 @@ security:
 				HostKeyChecking: true,
 				RolesPath:       "",
 				Inventory:       "",
+				Daemon: DaemonConfig{
+					Enabled:  false,
+					Endpoint: "localhost:9091",
+					PlayID:   "",
+					Timeout:  3 * time.Second,
+				},
 			},
 		},
 		{
@@ -97,6 +110,8 @@ security:
 			envVars: map[string]string{
 				"SPAGE_LOGGING_LEVEL":       "warn",
 				"SPAGE_SECURITY_ENABLE_TLS": "true",
+				"SPAGE_EXECUTION_MODE":      "parallel",
+				"SPAGE_DAEMON_ENABLED":      "true",
 			},
 			want: &Config{
 				Logging: LoggingConfig{
@@ -113,7 +128,7 @@ security:
 					WorkflowIDPrefix: "spage-workflow",
 					Trigger:          false,
 				},
-				Revert: true,
+				Revert: false,
 				Tags: TagsConfig{
 					Tags:     []string{},
 					SkipTags: []string{},
@@ -122,6 +137,12 @@ security:
 				HostKeyChecking: true,
 				RolesPath:       "",
 				Inventory:       "",
+				Daemon: DaemonConfig{
+					Enabled:  true,
+					Endpoint: "localhost:9091",
+					PlayID:   "",
+					Timeout:  3 * time.Second,
+				},
 			},
 		},
 		{

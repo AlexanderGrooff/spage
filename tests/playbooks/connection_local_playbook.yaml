@@ -1,0 +1,13 @@
+---
+- hosts: localhost
+  connection: local
+  tasks:
+    - name: ensure tmpdir exists
+      file:
+        path: /tmp/spage
+        state: directory
+
+    - name: write confirmation file
+      copy:
+        content: "local connection works\n"
+        dest: /tmp/spage/connection_local_test.txt

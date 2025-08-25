@@ -12,6 +12,7 @@ import (
 
 	// Remove pongo2 import if no longer needed directly here
 	// "github.com/flosch/pongo2"
+	"github.com/AlexanderGrooff/spage/pkg/daemon"
 	"gopkg.in/yaml.v3"
 )
 
@@ -98,6 +99,10 @@ type Task struct {
 	Diff      *bool    `yaml:"diff,omitempty" json:"diff,omitempty"`
 	Notify    []string `yaml:"notify,omitempty" json:"notify,omitempty"`
 	IsHandler bool     `yaml:"is_handler,omitempty" json:"is_handler,omitempty"`
+
+	// Role context information for resource resolution
+	RoleName string `yaml:"_role_name,omitempty" json:"_role_name,omitempty"`
+	RolePath string `yaml:"_role_path,omitempty" json:"_role_path,omitempty"`
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface for Task.
@@ -369,6 +374,12 @@ func (t Task) ToCode() string {
 		}
 		// Add cases for other expected list types if necessary (e.g., []string)
 	}
+	if t.RolePath != "" {
+		sb.WriteString(fmt.Sprintf(", RolePath: %q", t.RolePath))
+	}
+	if t.RoleName != "" {
+		sb.WriteString(fmt.Sprintf(", RoleName: %q", t.RoleName))
+	}
 
 	sb.WriteString("},\n") // Removed the trailing newline here as it's added later if needed
 	return sb.String()
@@ -394,17 +405,33 @@ func (t Task) ShouldExecute(closure *Closure) (bool, error) {
 }
 
 func (t Task) ExecuteModule(closure *Closure) TaskResult {
+	var daemonClient *daemon.Client
+	if client, ok := closure.Config.GetDaemonReporting().(*daemon.Client); ok {
+		daemonClient = client
+	} else {
+		common.LogInfo("No daemon client found", map[string]interface{}{
+			"task":          t.Name,
+			"host":          closure.HostContext.Host.Name,
+			"client":        client,
+			"config_client": closure.Config.GetDaemonReporting(),
+		})
+	}
+	_ = ReportTaskStart(daemonClient, t.Id, t.Name, closure.HostContext.Host.Name, 0)
+
 	startTime := time.Now()
 
 	shouldExecute, err := t.ShouldExecute(closure)
 	if err != nil {
-		return TaskResult{Task: t, Closure: closure, Status: TaskStatusFailed, Error: err}
+		res := TaskResult{Task: t, Closure: closure, Status: TaskStatusFailed, Error: err}
+		_ = ReportTaskCompletion(daemonClient, t, res, closure.HostContext.Host.Name, -1)
+		return res
 	}
 	if !shouldExecute {
 		common.LogDebug("Skipping execution of task due to 'when' condition", map[string]interface{}{
 			"task": t.Name,
 			"host": closure.HostContext.Host.Name,
 		})
+		_ = ReportTaskSkipped(daemonClient, t.Id, t.Name, closure.HostContext.Host.Name, 0)
 		return TaskResult{Task: t, Closure: closure, Status: TaskStatusSkipped}
 	}
 
@@ -455,7 +482,9 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 
 	// If 'until' is not defined, execute once as normal.
 	if t.Until.Expression == "" {
-		return t.executeOnce(taskClosure)
+		res := t.executeOnce(taskClosure)
+		_ = ReportTaskCompletion(daemonClient, t, res, closure.HostContext.Host.Name, -1)
+		return res
 	}
 
 	// 'until' is defined, so we enter the retry loop.
@@ -517,6 +546,8 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 				}
 			}
 			lastResult.Duration = time.Since(startTime) // Update total duration
+
+			_ = ReportTaskCompletion(daemonClient, t, lastResult, closure.HostContext.Host.Name, -1)
 			return lastResult
 		}
 
@@ -544,6 +575,8 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 		lastResult.Status = TaskStatusFailed
 	}
 	lastResult.Duration = time.Since(startTime)
+
+	_ = ReportTaskCompletion(daemonClient, t, lastResult, closure.HostContext.Host.Name, -1)
 	return lastResult
 }
 

@@ -1,0 +1,7 @@
+plugin: host_list
+# Simple host_list plugin test - lists static hosts
+# This is one of the simplest Ansible inventory plugins
+hosts:
+  - web01.example.com
+  - web02.example.com  
+  - db01.example.com

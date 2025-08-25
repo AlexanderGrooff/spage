@@ -4,16 +4,19 @@ import (
 	"log"
 
 	"github.com/AlexanderGrooff/jinja-go"
+	"github.com/AlexanderGrooff/spage/pkg/config"
 )
 
 type Closure struct {
 	HostContext *HostContext
 	ExtraFacts  map[string]interface{}
+	Config      *config.Config
 }
 
-func ConstructClosure(c *HostContext, t Task) *Closure {
+func ConstructClosure(c *HostContext, t Task, cfg *config.Config) *Closure {
 	closure := Closure{
 		HostContext: c,
+		Config:      cfg,
 		ExtraFacts:  make(map[string]interface{}),
 	}
 
@@ -37,6 +40,14 @@ func ConstructClosure(c *HostContext, t Task) *Closure {
 		default:
 			log.Fatalf("Invalid vars type: %T", t.Vars)
 		}
+	}
+
+	// Add role context to closure if available
+	if t.RoleName != "" {
+		closure.ExtraFacts["_spage_role_name"] = t.RoleName
+	}
+	if t.RolePath != "" {
+		closure.ExtraFacts["_spage_role_path"] = t.RolePath
 	}
 
 	return &closure

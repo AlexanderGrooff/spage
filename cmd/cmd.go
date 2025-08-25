@@ -1,13 +1,24 @@
 package cmd
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/fs"
 	"maps"
+	"mime/multipart"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/AlexanderGrooff/spage/pkg/common"
+	"github.com/AlexanderGrooff/spage/pkg/daemon"
+	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
 	"github.com/spf13/cobra"
@@ -18,17 +29,33 @@ import (
 )
 
 var (
-	playbookFile  string
-	outputFile    string
-	inventoryFile string
-	configFile    string
-	tags          []string
-	skipTags      []string
-	cfg           *config.Config // Store the loaded config
-	checkMode     bool
-	diffMode      bool
-	extraVars     []string
-	becomeMode    bool
+	playbookFile   string
+	outputFile     string
+	inventoryFile  string
+	configFile     string
+	tags           []string
+	skipTags       []string
+	cfg            *config.Config // Store the loaded config
+	checkMode      bool
+	diffMode       bool
+	extraVars      []string
+	becomeMode     bool
+	limitHosts     string // Host pattern to limit execution to
+	connectionType string // Connection type override (e.g., local)
+
+	// Daemon communication flags
+	daemonGRPC string
+	playID     string
+
+	// Bundle create flags
+	bundleDir        string
+	bundleRootPath   string
+	bundlePlaybookID string
+	apiHTTPBase      string
+	bundleOutput     string
+	bundleFilePath   string
+	// CLI auth / enrollment
+	apiToken string
 )
 
 // LoadConfig loads the configuration and applies settings
@@ -76,7 +103,14 @@ var RootCmd = &cobra.Command{
 	Short: "Simple Playbook AGEnt",
 	Long:  `A lightweight configuration management tool that compiles your playbooks into a Go program to run on a host.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		return LoadConfig(configFile)
+		if err := LoadConfig(configFile); err != nil {
+			return err
+		}
+		// auto-fill api token from config once config is loaded
+		if apiToken == "" && cfg != nil && cfg.ApiToken != "" {
+			apiToken = cfg.ApiToken
+		}
+		return nil
 	},
 }
 
@@ -88,6 +122,8 @@ func GetGraph(playbookFile string, tags, skipTags []string, baseConfig *config.C
 	if len(skipTags) > 0 {
 		baseConfig.Tags.SkipTags = skipTags
 	}
+
+	// Expect a local path here. Bundle resolution is handled by the caller (run/generate commands)
 
 	graph, err := pkg.NewGraphFromFile(playbookFile, baseConfig.RolesPath)
 	if err != nil {
@@ -107,11 +143,166 @@ func GetGraph(playbookFile string, tags, skipTags []string, baseConfig *config.C
 	return filteredGraph, nil
 }
 
+// materializeBundleToFS downloads a bundle archive and loads it into an in-memory fs.FS.
+// Returns the fs, the root playbook path within the FS, and a cleanup func (no-op).
+func materializeBundleToFS(bundleRef string) (fs.FS, string, func(), error) {
+	const prefix = "spage://bundle/"
+	ref := strings.TrimPrefix(bundleRef, prefix)
+	parts := strings.SplitN(ref, "#", 2)
+	if len(parts) != 2 {
+		return nil, "", nil, fmt.Errorf("invalid bundle ref: %s", bundleRef)
+	}
+	bundleID := parts[0]
+	rootPath := parts[1]
+
+	url := fmt.Sprintf("%s/api/bundles/%s/archive", strings.TrimRight(cfg.API.HTTPBase, "/"), bundleID)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	if apiToken == "" && cfg != nil && cfg.ApiToken != "" {
+		apiToken = cfg.ApiToken
+	}
+	if apiToken != "" {
+		req.Header.Set("Authorization", "Bearer "+apiToken)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("failed to download bundle archive %s: %w", url, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", nil, fmt.Errorf("bundle archive %s http %d", url, resp.StatusCode)
+	}
+	memfs, err := pkg.NewMemFSFromTarGz(resp.Body)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("failed to load bundle into FS: %w", err)
+	}
+	cleanup := func() {}
+	return memfs, filepath.ToSlash(rootPath), cleanup, nil
+}
+
+// createTarGzFromDir writes a tar.gz of srcDir into w, preserving relative paths
+func createTarGzFromDir(srcDir string, w io.Writer) error {
+	gw := gzip.NewWriter(w)
+	defer func() { _ = gw.Close() }()
+	tw := tar.NewWriter(gw)
+	defer func() { _ = tw.Close() }()
+
+	srcDir = filepath.Clean(srcDir)
+	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		rel, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if strings.HasPrefix(rel, ".git/") {
+			return nil
+		}
+		hdr := &tar.Header{
+			Name:    rel,
+			Mode:    int64(info.Mode().Perm()),
+			Size:    info.Size(),
+			ModTime: info.ModTime(),
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+		if _, err := io.Copy(tw, f); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func GetDaemonClient() (*daemon.Client, error) {
+	// Initialize daemon client if daemon communication is enabled
+	var daemonClient *daemon.Client
+	var err error
+
+	// Check if daemon communication is enabled via config or CLI flags
+	daemonEnabled := cfg.Daemon.Enabled || daemonGRPC != "" || playID != ""
+
+	if daemonEnabled {
+		// Determine daemon endpoint (CLI flag takes precedence over config)
+		daemonEndpoint := daemonGRPC
+		if daemonEndpoint == "" {
+			daemonEndpoint = cfg.Daemon.Endpoint
+		}
+		if daemonEndpoint == "" {
+			daemonEndpoint = "localhost:9091"
+		}
+
+		// Determine play ID (CLI flag takes precedence over config)
+		playIDToUse := playID
+		if playIDToUse == "" {
+			playIDToUse = cfg.Daemon.PlayID
+		}
+		if playIDToUse == "" {
+			generatedTaskID := uuid.New().String()
+			common.LogInfo("No play ID provided, generating a new one", map[string]interface{}{
+				"play_id": generatedTaskID,
+			})
+			playIDToUse = generatedTaskID
+		}
+
+		daemonClient, err = daemon.NewClient(&daemon.Config{
+			Endpoint: daemonEndpoint,
+			PlayID:   playIDToUse,
+			Timeout:  cfg.Daemon.Timeout,
+		})
+		if err != nil {
+			common.LogError("Failed to create daemon client", map[string]interface{}{
+				"error": err.Error(),
+			})
+			os.Exit(1)
+		}
+	}
+
+	return daemonClient, nil
+}
+
 var generateCmd = &cobra.Command{
 	Use:   "generate",
 	Short: "Generate a graph from a playbook and save it as Go code",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		graph, err := GetGraph(playbookFile, tags, skipTags, cfg, becomeMode)
+		// Resolve bundle references using FS (no disk extraction)
+		var cleanup func()
+		var graph pkg.Graph
+		var err error
+		if strings.HasPrefix(playbookFile, "spage://bundle/") {
+			fsys, rootPath, c, err := materializeBundleToFS(playbookFile)
+			if err != nil {
+				common.LogError("Failed to load bundle FS", map[string]interface{}{"error": err.Error()})
+				os.Exit(1)
+			}
+			cleanup = c
+			pkg.SetSourceFSForCLI(fsys)
+			defer pkg.ClearSourceFSForCLI()
+			if cleanup != nil {
+				defer cleanup()
+			}
+			graph, err = pkg.NewGraphFromFS(fsys, rootPath, cfg.RolesPath)
+			if err != nil {
+				return fmt.Errorf("failed to generate graph: %w", err)
+			}
+		} else {
+			graph, err = GetGraph(playbookFile, tags, skipTags, cfg, becomeMode)
+		}
 		if err != nil {
 			common.LogError("Failed to generate graph", map[string]interface{}{
 				"error": err.Error(),
@@ -137,13 +328,64 @@ var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run a playbook by compiling & executing it",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		graph, err := GetGraph(playbookFile, tags, skipTags, cfg, becomeMode)
+		daemonClient, err := GetDaemonClient()
 		if err != nil {
-			common.LogError("Failed to generate graph", map[string]interface{}{
-				"error": err.Error(),
-			})
-			os.Exit(1)
+			return fmt.Errorf("failed to get daemon client: %w", err)
 		}
+
+		// Resolve bundle references using FS (no disk extraction)
+		var cleanup func()
+		var graph pkg.Graph
+		if strings.HasPrefix(playbookFile, "spage://bundle/") {
+			fsys, rootPath, c, err := materializeBundleToFS(playbookFile)
+			if err != nil {
+				if daemonClient != nil {
+					_ = pkg.ReportPlayError(daemonClient, err)
+				}
+				return fmt.Errorf("failed to load bundle FS: %w", err)
+			}
+			cleanup = c
+			pkg.SetSourceFSForCLI(fsys)
+			defer pkg.ClearSourceFSForCLI()
+			if cleanup != nil {
+				defer cleanup()
+			}
+			graph, err = pkg.NewGraphFromFS(fsys, rootPath, cfg.RolesPath)
+			if err != nil {
+				if daemonClient != nil {
+					_ = pkg.ReportPlayError(daemonClient, err)
+				}
+				return fmt.Errorf("failed to generate graph: %w", err)
+			}
+		} else {
+			var err error
+			graph, err = GetGraph(playbookFile, tags, skipTags, cfg, becomeMode)
+			if err != nil {
+				if daemonClient != nil {
+					_ = pkg.ReportPlayError(daemonClient, err)
+				}
+				return fmt.Errorf("failed to generate graph: %w", err)
+			}
+		}
+
+		// Determine effective limit: command-line flag takes precedence over config
+		effectiveLimit := limitHosts
+		if effectiveLimit == "" && cfg.Limit != "" {
+			effectiveLimit = cfg.Limit
+		}
+
+		// Execute with host limiting handled in the executor layer
+		if effectiveLimit != "" {
+			common.LogInfo("Limiting hosts for execution", map[string]interface{}{
+				"limit": effectiveLimit,
+			})
+		}
+
+		// Apply connection override (CLI takes precedence)
+		if connectionType != "" {
+			cfg.Connection = connectionType
+		}
+
 		if checkMode {
 			if cfg.Facts == nil {
 				cfg.Facts = make(map[string]interface{})
@@ -171,17 +413,220 @@ var runCmd = &cobra.Command{
 
 		}
 
+		// Close daemon client on exit
+		defer func() {
+			if daemonClient != nil {
+				// Close the daemon client
+				if err := daemonClient.Close(); err != nil {
+					common.LogWarn("Failed to close daemon client", map[string]interface{}{
+						"error": err.Error(),
+					})
+				}
+			}
+		}()
+
 		if cfg.Executor == "temporal" {
-			err = StartTemporalExecutor(&graph, inventoryFile, cfg)
+			err = StartTemporalExecutorWithLimit(&graph, inventoryFile, cfg, daemonClient, effectiveLimit)
 		} else {
-			err = StartLocalExecutor(&graph, inventoryFile, cfg)
+			err = StartLocalExecutorWithLimit(&graph, inventoryFile, cfg, daemonClient, effectiveLimit)
 		}
+
 		if err != nil {
+			if daemonClient != nil {
+				if err := pkg.ReportPlayError(daemonClient, err); err != nil {
+					common.LogWarn("failed to report play error", map[string]interface{}{"error": err.Error()})
+				}
+			}
 			common.LogError("Failed to run playbook", map[string]interface{}{
 				"error": err.Error(),
 			})
-			os.Exit(1)
 		}
+
+		// Wait for all daemon reports to complete before proceeding
+		if daemonClient != nil {
+			// First wait for all pending reports to be sent
+			if err := pkg.WaitForPendingReportsWithTimeout(30 * time.Second); err != nil {
+				common.LogWarn("Timeout waiting for daemon reports", map[string]interface{}{
+					"error": err.Error(),
+				})
+			}
+
+			// Then wait for streams to finish processing any pending data
+			if err := daemonClient.WaitForStreamsToFinish(5 * time.Second); err != nil {
+				common.LogWarn("Timeout waiting for streams to finish", map[string]interface{}{
+					"error": err.Error(),
+				})
+			}
+		}
+
+		return nil
+	},
+}
+
+// inventory parent command
+var inventoryCmd = &cobra.Command{
+	Use:   "inventory",
+	Short: "Inventory-related commands",
+}
+
+// inventory list subcommand
+var inventoryListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all inventory hosts and groups in JSON format",
+	Long: `List all inventory hosts and groups in JSON format, similar to ansible-inventory --list.
+This command supports both static inventory files and dynamic inventory plugins.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		err := LoadConfig(configFile)
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+		// Use our inventory loading system which supports plugins
+		inventory, err := pkg.LoadInventoryWithPaths(inventoryFile, cfg.Inventory, ".", "")
+		if err != nil {
+			return fmt.Errorf("failed to load inventory: %w", err)
+		}
+
+		// Convert to ansible-inventory --list format
+		output, err := formatInventoryAsJSON(inventory)
+		if err != nil {
+			return fmt.Errorf("failed to format inventory: %w", err)
+		}
+
+		fmt.Println(output)
+		return nil
+	},
+}
+
+// bundle parent and create subcommand
+var bundleCmd = &cobra.Command{
+	Use:   "bundle",
+	Short: "Bundle-related commands",
+}
+
+var bundleCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create a playbook bundle tar.gz on disk",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if bundleDir == "" {
+			return fmt.Errorf("--dir is required")
+		}
+		// Derive default output if not set
+		out := bundleOutput
+		if out == "" {
+			base := filepath.Base(filepath.Clean(bundleDir))
+			if base == "." || base == "" {
+				base = "bundle"
+			}
+			out = fmt.Sprintf("%s-bundle.tar.gz", base)
+		}
+		f, err := os.Create(out)
+		if err != nil {
+			return fmt.Errorf("failed to create output: %w", err)
+		}
+		if err := createTarGzFromDir(bundleDir, f); err != nil {
+			_ = f.Close()
+			_ = os.Remove(out)
+			return fmt.Errorf("failed to create tar.gz: %w", err)
+		}
+		_ = f.Close()
+		info, _ := os.Stat(out)
+		if bundleRootPath != "" {
+			fmt.Printf("Bundle created at %s (root path: %s, size: %d bytes)\n", out, bundleRootPath, func() int64 {
+				if info != nil {
+					return info.Size()
+				}
+				return 0
+			}())
+		} else {
+			fmt.Printf("Bundle created at %s (size: %d bytes)\n", out, func() int64 {
+				if info != nil {
+					return info.Size()
+				}
+				return 0
+			}())
+		}
+		return nil
+	},
+}
+
+var bundleUploadCmd = &cobra.Command{
+	Use:   "upload",
+	Short: "Upload a bundle tar.gz to the API",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if bundleFilePath == "" || bundleRootPath == "" {
+			return fmt.Errorf("--file and --root are required")
+		}
+		// Determine API base
+		base := ""
+		if cfg != nil && cfg.API.HTTPBase != "" {
+			base = cfg.API.HTTPBase
+		}
+		if apiHTTPBase != "" {
+			base = apiHTTPBase
+		}
+		// Resolve token: config or env
+		token := ""
+		if cfg != nil && cfg.ApiToken != "" {
+			token = cfg.ApiToken
+		}
+		if token == "" {
+			token = os.Getenv("SPAGE_API_TOKEN")
+		}
+		if token == "" {
+			return fmt.Errorf("no API token found (set spage_api_token in config or SPAGE_API_TOKEN env)")
+		}
+
+		// Open bundle file
+		f, err := os.Open(bundleFilePath)
+		if err != nil {
+			return fmt.Errorf("failed to open bundle file: %w", err)
+		}
+		defer func() { _ = f.Close() }()
+
+		// Prepare multipart
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		fw, err := mw.CreateFormFile("file", filepath.Base(bundleFilePath))
+		if err != nil {
+			return fmt.Errorf("failed to create form file: %w", err)
+		}
+		if _, err := io.Copy(fw, f); err != nil {
+			return fmt.Errorf("failed to write file part: %w", err)
+		}
+		if err := mw.WriteField("root_path", bundleRootPath); err != nil {
+			return fmt.Errorf("failed to write root_path: %w", err)
+		}
+		if bundlePlaybookID != "" {
+			if err := mw.WriteField("playbook_id", bundlePlaybookID); err != nil {
+				return fmt.Errorf("failed to write playbook_id: %w", err)
+			}
+		}
+		if err := mw.Close(); err != nil {
+			return fmt.Errorf("failed to finalize form: %w", err)
+		}
+
+		// POST to API
+		url := fmt.Sprintf("%s/api/bundles", strings.TrimRight(base, "/"))
+		req, err := http.NewRequest(http.MethodPost, url, &body)
+		if err != nil {
+			return fmt.Errorf("failed to build request: %w", err)
+		}
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("upload failed: %w", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusCreated {
+			b, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("upload failed: http %d: %s", resp.StatusCode, string(b))
+		}
+		var out map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			return fmt.Errorf("invalid response: %w", err)
+		}
+		fmt.Printf("Bundle uploaded: id=%v content_sha256=%v\n", out["id"], out["content_sha256"])
 		return nil
 	},
 }
@@ -192,6 +637,8 @@ func init() {
 
 	generateCmd.Flags().StringVarP(&playbookFile, "playbook", "p", "", "Playbook file (required)")
 	generateCmd.Flags().StringVarP(&outputFile, "output", "o", "generated_tasks.go", "Output file (default: generated_tasks.go)")
+	generateCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file (default: localhost)")
+	generateCmd.Flags().StringVarP(&limitHosts, "limit", "l", "", "Limit selected hosts to an additional pattern")
 	generateCmd.Flags().StringSliceVarP(&tags, "tags", "t", []string{}, "Only include tasks with these tags (comma-separated)")
 	generateCmd.Flags().StringSliceVar(&skipTags, "skip-tags", []string{}, "Skip tasks with these tags (comma-separated)")
 	generateCmd.Flags().BoolVar(&becomeMode, "become", false, "Run all tasks with become: true and become_user: root")
@@ -203,12 +650,18 @@ func init() {
 	runCmd.Flags().StringVarP(&playbookFile, "playbook", "p", "", "Playbook file (required)")
 	runCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file (default: localhost)")
 	runCmd.Flags().StringVarP(&outputFile, "output", "o", "generated_tasks.go", "Output file (default: generated_tasks.go)")
+	runCmd.Flags().StringVarP(&limitHosts, "limit", "l", "", "Limit selected hosts to an additional pattern")
 	runCmd.Flags().StringSliceVarP(&tags, "tags", "t", []string{}, "Only include tasks with these tags (comma-separated)")
 	runCmd.Flags().StringSliceVar(&skipTags, "skip-tags", []string{}, "Skip tasks with these tags (comma-separated)")
 	runCmd.Flags().BoolVar(&checkMode, "check", false, "Enable check mode (dry run)")
 	runCmd.Flags().BoolVar(&diffMode, "diff", false, "Enable diff mode")
 	runCmd.Flags().StringSliceVarP(&extraVars, "extra-vars", "e", []string{}, "Set additional variables as key=value or YAML/JSON, i.e. -e 'key1=value1' -e 'key2=value2' or -e '{\"key1\": \"value1\", \"key2\": \"value2\"}'")
 	runCmd.Flags().BoolVar(&becomeMode, "become", false, "Run all tasks with become: true and become_user: root")
+	runCmd.Flags().StringVar(&connectionType, "connection", "", "Connection type override (e.g., local)")
+
+	// Daemon communication flags
+	runCmd.Flags().StringVar(&daemonGRPC, "daemon-grpc", "", "Daemon gRPC endpoint (default: localhost:9091)")
+	runCmd.Flags().StringVar(&playID, "play-id", "", "Play ID for daemon communication")
 
 	if err := runCmd.MarkFlagRequired("playbook"); err != nil {
 		panic(fmt.Sprintf("failed to mark playbook flag as required: %v", err))
@@ -216,6 +669,31 @@ func init() {
 
 	RootCmd.AddCommand(generateCmd)
 	RootCmd.AddCommand(runCmd)
+
+	// Inventory list flags
+	inventoryListCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file or directory")
+	_ = inventoryListCmd.MarkFlagRequired("inventory")
+
+	// Add inventory subcommands
+	inventoryCmd.AddCommand(inventoryListCmd)
+	RootCmd.AddCommand(inventoryCmd)
+
+	// Bundle create flags
+	bundleCreateCmd.Flags().StringVarP(&bundleDir, "dir", "d", "", "Directory to bundle (required)")
+	bundleCreateCmd.Flags().StringVarP(&bundleOutput, "output", "o", "", "Output tar.gz path (default: <dir_basename>-bundle.tar.gz)")
+	_ = bundleCreateCmd.MarkFlagRequired("dir")
+
+	// Bundle upload flags
+	bundleUploadCmd.Flags().StringVarP(&bundleFilePath, "file", "f", "", "Bundle tar.gz file to upload (required)")
+	bundleUploadCmd.Flags().StringVarP(&bundleRootPath, "root", "r", "", "Root playbook path inside the bundle (required)")
+	bundleUploadCmd.Flags().StringVar(&bundlePlaybookID, "playbook-id", "", "Optional playbook ID to link the bundle to")
+	bundleUploadCmd.Flags().StringVar(&apiHTTPBase, "api", "", "API HTTP base (default http://localhost:1323)")
+	_ = bundleUploadCmd.MarkFlagRequired("file")
+	_ = bundleUploadCmd.MarkFlagRequired("root")
+
+	bundleCmd.AddCommand(bundleCreateCmd)
+	bundleCmd.AddCommand(bundleUploadCmd)
+	RootCmd.AddCommand(bundleCmd)
 }
 
 // GetConfig returns the loaded configuration
@@ -382,4 +860,71 @@ func parseExtraVars(extraVars []string) (map[string]interface{}, error) {
 	}
 
 	return result, nil
+}
+
+// formatInventoryAsJSON converts our inventory format to ansible-inventory --list JSON format
+func formatInventoryAsJSON(inventory *pkg.Inventory) (string, error) {
+	// Create the output structure similar to ansible-inventory --list
+	output := make(map[string]interface{})
+
+	// Add _meta with hostvars
+	meta := map[string]interface{}{
+		"hostvars": make(map[string]interface{}),
+	}
+
+	// Process hosts and collect their variables
+	for hostName, host := range inventory.Hosts {
+		if host.Vars != nil {
+			meta["hostvars"].(map[string]interface{})[hostName] = host.Vars
+		}
+	}
+	output["_meta"] = meta
+
+	// Add groups
+	for groupName, group := range inventory.Groups {
+		groupData := make(map[string]interface{})
+
+		// Add hosts to group
+		if len(group.Hosts) > 0 {
+			hostList := make([]string, 0, len(group.Hosts))
+			for hostName := range group.Hosts {
+				hostList = append(hostList, hostName)
+			}
+			groupData["hosts"] = hostList
+		} else {
+			groupData["hosts"] = []string{}
+		}
+
+		// Add group variables
+		if group.Vars != nil {
+			groupData["vars"] = group.Vars
+		}
+
+		output[groupName] = groupData
+	}
+
+	// Add all group containing all hosts (Ansible convention)
+	allHosts := make([]string, 0, len(inventory.Hosts))
+	for hostName := range inventory.Hosts {
+		allHosts = append(allHosts, hostName)
+	}
+
+	// If 'all' group doesn't exist, create it
+	if _, exists := output["all"]; !exists {
+		allGroup := map[string]interface{}{
+			"hosts": allHosts,
+		}
+		if inventory.Vars != nil {
+			allGroup["vars"] = inventory.Vars
+		}
+		output["all"] = allGroup
+	}
+
+	// Convert to JSON
+	jsonBytes, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal inventory to JSON: %w", err)
+	}
+
+	return string(jsonBytes), nil
 }

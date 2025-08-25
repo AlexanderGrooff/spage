@@ -3,6 +3,7 @@
 
 .vscode
 .idea
+.cursor
 
 .venv
 .envrc
@@ -21,3 +22,6 @@ node_modules
 
 /spage
 /.ansible
+/*.tar.gz
+*.so
+.playwright-mcp

@@ -113,6 +113,9 @@ func (o AnsiblePythonOutput) AsFacts() map[string]interface{} {
 
 	// Flatten the results into the top level
 	if o.Results != nil {
+		common.LogDebug("Flattening Python module results", map[string]interface{}{
+			"results": o.Results,
+		})
 		maps.Copy(facts, o.Results)
 	}
 
@@ -176,9 +179,11 @@ func (m AnsiblePythonModule) executePythonModule(params AnsiblePythonInput, clos
 
 	// Create the ansible-playbook YAML file
 	hostname := closure.HostContext.Host.Host
-	connection := "local"
-	if !closure.HostContext.Host.IsLocal {
-		connection = "ssh"
+	connection := "ssh"
+	if hostname == "localhost" {
+		connection = "local"
+	} else if connVal, ok := closure.GetFact("ansible_connection"); ok {
+		connection = connVal.(string)
 	}
 	playbook := map[string]interface{}{
 		"hosts":        hostname,
@@ -243,7 +248,7 @@ func (m AnsiblePythonModule) executePythonModule(params AnsiblePythonInput, clos
 
 	output, err := cmd.CombinedOutput()
 
-	common.DebugOutput("Ansible command output on host %s: %s", closure.HostContext.Host.Name, string(output))
+	common.DebugOutput("Ansible command output on host %s with connection %s: %s", closure.HostContext.Host.Name, connection, string(output))
 
 	result := m.parseAnsibleOutput(string(output), params.ModuleName)
 
@@ -270,18 +275,91 @@ func (m AnsiblePythonModule) parseAnsibleOutput(output, moduleName string) Ansib
 	}
 
 	lines := strings.Split(output, "\n")
+
+	// Helper to count braces outside of string literals
+	countBraces := func(s string) int {
+		depth := 0
+		inStr := false
+		escaped := false
+		for _, r := range s {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if r == '\\' && inStr {
+				escaped = true
+				continue
+			}
+			if r == '"' {
+				inStr = !inStr
+				continue
+			}
+			if !inStr {
+				switch r {
+				case '{':
+					depth++
+				case '}':
+					depth--
+				}
+			}
+		}
+		return depth
+	}
+
+	var buf strings.Builder
+	accumulating := false
+	braceDepth := 0
+
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 
-		// Look for JSON output in ansible verbose mode
-		if strings.Contains(line, "=>") && strings.Contains(line, "{") {
-			jsonStart := strings.Index(line, "{")
-			if jsonStart != -1 {
-				jsonStr := line[jsonStart:]
+		// Look for JSON output in ansible verbose mode (single- or multi-line)
+		if !accumulating {
+			if strings.Contains(line, "=>") && strings.Contains(line, "{") {
+				jsonStart := strings.Index(line, "{")
+				if jsonStart != -1 {
+					fragment := line[jsonStart:]
+					buf.WriteString(fragment)
+					braceDepth += countBraces(fragment)
+					accumulating = true
+
+					// If JSON is complete on one line, parse immediately
+					if braceDepth == 0 {
+						jsonStr := buf.String()
+						var moduleResult map[string]interface{}
+						if err := json.Unmarshal([]byte(jsonStr), &moduleResult); err == nil {
+							result.Results = moduleResult
+							if changed, ok := moduleResult["changed"].(bool); ok {
+								result.WasChanged = changed
+							}
+							if failed, ok := moduleResult["failed"].(bool); ok {
+								result.Failed = failed
+							}
+							if msg, ok := moduleResult["msg"].(string); ok {
+								result.Msg = msg
+							}
+							break
+						} else {
+							// Reset and continue scanning other lines
+							buf.Reset()
+							accumulating = false
+							braceDepth = 0
+						}
+					}
+					// Continue to next line to accumulate multi-line JSON
+					continue
+				}
+			}
+		} else {
+			// Accumulate subsequent lines until braces balance
+			buf.WriteString("\n")
+			buf.WriteString(line)
+			braceDepth += countBraces(line)
+			if braceDepth <= 0 {
+				jsonStr := buf.String()
 				var moduleResult map[string]interface{}
 				if err := json.Unmarshal([]byte(jsonStr), &moduleResult); err == nil {
 					result.Results = moduleResult
-
 					if changed, ok := moduleResult["changed"].(bool); ok {
 						result.WasChanged = changed
 					}
@@ -293,7 +371,13 @@ func (m AnsiblePythonModule) parseAnsibleOutput(output, moduleName string) Ansib
 					}
 					break
 				}
+				// Parsing failed: reset accumulation and fall through to other checks
+				buf.Reset()
+				accumulating = false
+				braceDepth = 0
 			}
+			// Move to next line while accumulating
+			continue
 		}
 
 		// Look for module not found errors

@@ -1,0 +1,15 @@
+all:
+  hosts:
+    localhost:
+      host: localhost
+      inventory_host_var: inventory_host_var_value
+  vars:
+    inventory_allgroup_var: specific_allgroup_var_value
+
+somegroup:
+  hosts:
+    localhost:
+      host: localhost
+      inventory_group_host_var: inventory_group_host_var_value
+  vars:
+    inventory_group_var: specific_group_var_value

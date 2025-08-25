@@ -42,7 +42,7 @@ func CalculateExpectedResults(
 		for _, hc := range hostContexts {
 			// Create a temporary closure for delegate_to resolution.
 			// The actual host context used for closure calculation depends on delegate_to.
-			resolutionClosure := pkg.ConstructClosure(hc, task)
+			resolutionClosure := pkg.ConstructClosure(hc, task, cfg)
 			effectiveHostCtx, err := GetDelegatedHostContext(task, hostContexts, resolutionClosure, cfg)
 			if err != nil {
 				return 0, fmt.Errorf("failed to resolve delegate_to for count on task '%s', host '%s': %w", task.Name, hc.Host.Name, err)
@@ -51,7 +51,7 @@ func CalculateExpectedResults(
 				effectiveHostCtx = hc // No delegation, use original host context.
 			}
 
-			closures, err := GetTaskClosures(task, effectiveHostCtx)
+			closures, err := GetTaskClosures(task, effectiveHostCtx, cfg)
 			if err != nil {
 				return 0, fmt.Errorf("failed to get task closures for count on task '%s', host '%s': %w", task.Name, effectiveHostCtx.Host.Name, err)
 			}
@@ -103,20 +103,20 @@ func GetFirstAvailableHost(hostContexts map[string]*pkg.HostContext) (*pkg.HostC
 }
 
 // GetTaskClosures generates one or more Closures for a task, handling loops.
-func GetTaskClosures(task pkg.Task, c *pkg.HostContext) ([]*pkg.Closure, error) {
+func GetTaskClosures(task pkg.Task, c *pkg.HostContext, cfg *config.Config) ([]*pkg.Closure, error) {
 	if task.Loop == nil {
-		closure := pkg.ConstructClosure(c, task) // Assumes ConstructClosure is available
+		closure := pkg.ConstructClosure(c, task, cfg) // Assumes ConstructClosure is available
 		return []*pkg.Closure{closure}, nil
 	}
 
-	loopItems, err := ParseLoop(task, c)
+	loopItems, err := ParseLoop(task, c, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse loop for task '%s' on host '%s': %w", task.Name, c.Host.Name, err)
 	}
 
 	var closures []*pkg.Closure
 	for _, item := range loopItems {
-		tClosure := pkg.ConstructClosure(c, task)
+		tClosure := pkg.ConstructClosure(c, task, cfg)
 		// "item" is the standard variable name for loop items.
 		// Ansible's loop_control.loop_var allows customization; this is not currently supported here.
 		tClosure.ExtraFacts["item"] = item
@@ -126,9 +126,9 @@ func GetTaskClosures(task pkg.Task, c *pkg.HostContext) ([]*pkg.Closure, error) 
 }
 
 // ParseLoop parses the loop directive of a task, evaluating expressions and returning items to iterate over.
-func ParseLoop(task pkg.Task, c *pkg.HostContext) ([]interface{}, error) {
+func ParseLoop(task pkg.Task, c *pkg.HostContext, cfg *config.Config) ([]interface{}, error) {
 	var loopItems []interface{}
-	closure := pkg.ConstructClosure(c, task) // Assumes ConstructClosure is available from context.go or similar
+	closure := pkg.ConstructClosure(c, task, cfg)
 
 	switch loopValue := task.Loop.(type) {
 	case string:
@@ -153,7 +153,7 @@ func ParseLoop(task pkg.Task, c *pkg.HostContext) ([]interface{}, error) {
 
 		// If loopItems is still nil, proceed with templating the string.
 		if loopItems == nil {
-			evalLoopStr, err := pkg.TemplateString(loopValue, closure) // Assumes TemplateString is available from context.go or similar
+			evalLoopStr, err := pkg.TemplateString(loopValue, closure)
 			if err != nil {
 				return nil, fmt.Errorf("failed to template loop string '%s' for task '%s': %w", loopValue, task.Name, err)
 			}

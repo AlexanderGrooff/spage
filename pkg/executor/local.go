@@ -108,7 +108,7 @@ func (e *LocalGraphExecutor) Execute(hostContexts map[string]*pkg.HostContext, o
 		resultsCh := make(chan pkg.TaskResult, numExpectedResultsOnLevel)
 		errCh := make(chan error, 1) // For fatal errors from the task loading goroutine
 
-		go e.loadLevelTasks(ctx, tasksInLevel, hostContexts, resultsCh, errCh, cfg)
+		go e.loadLevelTasks(ctx, tasksInLevel, hostContexts, resultsCh, errCh, cfg, executionLevel)
 
 		levelErrored, errProcessingResults := e.processLevelResults(
 			ctx, resultsCh, errCh,
@@ -194,7 +194,7 @@ func (e *LocalGraphExecutor) Revert(ctx context.Context, executedTasks []map[str
 					continue
 				}
 
-				closure := pkg.ConstructClosure(hostCtx, task)
+				closure := pkg.ConstructClosure(hostCtx, task, cfg)
 				revertResult := task.RevertModule(closure) // Calls module's Revert via Task.RevertModule
 
 				if revertResult.Error != nil {
@@ -267,6 +267,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 	resultsCh chan pkg.TaskResult,
 	errCh chan error,
 	cfg *config.Config,
+	executionLevel int,
 ) {
 	defer close(resultsCh)
 
@@ -290,7 +291,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				return // No hosts, so we can't proceed.
 			}
 
-			closures, err := GetTaskClosures(task, firstHostCtx)
+			closures, err := GetTaskClosures(task, firstHostCtx, cfg)
 			if err != nil {
 				errMsg := fmt.Errorf("critical error: failed to get task closures for run_once task '%s' on host '%s': %w", task.Name, firstHostName, err)
 				common.LogError("Dispatch error for run_once task", map[string]interface{}{"error": errMsg})
@@ -323,7 +324,9 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 					// Note: delegate_to inside a run_once loop has complex behavior.
 					// This implementation executes on the `firstHostCtx`'s designated runner.
 					// A more advanced version might need to resolve delegation for each item.
+
 					result := e.Runner.ExecuteTask(ctx, task, closure, cfg)
+
 					itemResults = append(itemResults, result)
 					totalDuration += result.Duration
 					if result.Status == pkg.TaskStatusChanged {
@@ -352,7 +355,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 					finalStatus = pkg.TaskStatusFailed
 				}
 
-				finalClosure := pkg.ConstructClosure(firstHostCtx, task)
+				finalClosure := pkg.ConstructClosure(firstHostCtx, task, cfg)
 				aggregatedResult := pkg.TaskResult{
 					Task:     task,
 					Closure:  finalClosure,
@@ -411,6 +414,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				})
 
 				originalResult := e.Runner.ExecuteTask(ctx, task, closure, cfg)
+
 				allResults := CreateRunOnceResultsForAllHosts(originalResult, hostContexts, firstHostName)
 				for _, result := range allResults {
 					select {
@@ -428,7 +432,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 		// Normal task execution for non-run_once tasks
 		for hostName, hostCtx := range hostContexts {
 
-			closures, err := GetTaskClosures(task, hostCtx)
+			closures, err := GetTaskClosures(task, hostCtx, cfg)
 			if err != nil {
 				errMsg := fmt.Errorf("critical error: failed to get task closures for task '%s' on host '%s': %w, aborting level", task.Name, hostName, err)
 				common.LogError("Dispatch error in loadLevelTasks", map[string]interface{}{"error": errMsg})
@@ -478,6 +482,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 							return
 						default:
 							taskResult := e.Runner.ExecuteTask(ctx, task, closure, cfg)
+
 							select {
 							case resultsCh <- taskResult:
 							case <-ctx.Done():
@@ -486,6 +491,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 					}()
 				} else {
 					taskResult := e.Runner.ExecuteTask(ctx, task, closure, cfg)
+
 					select {
 					case resultsCh <- taskResult:
 					case <-ctx.Done():
@@ -554,7 +560,7 @@ func (e *LocalGraphExecutor) executeHandlers(
 			}
 
 			// Execute the handler
-			closure := pkg.ConstructClosure(hostCtx, handler)
+			closure := pkg.ConstructClosure(hostCtx, handler, cfg)
 			result := e.Runner.ExecuteTask(ctx, handler, closure, cfg)
 
 			// Mark the handler as executed
