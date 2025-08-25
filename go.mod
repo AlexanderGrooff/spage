@@ -28,7 +28,7 @@ require (
 
 require (
 	github.com/AlexanderGrooff/jinja-go v0.2.0
-	github.com/AlexanderGrooff/spage-protobuf v0.1.0
+	github.com/AlexanderGrooff/spage-protobuf v0.1.1
 	github.com/desops/sshpool v0.0.9
 	github.com/google/go-cmp v0.6.0
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
@@ -42,8 +42,6 @@ require (
 	google.golang.org/grpc v1.67.3
 	google.golang.org/protobuf v1.36.5
 )
-
-replace github.com/AlexanderGrooff/spage-protobuf => ../spage-protobuf
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
