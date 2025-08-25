@@ -128,7 +128,7 @@ func (m *Manager) createPoolWithJumpHost(targetHost string, targetConfig *ssh.Cl
 func (m *Manager) createSSHConfig(host string, hostVars map[string]interface{}) (*ssh.ClientConfig, error) {
 	currentUser, err := user.Current()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get current user for SSH connection to %s: %v", host, err)
+		return nil, fmt.Errorf("failed to get current user for SSH connection to %s: %w", host, err)
 	}
 
 	// Build authentication methods based on configuration
