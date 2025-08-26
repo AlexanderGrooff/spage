@@ -1,0 +1,32 @@
+---
+- hosts: all
+  tasks:
+    - name: create child file to be included
+      shell:
+        execute: echo "Hello from absolute include path" > /tmp/spage/jinja_include_child.txt
+
+    - name: render template with absolute include path
+      template:
+        src: jinja_include_parent.j2
+        dest: /tmp/spage/jinja_include_rendered.txt
+      vars:
+        include_path: /tmp/spage/jinja_include_child.txt
+      register: rendered
+
+    - name: validate rendered content contains child with absolute include path
+      assert:
+        that:
+          - rendered.contents.after == "HEADER\nHello from absolute include path\n\nFOOTER\n"
+
+    - name: render template with relative include path
+      template:
+        src: jinja_include_parent.j2
+        dest: /tmp/spage/jinja_include_rendered.txt
+      vars:
+        include_path: jinja_include_child.txt
+      register: rendered
+
+    - name: validate rendered content contains child with relative include path
+      assert:
+        that:
+          - rendered.contents.after == "HEADER\nHello from relative include path\n\nFOOTER\n"

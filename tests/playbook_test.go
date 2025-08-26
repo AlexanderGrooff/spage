@@ -519,6 +519,20 @@ func TestTemplatePlaybook(t *testing.T) {
 	})
 }
 
+func TestJinjaIncludePlaybook(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/jinja_include_playbook.yaml",
+		configFile:   "sequential_no_revert.yaml",
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "jinja_include_playbook should run without error in env: %s, output: %s", envName, output)
+
+			// Ensure the parent rendered file exists and contains both header, child content, and footer
+			target := "/tmp/spage/jinja_include_rendered.txt"
+			assertFileExistsWithInventory(t, target, inventory)
+		},
+	})
+}
+
 func TestShellPlaybook(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
 		playbookFile: "playbooks/shell_playbook.yaml",
