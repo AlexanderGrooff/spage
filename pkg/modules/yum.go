@@ -378,7 +378,7 @@ func (i *YumInput) Validate() error {
 		return fmt.Errorf("invalid state %q for yum module, must be one of: present, absent, latest, installed, removed", i.State)
 	}
 	// Autoremove may be used alone, or with state absent/removed when packages are specified
-	if i.Autoremove && len(i.PkgNames) > 0 && !(i.State == "absent" || i.State == "removed") {
+	if i.Autoremove && len(i.PkgNames) > 0 && i.State != "absent" && i.State != "removed" {
 		return fmt.Errorf("invalid combination: 'autoremove' must be used alone or with state 'absent'/'removed'")
 	}
 	return nil

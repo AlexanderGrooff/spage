@@ -481,7 +481,7 @@ This command supports both static inventory files and dynamic inventory plugins.
 			return fmt.Errorf("failed to load config: %w", err)
 		}
 		// Use our inventory loading system which supports plugins
-		inventory, err := pkg.LoadInventoryWithPaths(inventoryFile, cfg.Inventory, ".", "")
+		inventory, err := pkg.LoadInventoryWithPaths(inventoryFile, cfg.Inventory, ".", "", cfg)
 		if err != nil {
 			return fmt.Errorf("failed to load inventory: %w", err)
 		}

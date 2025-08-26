@@ -3,7 +3,6 @@ package pkg
 import (
 	"context"
 	"fmt"
-	"log"
 	"maps"
 	"os"
 	"path/filepath"
@@ -17,6 +16,73 @@ import (
 	"github.com/AlexanderGrooff/spage/pkg/types"
 	"gopkg.in/yaml.v3"
 )
+
+// decryptVaultValue checks if the provided value is an Ansible vault string and decrypts it.
+func decryptVaultValue(value interface{}, vaultPassword string) (interface{}, error) {
+	// Only strings (or []byte castable to string) can be vault strings
+	var str string
+	switch v := value.(type) {
+	case string:
+		str = v
+	case []byte:
+		str = string(v)
+	default:
+		return value, nil
+	}
+
+	if !IsAnsibleVaultString(str) {
+		return value, nil
+	}
+	if vaultPassword == "" {
+		return value, fmt.Errorf("ansible vault password not provided")
+	}
+
+	av, err := NewAnsibleVaultString(str)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse ansible vault string: %w", err)
+	}
+	plain, err := av.Decrypt(vaultPassword)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt ansible vault string: %w", err)
+	}
+	return plain, nil
+}
+
+// decryptMapValues walks a map[string]interface{} and decrypts any vault strings found.
+func decryptMapValues(vars map[string]interface{}, vaultPassword string) error {
+	if vars == nil {
+		return nil
+	}
+	for k, v := range vars {
+		switch typed := v.(type) {
+		case string, []byte:
+			dec, err := decryptVaultValue(typed, vaultPassword)
+			if err != nil {
+				return fmt.Errorf("key %q: %w", k, err)
+			}
+			vars[k] = dec
+		case map[string]interface{}:
+			if err := decryptMapValues(typed, vaultPassword); err != nil {
+				return err
+			}
+		case []interface{}:
+			for i, item := range typed {
+				if s, ok := item.(string); ok {
+					dec, err := decryptVaultValue(s, vaultPassword)
+					if err != nil {
+						return fmt.Errorf("key %q[%d]: %w", k, i, err)
+					}
+					typed[i] = dec
+				} else if m, ok := item.(map[string]interface{}); ok {
+					if err := decryptMapValues(m, vaultPassword); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
 
 // convertPluginInventoryToStandard converts a plugin inventory to standard inventory format
 func convertPluginInventoryToStandard(pluginInventory *plugins.Inventory) *types.Inventory {
@@ -217,7 +283,7 @@ func loadVariablesFromFile(filePath string) (map[string]interface{}, error) {
 
 // loadGroupVars loads variables from group_vars directory structure
 // Supports both group_vars/groupname.yml and group_vars/groupname/ directory structures
-func loadGroupVars(inventoryDir string) (map[string]map[string]interface{}, error) {
+func loadGroupVars(inventoryDir string, vaultPassword string) (map[string]map[string]interface{}, error) {
 	groupVars := make(map[string]map[string]interface{})
 	groupVarsDir := filepath.Join(inventoryDir, "group_vars")
 
@@ -274,6 +340,18 @@ func loadGroupVars(inventoryDir string) (map[string]map[string]interface{}, erro
 					continue
 				}
 
+				// Decrypt any vault values
+				if vaultPassword != "" {
+					if err := decryptMapValues(fileVars, vaultPassword); err != nil {
+						common.LogWarn("Failed to decrypt group vars", map[string]interface{}{
+							"group": groupName,
+							"file":  filePath,
+							"error": err.Error(),
+						})
+						continue
+					}
+				}
+
 				// Merge file variables into group variables
 				for k, v := range fileVars {
 					groupVars[groupName][k] = v
@@ -302,6 +380,18 @@ func loadGroupVars(inventoryDir string) (map[string]map[string]interface{}, erro
 				})
 				continue
 			}
+
+			// Decrypt any vault values
+			if vaultPassword != "" {
+				if err := decryptMapValues(fileVars, vaultPassword); err != nil {
+					common.LogWarn("Failed to decrypt group vars", map[string]interface{}{
+						"group": groupName,
+						"file":  filePath,
+						"error": err.Error(),
+					})
+					continue
+				}
+			}
 			for k, v := range fileVars {
 				groupVars[groupName][k] = v
 			}
@@ -317,7 +407,7 @@ func loadGroupVars(inventoryDir string) (map[string]map[string]interface{}, erro
 
 // loadHostVars loads variables from host_vars directory structure
 // Supports both host_vars/hostname.yml and host_vars/hostname/ directory structures
-func loadHostVars(inventoryDir string) (map[string]map[string]interface{}, error) {
+func loadHostVars(inventoryDir string, vaultPassword string) (map[string]map[string]interface{}, error) {
 	hostVars := make(map[string]map[string]interface{})
 	hostVarsDir := filepath.Join(inventoryDir, "host_vars")
 
@@ -374,6 +464,18 @@ func loadHostVars(inventoryDir string) (map[string]map[string]interface{}, error
 					continue
 				}
 
+				// Decrypt any vault values
+				if vaultPassword != "" {
+					if err := decryptMapValues(fileVars, vaultPassword); err != nil {
+						common.LogWarn("Failed to decrypt host vars", map[string]interface{}{
+							"host":  hostName,
+							"file":  filePath,
+							"error": err.Error(),
+						})
+						continue
+					}
+				}
+
 				// Merge file variables into host variables
 				for k, v := range fileVars {
 					hostVars[hostName][k] = v
@@ -401,6 +503,18 @@ func loadHostVars(inventoryDir string) (map[string]map[string]interface{}, error
 					"error": err.Error(),
 				})
 				continue
+			}
+
+			// Decrypt any vault values
+			if vaultPassword != "" {
+				if err := decryptMapValues(fileVars, vaultPassword); err != nil {
+					common.LogWarn("Failed to decrypt host vars", map[string]interface{}{
+						"host":  hostName,
+						"file":  filePath,
+						"error": err.Error(),
+					})
+					continue
+				}
 			}
 			for k, v := range fileVars {
 				hostVars[hostName][k] = v
@@ -542,16 +656,23 @@ type Inventory = types.Inventory
 type Host = types.Host
 type Group = types.Group
 
-func LoadInventory(path string) (*Inventory, error) {
-	return LoadInventoryWithPaths(path, "", ".", "")
+func LoadInventory(path string, cfg *config.Config) (*Inventory, error) {
+	return LoadInventoryWithPaths(path, "", ".", "", cfg)
 }
 
-func LoadInventoryWithLimit(path string, limitPattern string) (*Inventory, error) {
-	return LoadInventoryWithPaths(path, "", ".", limitPattern)
+func LoadInventoryWithLimit(path string, limitPattern string, cfg *config.Config) (*Inventory, error) {
+	return LoadInventoryWithPaths(path, "", ".", limitPattern, cfg)
 }
 
-func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir string, limitPattern string) (*Inventory, error) {
+func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir string, limitPattern string, cfg *config.Config) (*Inventory, error) {
 	var filesToLoad []string
+
+	var vaultPassword string
+	if cfg == nil {
+		vaultPassword = ""
+	} else {
+		vaultPassword = cfg.AnsibleVaultPassword
+	}
 
 	if path != "" {
 		// Explicit path provided, use it directly
@@ -614,7 +735,12 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 
 		data, err := os.ReadFile(filePath)
 		if err != nil {
-			log.Fatalf("Error reading YAML file %s: %v", filePath, err)
+			// Change from log.Fatalf to return error to allow fallback behavior
+			common.LogWarn("Failed to read inventory file, skipping", map[string]interface{}{
+				"file":  filePath,
+				"error": err.Error(),
+			})
+			continue
 		}
 
 		// Check if this is a plugin-based inventory
@@ -652,6 +778,18 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 		// Process the loaded inventory
 		for name, host := range inventory.Hosts {
 			common.DebugOutput("Adding host %q to inventory from file %s", name, filePath)
+
+			// Decrypt host variables if vault password is provided
+			if vaultPassword != "" && host.Vars != nil {
+				if err := decryptMapValues(host.Vars, vaultPassword); err != nil {
+					common.LogWarn("Failed to decrypt host variables", map[string]interface{}{
+						"host":  name,
+						"file":  filePath,
+						"error": err.Error(),
+					})
+				}
+			}
+
 			host.Prepare()
 			host.Name = name
 
@@ -662,6 +800,17 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 		}
 
 		for groupName, group := range inventory.Groups {
+			// Decrypt group variables if vault password is provided
+			if vaultPassword != "" && group.Vars != nil {
+				if err := decryptMapValues(group.Vars, vaultPassword); err != nil {
+					common.LogWarn("Failed to decrypt group variables", map[string]interface{}{
+						"group": groupName,
+						"file":  filePath,
+						"error": err.Error(),
+					})
+				}
+			}
+
 			for name, host := range group.Hosts {
 				common.DebugOutput("Found host %q in group %q from file %s", name, groupName, filePath)
 				var h *Host
@@ -669,6 +818,18 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 					common.DebugOutput("Host %q already in inventory", name)
 					// Merge variables from the new host instance into the existing host
 					if host.Vars != nil {
+						// Decrypt host variables from group if vault password is provided
+						if vaultPassword != "" {
+							if err := decryptMapValues(host.Vars, vaultPassword); err != nil {
+								common.LogWarn("Failed to decrypt host variables from group", map[string]interface{}{
+									"host":  name,
+									"group": groupName,
+									"file":  filePath,
+									"error": err.Error(),
+								})
+							}
+						}
+
 						if h.Vars == nil {
 							h.Vars = make(map[string]interface{})
 						}
@@ -700,6 +861,15 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 			}
 		}
 
+		// Decrypt top-level inventory vars before propagating to hosts
+		if vaultPassword != "" {
+			if err := decryptMapValues(inventory.Vars, vaultPassword); err != nil {
+				common.LogWarn("Failed to decrypt top-level inventory vars", map[string]interface{}{
+					"file":  filePath,
+					"error": err.Error(),
+				})
+			}
+		}
 		for k, v := range inventory.Vars {
 			for _, host := range inventory.Hosts {
 				host.Vars[k] = v
@@ -736,19 +906,38 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 		groupVarsDir = inventoryDir
 	}
 
+	// Also check if group_vars exists directly in the inventory directory
+	if _, err := os.Stat(filepath.Join(inventoryDir, "group_vars")); err == nil {
+		groupVarsDir = inventoryDir
+	}
+
 	common.LogDebug("Attempting to load group_vars", map[string]interface{}{
 		"inventory_dir":  inventoryDir,
 		"group_vars_dir": groupVarsDir,
 	})
-	groupVars, err := loadGroupVars(groupVarsDir)
+
+	groupVars, err := loadGroupVars(groupVarsDir, vaultPassword)
 	if err != nil {
 		common.LogWarn("Failed to load group variables", map[string]interface{}{
 			"directory": inventoryDir,
 			"error":     err.Error(),
 		})
 	} else if len(groupVars) > 0 {
+		common.LogDebug("Loaded group variables", map[string]interface{}{
+			"group_vars": groupVars,
+		})
+
 		// Merge 'all' group vars into the existing 'all' group (no host-by-host special-casing)
 		if allGroupVars, exists := groupVars["all"]; exists {
+			// Decrypt 'all' group variables if vault password is provided
+			if vaultPassword != "" {
+				if err := decryptMapValues(allGroupVars, vaultPassword); err != nil {
+					common.LogWarn("Failed to decrypt 'all' group variables", map[string]interface{}{
+						"error": err.Error(),
+					})
+				}
+			}
+
 			if allGroup, groupExists := mergedInventory.Groups["all"]; groupExists {
 				if allGroup.Vars == nil {
 					allGroup.Vars = make(map[string]interface{})
@@ -770,6 +959,21 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 				"vars_count":     len(allGroupVars),
 				"all_group_vars": allGroupVars,
 			})
+		}
+
+		// Decrypt group variables if vault password is provided
+		if vaultPassword != "" {
+			for groupName, vars := range groupVars {
+				if groupName == "all" {
+					continue
+				}
+				if err := decryptMapValues(vars, vaultPassword); err != nil {
+					common.LogWarn("Failed to decrypt group variables", map[string]interface{}{
+						"group": groupName,
+						"error": err.Error(),
+					})
+				}
+			}
 		}
 
 		// Apply group variables to existing groups (excluding 'all' which is handled above)
@@ -800,13 +1004,25 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 	}
 
 	// Load host variables using same directory resolution as group_vars
-	hostVars, err := loadHostVars(groupVarsDir)
+	hostVars, err := loadHostVars(inventoryDir, vaultPassword)
 	if err != nil {
 		common.LogWarn("Failed to load host variables", map[string]interface{}{
 			"directory": inventoryDir,
 			"error":     err.Error(),
 		})
 	} else if len(hostVars) > 0 {
+		// Decrypt host variables if vault password is provided
+		if vaultPassword != "" {
+			for hostName, vars := range hostVars {
+				if err := decryptMapValues(vars, vaultPassword); err != nil {
+					common.LogWarn("Failed to decrypt host variables", map[string]interface{}{
+						"host":  hostName,
+						"error": err.Error(),
+					})
+				}
+			}
+		}
+
 		// Apply host variables to existing hosts or create new ones
 		for hostName, vars := range hostVars {
 			if host, exists := mergedInventory.Hosts[hostName]; exists {
@@ -878,14 +1094,17 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 		}
 		mergedInventory.Groups["all"] = allGroup
 	}
+
+	// Gather facts from all sources and put them in the host.Vars map
 	for _, host := range mergedInventory.Hosts {
 		host.Groups["all"] = "all"
+		host.Vars = mergedInventory.GetInitialFactsForHost(host)
 	}
 
 	for _, host := range mergedInventory.Hosts {
 		common.LogDebug("Inventory for host", map[string]interface{}{
 			"host":   host.Name,
-			"vars":   fmt.Sprintf("%+v", mergedInventory.GetInitialFactsForHost(host)),
+			"vars":   fmt.Sprintf("%+v", host.Vars),
 			"groups": fmt.Sprintf("%+v", host.Groups),
 		})
 	}
@@ -904,7 +1123,7 @@ func GetContextForHost(inventory *Inventory, host *Host, cfg *config.Config) (*H
 		ctx.Facts.Store(k, v)
 	}
 
-	for k, v := range inventory.GetInitialFactsForHost(host) {
+	for k, v := range host.Vars {
 		ctx.Facts.Store(k, v)
 	}
 

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -33,6 +34,12 @@ type Config struct {
 
 	// Host limit pattern for execution
 	Limit string `mapstructure:"limit"`
+
+	// Ansible vault password for decrypting encrypted variables in inventory
+	AnsibleVaultPassword string `mapstructure:"ansible_vault_password"`
+
+	// Ansible vault configuration
+	AnsibleVault AnsibleVaultConfig `mapstructure:"ansible_vault"`
 
 	// Internal fields for daemon reporting (not serialized)
 	daemonReporting interface{}
@@ -87,6 +94,33 @@ type SSHConfig struct {
 	Options map[string]string `mapstructure:"options"`
 }
 
+// AnsibleVaultConfig holds Ansible vault configuration
+type AnsibleVaultConfig struct {
+	// Vault password file path
+	PasswordFile string `mapstructure:"password_file"`
+
+	// Vault identity list (colon-delimited paths to vault identity files)
+	Identity string `mapstructure:"identity"`
+
+	// Vault password prompt
+	PasswordPrompt string `mapstructure:"password_prompt"`
+
+	// Ask for vault password
+	AskVaultPass bool `mapstructure:"ask_vault_pass"`
+
+	// Ask for vault password when doing a diff
+	AskVaultPassOnDiff bool `mapstructure:"ask_vault_pass_on_diff"`
+
+	// Vault timeout in seconds
+	Timeout int `mapstructure:"timeout"`
+
+	// Vault retry count
+	RetryCount int `mapstructure:"retry_count"`
+
+	// Vault retry delay in seconds
+	RetryDelay int `mapstructure:"retry_delay"`
+}
+
 // SSHAuthConfig holds SSH authentication method configuration
 type SSHAuthConfig struct {
 	Methods         []string `mapstructure:"methods"`          // Ordered list of auth methods to try: "publickey", "password", "keyboard-interactive", "gssapi-with-mic", "none"
@@ -125,6 +159,53 @@ func (c *Config) SetDaemonReporting(reporting interface{}) {
 // GetDaemonReporting gets the daemon reporting instance
 func (c *Config) GetDaemonReporting() interface{} {
 	return c.daemonReporting
+}
+
+// ResolveVaultPassword resolves the vault password from various sources
+// Priority: 1) Direct password, 2) Password file, 3) Identity files, 4) Interactive prompt
+func (c *Config) ResolveVaultPassword() (string, error) {
+	// If password is already set, use it
+	if c.AnsibleVaultPassword != "" {
+		return c.AnsibleVaultPassword, nil
+	}
+
+	// Try password file
+	if c.AnsibleVault.PasswordFile != "" {
+		password, err := os.ReadFile(c.AnsibleVault.PasswordFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read vault password file %s: %w", c.AnsibleVault.PasswordFile, err)
+		}
+		// Trim whitespace and newlines
+		return strings.TrimSpace(string(password)), nil
+	}
+
+	// Try identity files
+	if c.AnsibleVault.Identity != "" {
+		identities := strings.Split(c.AnsibleVault.Identity, ":")
+		for _, identityPath := range identities {
+			identityPath = strings.TrimSpace(identityPath)
+			if identityPath == "" {
+				continue
+			}
+
+			// Try to read the identity file
+			if data, err := os.ReadFile(identityPath); err == nil {
+				// For now, assume identity files contain the password directly
+				// In a full implementation, this would handle different identity file formats
+				return strings.TrimSpace(string(data)), nil
+			}
+		}
+	}
+
+	// Try interactive prompt if enabled
+	if c.AnsibleVault.AskVaultPass {
+		// For now, return an error indicating interactive mode is not implemented
+		// In a full implementation, this would prompt the user for input
+		return "", fmt.Errorf("interactive vault password prompt not implemented yet")
+	}
+
+	// No password found
+	return "", nil
 }
 
 // Load loads configuration from files and environment variables
@@ -169,6 +250,13 @@ func Load(configPaths ...string) (*Config, error) {
 		return nil, fmt.Errorf("invalid executor %q. Valid executors are: %s",
 			config.Executor, strings.Join(ValidExecutors, ", "))
 	}
+
+	// Resolve vault password
+	password, err := config.ResolveVaultPassword()
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve vault password: %w", err)
+	}
+	config.AnsibleVaultPassword = password
 
 	return &config, nil
 }
@@ -236,6 +324,16 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("ssh.auth.identities_only", false)
 	v.SetDefault("ssh.auth.password_prompt", "")
 	v.SetDefault("ssh.auth.agent_forwarding", false)
+
+	// AnsibleVault defaults
+	v.SetDefault("ansible_vault.password_file", "")
+	v.SetDefault("ansible_vault.identity", "")
+	v.SetDefault("ansible_vault.password_prompt", "")
+	v.SetDefault("ansible_vault.ask_vault_pass", false)
+	v.SetDefault("ansible_vault.ask_vault_pass_on_diff", false)
+	v.SetDefault("ansible_vault.timeout", 30)
+	v.SetDefault("ansible_vault.retry_count", 3)
+	v.SetDefault("ansible_vault.retry_delay", 5)
 
 	// Daemon defaults
 	v.SetDefault("daemon.enabled", false) // Default to disabled

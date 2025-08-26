@@ -79,13 +79,13 @@ func ExecuteGraphWithLimit(executor GraphExecutor, graph *Graph, inventoryFile s
 
 	if inventoryFile != "" {
 		// Explicit inventory file provided
-		inventory, err = LoadInventoryWithLimit(inventoryFile, limitPattern)
+		inventory, err = LoadInventoryWithLimit(inventoryFile, limitPattern, cfg)
 	} else if cfg != nil && cfg.Inventory != "" {
 		// No explicit inventory file but inventory paths configured
-		inventory, err = LoadInventoryWithPaths("", cfg.Inventory, ".", limitPattern)
+		inventory, err = LoadInventoryWithPaths("", cfg.Inventory, ".", limitPattern, cfg)
 	} else {
 		// No inventory file and no inventory paths, fall back to default
-		inventory, err = LoadInventoryWithLimit("", limitPattern)
+		inventory, err = LoadInventoryWithLimit("", limitPattern, cfg)
 	}
 
 	if err != nil {
