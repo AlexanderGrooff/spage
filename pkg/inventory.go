@@ -1004,7 +1004,27 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 	}
 
 	// Load host variables using same directory resolution as group_vars
-	hostVars, err := loadHostVars(inventoryDir, vaultPassword)
+	// We'll use the same directory resolution logic as group_vars
+	var hostVarsDir string
+	if _, err := os.Stat(filepath.Join(playbooksDir, "host_vars")); err == nil {
+		// host_vars directory exists in playbooks subdirectory
+		hostVarsDir = playbooksDir
+	} else {
+		// Fall back to inventory directory
+		hostVarsDir = inventoryDir
+	}
+
+	// Also check if host_vars exists directly in the inventory directory
+	if _, err := os.Stat(filepath.Join(inventoryDir, "host_vars")); err == nil {
+		hostVarsDir = inventoryDir
+	}
+
+	common.LogDebug("Attempting to load host_vars", map[string]interface{}{
+		"inventory_dir": inventoryDir,
+		"host_vars_dir": hostVarsDir,
+	})
+
+	hostVars, err := loadHostVars(hostVarsDir, vaultPassword)
 	if err != nil {
 		common.LogWarn("Failed to load host variables", map[string]interface{}{
 			"directory": inventoryDir,
