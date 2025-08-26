@@ -923,10 +923,6 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 			"error":     err.Error(),
 		})
 	} else if len(groupVars) > 0 {
-		common.LogDebug("Loaded group variables", map[string]interface{}{
-			"group_vars": groupVars,
-		})
-
 		// Merge 'all' group vars into the existing 'all' group (no host-by-host special-casing)
 		if allGroupVars, exists := groupVars["all"]; exists {
 			// Decrypt 'all' group variables if vault password is provided
@@ -954,11 +950,6 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 					Vars:  allGroupVars,
 				}
 			}
-
-			common.LogDebug("Merged 'all' group_vars into 'all' group", map[string]interface{}{
-				"vars_count":     len(allGroupVars),
-				"all_group_vars": allGroupVars,
-			})
 		}
 
 		// Decrypt group variables if vault password is provided
@@ -986,19 +977,11 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 					group.Vars = make(map[string]interface{})
 				}
 				maps.Copy(group.Vars, vars)
-				common.LogDebug("Applied group_vars to existing group", map[string]interface{}{
-					"group":      groupName,
-					"vars_count": len(vars),
-				})
 			} else {
 				mergedInventory.Groups[groupName] = &Group{
 					Hosts: make(map[string]*Host),
 					Vars:  vars,
 				}
-				common.LogDebug("Created new group from group_vars", map[string]interface{}{
-					"group":      groupName,
-					"vars_count": len(vars),
-				})
 			}
 		}
 	}
@@ -1072,24 +1055,12 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 		}
 	}
 
-	common.LogDebug("Merged inventory files with group_vars and host_vars", map[string]interface{}{
-		"total_files":  len(filesToLoad),
-		"total_hosts":  len(mergedInventory.Hosts),
-		"total_groups": len(mergedInventory.Groups),
-	})
-
 	// Apply host limiting if specified
 	if limitPattern != "" {
-		common.LogInfo("Applying host limit pattern", map[string]interface{}{
-			"pattern": limitPattern,
-		})
 		mergedInventory = filterInventoryByLimit(mergedInventory, limitPattern)
 		if len(mergedInventory.Hosts) == 0 {
 			return nil, fmt.Errorf("no hosts matched limit pattern: %s", limitPattern)
 		}
-		common.LogInfo("Filtered inventory", map[string]interface{}{
-			"matched_hosts": len(mergedInventory.Hosts),
-		})
 	}
 
 	// Ensure 'all' group contains all hosts, and all hosts have 'all' group
@@ -1119,14 +1090,6 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 	for _, host := range mergedInventory.Hosts {
 		host.Groups["all"] = "all"
 		host.Vars = mergedInventory.GetInitialFactsForHost(host)
-	}
-
-	for _, host := range mergedInventory.Hosts {
-		common.LogDebug("Inventory for host", map[string]interface{}{
-			"host":   host.Name,
-			"vars":   fmt.Sprintf("%+v", host.Vars),
-			"groups": fmt.Sprintf("%+v", host.Groups),
-		})
 	}
 
 	return mergedInventory, nil

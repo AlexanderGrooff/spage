@@ -160,7 +160,7 @@ func (m *Manager) createSSHConfig(host string, hostVars map[string]interface{}) 
 				"error": err.Error(),
 			})
 		} else {
-			common.LogInfo("Server supports authentication methods", map[string]interface{}{
+			common.LogDebug("Server supports authentication methods", map[string]interface{}{
 				"host":              host,
 				"methods":           supportedMethods,
 				"supports_password": contains(supportedMethods, "password"),
@@ -169,15 +169,6 @@ func (m *Manager) createSSHConfig(host string, hostVars map[string]interface{}) 
 	} else {
 		common.LogDebug("Skipping server auth method detection because jump host is explicitly 'none'", map[string]interface{}{"host": host})
 	}
-
-	// Log the final authentication methods for debugging
-	common.LogInfo("SSH config created with authentication methods", map[string]interface{}{
-		"host":               host,
-		"user":               currentUser.Username,
-		"auth_methods_count": len(authMethods),
-		"has_password_auth":  m.cfg != nil && m.cfg.SSH.UsePasswordFallback,
-		"timeout":            config.Timeout,
-	})
 
 	return config, nil
 }
@@ -189,7 +180,7 @@ func (m *Manager) buildAuthMethods(host string, hostVars map[string]interface{},
 	// Skip server method detection if jump_host is "none" to avoid interference
 	var supportedMethods []string
 	if m.cfg != nil && m.cfg.SSH.JumpHost == "none" {
-		common.LogInfo("Jump host disabled with 'none', skipping server auth method detection to allow normal SSH flow", map[string]interface{}{
+		common.LogDebug("Jump host disabled with 'none', skipping server auth method detection to allow normal SSH flow", map[string]interface{}{
 			"host": host,
 		})
 		supportedMethods = nil
@@ -204,7 +195,7 @@ func (m *Manager) buildAuthMethods(host string, hostVars map[string]interface{},
 			})
 			supportedMethods = nil
 		} else {
-			common.LogInfo("Server supports authentication methods", map[string]interface{}{
+			common.LogDebug("Server supports authentication methods", map[string]interface{}{
 				"host":              host,
 				"methods":           supportedMethods,
 				"supports_password": contains(supportedMethods, "password"),
@@ -284,12 +275,6 @@ func (m *Manager) buildAuthMethods(host string, hostVars map[string]interface{},
 		return nil, fmt.Errorf("no SSH authentication methods available for host %s", host)
 	}
 
-	common.LogInfo("SSH authentication methods configured", map[string]interface{}{
-		"host":               host,
-		"methods_count":      len(authMethods),
-		"configured_methods": methods,
-	})
-
 	return authMethods, nil
 }
 
@@ -357,11 +342,6 @@ func (m *Manager) loadPrivateKeyFile(keyPath, host string) ssh.AuthMethod {
 		})
 		return nil
 	}
-
-	common.LogDebug("Loaded SSH private key", map[string]interface{}{
-		"host":     host,
-		"key_path": keyPath,
-	})
 
 	return ssh.PublicKeys(signer)
 }
@@ -461,11 +441,6 @@ func (m *Manager) buildHostKeyCallback(host string) ssh.HostKeyCallback {
 
 // promptForPassword prompts the user for a password for the given host
 func promptForPassword(host string) (string, error) {
-	common.LogInfo("Password prompt function called", map[string]interface{}{
-		"host":     host,
-		"terminal": term.IsTerminal(int(syscall.Stdin)),
-	})
-
 	// Check if we're running in a non-interactive environment
 	if !term.IsTerminal(int(syscall.Stdin)) {
 		return "", fmt.Errorf("password required but running in non-interactive mode for host %s", host)

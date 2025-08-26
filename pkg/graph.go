@@ -239,7 +239,6 @@ func NewGraphFromFile(playbookPath string, rolesPaths string) (Graph, error) {
 	attributes, err := ParsePlayAttributes(processedNodes)
 	if err != nil {
 		// We allow the graph to not have a root
-		common.LogDebug("No root block found in playbook, using empty attributes", map[string]interface{}{"playbook": absPlaybookPath})
 		attributes = make(map[string]interface{})
 	}
 	tasks, err := TextToGraphNodes(processedNodes)
@@ -251,7 +250,6 @@ func NewGraphFromFile(playbookPath string, rolesPaths string) (Graph, error) {
 	if err != nil {
 		return Graph{}, fmt.Errorf("failed to generate graph: %w", err)
 	}
-	common.LogDebug("NewGraph generated graph.", map[string]interface{}{"graph": graph.String()})
 	return graph, nil
 }
 
@@ -291,7 +289,6 @@ func NewGraphFromFS(sourceFS fs.FS, playbookPath string, rolesPaths string) (Gra
 
 	attributes, err := ParsePlayAttributes(processedNodes)
 	if err != nil {
-		common.LogDebug("No root block found in playbook, using empty attributes", map[string]interface{}{"playbook": playbookPath})
 		attributes = make(map[string]interface{})
 	}
 	// Parse YAML nodes into tasks
@@ -305,7 +302,6 @@ func NewGraphFromFS(sourceFS fs.FS, playbookPath string, rolesPaths string) (Gra
 	if err != nil {
 		return Graph{}, fmt.Errorf("failed to generate graph: %w", err)
 	}
-	common.LogDebug("NewGraphFromFS generated graph.", map[string]interface{}{"graph": graph.String()})
 	return graph, nil
 }
 
@@ -439,7 +435,6 @@ func GetVariableUsage(task Task) ([]string, error) {
 }
 
 func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playbookPath string) (Graph, error) {
-	common.LogDebug("NewGraph received nodes.", map[string]interface{}{"count": len(nodes), "attributes": graphAttributes}) // Log input count
 	if graphAttributes["vars"] == nil {
 		graphAttributes["vars"] = make(map[string]interface{})
 	}
@@ -570,12 +565,10 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 	}
 
 	// Get required inputs from graph attributes
-	for k, v := range graphAttributes["vars"].(map[string]interface{}) {
+	for _, v := range graphAttributes["vars"].(map[string]interface{}) {
 		vStr, ok := v.(string)
 		if !ok {
-			common.LogDebug("failed to get variable usage from template", map[string]interface{}{
-				"error": fmt.Errorf("expected %s to be a string, got %T", k, v),
-			})
+			// It's not a string, so it's not a variable
 			continue
 		}
 		varsUsage := GetVariableUsageFromTemplate(vStr)
@@ -752,7 +745,6 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 		})
 	}
 
-	common.LogDebug("NewGraph finished building.", map[string]interface{}{"graph": g.String()}) // Log final graph string
 	return g, nil
 }
 
