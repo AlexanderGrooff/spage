@@ -773,13 +773,17 @@ func HandleResult(r *TaskResult, t Task, c *Closure) TaskResult {
 	}
 
 	if r.Status != TaskStatusFailed {
-		if !t.ChangedWhen.IsEmpty() && t.ChangedWhen.IsTruthy(c) {
-			r.Status = TaskStatusChanged
-			r.Changed = true
-		} else {
-			r.Status = TaskStatusOk
-			r.Changed = false
+		if !t.ChangedWhen.IsEmpty() {
+			// Only override the module's Changed() result when changed_when is explicitly set
+			if t.ChangedWhen.IsTruthy(c) {
+				r.Status = TaskStatusChanged
+				r.Changed = true
+			} else {
+				r.Status = TaskStatusOk
+				r.Changed = false
+			}
 		}
+		// If changed_when is empty, keep the module's original Changed() result
 	}
 
 	// Notify handlers if the task changed and has notify field
