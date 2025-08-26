@@ -789,16 +789,17 @@ func checkCycle(taskName string, dependsOn map[string][]string, visited, recStac
 }
 
 func (g Graph) CheckForRequiredInputs(hostContexts map[string]*HostContext) error {
-	common.DebugOutput("Checking host contexts for required inputs")
-	for hostname, hostContext := range hostContexts {
+	missingInputs := []string{}
+	for _, hostContext := range hostContexts {
 		for _, input := range g.RequiredInputs {
-			common.DebugOutput("Checking if required input %q is present in host context for host %q", input, hostname)
-
 			// All other required inputs should be present in the inventory
 			if _, ok := hostContext.Facts.Load(input); !ok {
-				return fmt.Errorf("required input %q not found in host context for host %q", input, hostname)
+				missingInputs = append(missingInputs, input)
 			}
 		}
+	}
+	if len(missingInputs) > 0 {
+		return fmt.Errorf("required inputs %v not found in host contexts", missingInputs)
 	}
 	return nil
 }
