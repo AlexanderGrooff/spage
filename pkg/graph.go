@@ -348,19 +348,10 @@ func GetVariableUsage(task Task) ([]string, error) {
 			continue
 		}
 
-		// TODO: shit implementation until I implement types for Jinja strings/expressions
-		isJinjaExpr := fieldName == "When" || fieldName == "FailedWhen" || fieldName == "ChangedWhen" || fieldName == "Until"
-
 		if field.Kind() == reflect.String {
 			str := field.String()
 			if str != "" {
-				var vars []string
-				if isJinjaExpr {
-					vars, _ = jinja.ParseVariablesFromExpression(str)
-				} else {
-					vars = GetVariableUsageFromTemplate(str)
-				}
-				varsUsage = append(varsUsage, vars...)
+				varsUsage = append(varsUsage, GetVariableUsageFromTemplate(str)...)
 			}
 			continue
 		}
@@ -369,13 +360,7 @@ func GetVariableUsage(task Task) ([]string, error) {
 			for j := 0; j < field.Len(); j++ {
 				str := field.Index(j).String()
 				if str != "" {
-					var vars []string
-					if isJinjaExpr {
-						vars, _ = jinja.ParseVariablesFromExpression(str)
-					} else {
-						vars = GetVariableUsageFromTemplate(str)
-					}
-					varsUsage = append(varsUsage, vars...)
+					varsUsage = append(varsUsage, GetVariableUsageFromTemplate(str)...)
 				}
 			}
 			continue
@@ -385,39 +370,41 @@ func GetVariableUsage(task Task) ([]string, error) {
 			val := field.Interface()
 			switch v := val.(type) {
 			case string:
-				var vars []string
-				if isJinjaExpr {
-					vars, _ = jinja.ParseVariablesFromExpression(v)
-				} else {
-					vars = GetVariableUsageFromTemplate(v)
-				}
-				varsUsage = append(varsUsage, vars...)
+				varsUsage = append(varsUsage, GetVariableUsageFromTemplate(v)...)
 			case []interface{}:
 				for _, item := range v {
 					if s, ok := item.(string); ok {
-						var vars []string
-						if isJinjaExpr {
-							vars, _ = jinja.ParseVariablesFromExpression(s)
-						} else {
-							vars = GetVariableUsageFromTemplate(s)
-						}
-						varsUsage = append(varsUsage, vars...)
+						varsUsage = append(varsUsage, GetVariableUsageFromTemplate(s)...)
 					}
 				}
 			case map[string]interface{}:
 				for _, vv := range v {
 					if s, ok := vv.(string); ok {
-						var vars []string
-						if isJinjaExpr {
-							vars, _ = jinja.ParseVariablesFromExpression(s)
-						} else {
-							vars = GetVariableUsageFromTemplate(s)
-						}
-						varsUsage = append(varsUsage, vars...)
+						varsUsage = append(varsUsage, GetVariableUsageFromTemplate(s)...)
 					}
 				}
 			}
 			continue
+		}
+
+		// Explicitly handle Jinja expression types on the Task struct
+		if field.CanInterface() {
+			switch v := field.Interface().(type) {
+			case JinjaExpression:
+				if v.Expression != "" {
+					vars, _ := jinja.ParseVariablesFromExpression(v.Expression)
+					varsUsage = append(varsUsage, vars...)
+				}
+				continue
+			case JinjaExpressionList:
+				for _, expr := range v {
+					if expr.Expression != "" {
+						vars, _ := jinja.ParseVariablesFromExpression(expr.Expression)
+						varsUsage = append(varsUsage, vars...)
+					}
+				}
+				continue
+			}
 		}
 	}
 
@@ -478,22 +465,22 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 	}
 
 	// 2. Build dependencies based on flattened tasks
-	for _, n := range taskIdMapping {
-		common.DebugOutput("Processing node TaskNode %q %q: %+v", n.Name, n.Module, n.Params)
+	for _, t := range taskIdMapping {
+		common.DebugOutput("Processing node TaskNode %q %q: %+v", t.Name, t.Module, t.Params)
 		// Check if n.Params.Actual is nil, as n.Params is a struct and cannot be nil itself.
-		if n.Params.Actual == nil {
-			common.DebugOutput("Task %q has no actual params, skipping dependency analysis for params", n.Name)
+		if t.Params.Actual == nil {
+			common.DebugOutput("Task %q has no actual params, skipping dependency analysis for params", t.Name)
 			// Continue processing other dependencies like before/after
 		} else {
-			vars, err := GetVariableUsage(n)
+			vars, err := GetVariableUsage(t)
 			if err != nil {
-				return Graph{}, fmt.Errorf("error getting variable usage for task %q: %w", n.Name, err)
+				return Graph{}, fmt.Errorf("error getting variable usage for task %q: %w", t.Name, err)
 			}
 
 			// Filter out variables that are provided by task-level vars
 			filteredVars := []string{}
-			if n.Vars != nil {
-				if varsMap, ok := n.Vars.(map[string]interface{}); ok {
+			if t.Vars != nil {
+				if varsMap, ok := t.Vars.(map[string]interface{}); ok {
 					taskVarNames := make(map[string]bool)
 					for varName := range varsMap {
 						taskVarNames[varName] = true
@@ -513,30 +500,30 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 				filteredVars = vars
 			}
 
-			dependsOnVariables[n.Name] = filteredVars
+			dependsOnVariables[t.Name] = filteredVars
 		}
 
-		if n.Before != "" {
+		if t.Before != "" {
 			// Task 'n' must run *before* task 'n.Before'
 			// So, 'n.Before' depends on 'n'
-			dependsOn[n.Before] = append(dependsOn[n.Before], n.Name)
+			dependsOn[t.Before] = append(dependsOn[t.Before], t.Name)
 		}
-		if n.After != "" {
+		if t.After != "" {
 			// Task 'n' must run *after* task 'n.After'
 			// So, 'n' depends on 'n.After'
-			dependsOn[n.Name] = append(dependsOn[n.Name], n.After)
+			dependsOn[t.Name] = append(dependsOn[t.Name], t.After)
 		}
-		if n.Register != "" {
-			variableProvidedBy[strings.ToLower(n.Register)] = n.Name
+		if t.Register != "" {
+			variableProvidedBy[strings.ToLower(t.Register)] = t.Name
 		}
 
 		// Check if the module's parameters inherently provide variables (like set_fact)
 		// Ensure n.Params.Actual is not nil before accessing its methods.
-		if n.Params.Actual != nil {
-			providedVars := n.Params.Actual.ProvidesVariables()
+		if t.Params.Actual != nil {
+			providedVars := t.Params.Actual.ProvidesVariables()
 			for _, providedVar := range providedVars {
 				// TODO: Consider case sensitivity/normalization if needed (Ansible usually lowercases)
-				variableProvidedBy[providedVar] = n.Name
+				variableProvidedBy[providedVar] = t.Name
 			}
 		}
 	}

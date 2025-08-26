@@ -50,7 +50,10 @@ func (i AssertInput) ToCode() string {
 func (i AssertInput) GetVariableUsage() []string {
 	var vars []string
 	for _, assertion := range i.That {
-		vars = append(vars, pkg.GetVariablesFromExpression(assertion)...)
+		newVars, err := jinja.ParseVariablesFromExpression(assertion)
+		if err == nil {
+			vars = append(vars, newVars...)
+		}
 	}
 	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.Msg)...)
 	return vars

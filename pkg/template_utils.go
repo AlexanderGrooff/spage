@@ -10,6 +10,18 @@ import (
 	"github.com/AlexanderGrooff/jinja-go"
 )
 
+// isDefaultOmitPattern returns true if the template string uses the default(omit) pattern anywhere.
+// This allows treating variables inside such expressions as optional (no graph dependency).
+func isDefaultOmitPattern(s string) bool {
+	// quick contains checks before more costly parsing
+	if !strings.Contains(s, "default") {
+		return false
+	}
+	// Heuristic: any occurrence of "default(" or "| default(" indicates omit default usage
+	ls := strings.ToLower(s)
+	return strings.Contains(ls, "| default(") || strings.Contains(ls, "|default(")
+}
+
 type JinjaExpression struct {
 	Expression string
 }
@@ -171,6 +183,19 @@ func ProcessRecursive(originalVal reflect.Value, closure *Closure) (reflect.Valu
 	switch originalVal.Kind() {
 	case reflect.String:
 		origStr := originalVal.String()
+
+		// Use jinja.TryEvaluateSingleExpressionTemplate to detect a single-expression
+		// template and obtain a typed value (including jinja.OmitType) without
+		// relying on string prefix/suffix heuristics.
+		if closure != nil {
+			val, isSingle, _, err := jinja.TryEvaluateSingleExpressionTemplate(origStr, closure.GetFacts())
+			if err == nil && isSingle {
+				if _, isOmit := val.(jinja.OmitType); isOmit {
+					// Return invalid reflect.Value to signal omission of this field
+					return reflect.Value{}, nil
+				}
+			}
+		}
 
 		maxIterations := 10 // To prevent infinite loops
 		for i := 0; i < maxIterations; i++ {
@@ -400,30 +425,30 @@ func GetVariableUsageFromModule(input ConcreteModuleInputProvider) ([]string, er
 
 // JinjaStringToStringList Evaluate string list "['abc', 'def']" into Golang []string{"abc", "def"}
 func JinjaStringToStringList(jinjaStr string) ([]string, error) {
-    // Evaluate strings into Golang
-    literalRepo, err := jinja.EvaluateExpression(jinjaStr, nil)
-    if err != nil {
-        // Tolerate trailing commas inside list literals: ["a", "b", ]
-        sanitized := strings.ReplaceAll(jinjaStr, ", ]", "]")
-        sanitized = strings.ReplaceAll(sanitized, ",]", "]")
-        literalRepo, err = jinja.EvaluateExpression(sanitized, nil)
-    }
-    if err == nil {
-        switch literalRepo := literalRepo.(type) {
-        case []string:
-            return literalRepo, nil
-        case []interface{}:
-            var result []string
-            for _, repo := range literalRepo {
-                repoStr, ok := repo.(string)
-                if ok {
-                    result = append(result, repoStr)
-                }
-            }
-            return result, nil
-        }
-    }
-    return nil, fmt.Errorf("failed to evaluate Jinja string %q into a string list", jinjaStr)
+	// Evaluate strings into Golang
+	literalRepo, err := jinja.EvaluateExpression(jinjaStr, nil)
+	if err != nil {
+		// Tolerate trailing commas inside list literals: ["a", "b", ]
+		sanitized := strings.ReplaceAll(jinjaStr, ", ]", "]")
+		sanitized = strings.ReplaceAll(sanitized, ",]", "]")
+		literalRepo, err = jinja.EvaluateExpression(sanitized, nil)
+	}
+	if err == nil {
+		switch literalRepo := literalRepo.(type) {
+		case []string:
+			return literalRepo, nil
+		case []interface{}:
+			var result []string
+			for _, repo := range literalRepo {
+				repoStr, ok := repo.(string)
+				if ok {
+					result = append(result, repoStr)
+				}
+			}
+			return result, nil
+		}
+	}
+	return nil, fmt.Errorf("failed to evaluate Jinja string %q into a string list", jinjaStr)
 }
 
 // extractVariablesFromValue recursively extracts variables from a reflect.Value
@@ -440,6 +465,11 @@ func extractVariablesFromValue(val reflect.Value) ([]string, error) {
 	case reflect.String:
 		str := val.String()
 		if str != "" {
+			// If this string uses a default(omit) pattern, treat referenced variables as optional
+			// and do not require producers in the graph. We skip variable extraction to avoid enforcing deps.
+			if isDefaultOmitPattern(str) {
+				return vars, nil
+			}
 			templateVars, err := jinja.ParseVariables(str)
 			if err != nil {
 				// If parsing fails, fall back to the existing regex-based approach

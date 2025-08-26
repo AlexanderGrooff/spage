@@ -408,13 +408,6 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	var daemonClient *daemon.Client
 	if client, ok := closure.Config.GetDaemonReporting().(*daemon.Client); ok {
 		daemonClient = client
-	} else {
-		common.LogInfo("No daemon client found", map[string]interface{}{
-			"task":          t.Name,
-			"host":          closure.HostContext.Host.Name,
-			"client":        client,
-			"config_client": closure.Config.GetDaemonReporting(),
-		})
 	}
 	_ = ReportTaskStart(daemonClient, t.Id, t.Name, closure.HostContext.Host.Name, 0)
 

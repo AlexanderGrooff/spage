@@ -5,9 +5,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
-	"slices"
-	"strings"
 	"sync"
 
 	"github.com/AlexanderGrooff/jinja-go"
@@ -285,38 +282,6 @@ func TemplateString(s string, closure *Closure) (string, error) {
 		common.DebugOutput("Templated %q into %q with facts: %v", s, res, context)
 	}
 	return res, nil
-}
-
-var jinjaKeywords = []string{"if", "for", "while", "with", "else", "elif", "endfor", "endwhile", "endwith", "endif", "not", "in", "is"}
-
-func GetVariablesFromExpression(jinjaString string) []string {
-	// TODO: this parses the string within jinja brackets. Add the rest of the Jinja grammar
-	// This really is not sufficient, but it's a start. It doesn't cover things like:
-	// - "string" in var
-	// - 'string' in var
-	filterApplication := regexp.MustCompile(`([\w_]+) \| (.+)`)
-	attributeVariable := regexp.MustCompile(`([\w_]+)\.(.+)`)
-
-	var vars []string
-	if filterApplication.MatchString(jinjaString) {
-		for _, match := range filterApplication.FindAllStringSubmatch(jinjaString, -1) {
-			jinjaVar := strings.TrimSpace(match[1])
-			if jinjaVar != "" && !slices.Contains(jinjaKeywords, jinjaVar) {
-				vars = append(vars, GetVariablesFromExpression(jinjaVar)...)
-			}
-		}
-		return vars
-	}
-	if attributeVariable.MatchString(jinjaString) {
-		for _, match := range attributeVariable.FindAllStringSubmatch(jinjaString, -1) {
-			jinjaVar := strings.TrimSpace(match[1])
-			if jinjaVar != "" && !slices.Contains(jinjaKeywords, jinjaVar) {
-				vars = append(vars, GetVariablesFromExpression(jinjaVar)...)
-			}
-		}
-		return vars
-	}
-	return append(vars, jinjaString)
 }
 
 func GetVariableUsageFromTemplate(s string) []string {

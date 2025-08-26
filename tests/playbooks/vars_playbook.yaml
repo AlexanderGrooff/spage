@@ -91,9 +91,7 @@
 
     # Test 12: Default values (use empty variable)
     - name: Test default values for undefined variables
-      shell: echo "{{ empty_var | default('default value') }}" > /tmp/spage/default_test.txt
-      vars:
-        empty_var: ""
+      shell: echo "{{ undefined_var | default('default value') }}" > /tmp/spage/default_test.txt
 
     # Test 13: Variable precedence test - task vars should override play vars
     - name: Verify task variable precedence

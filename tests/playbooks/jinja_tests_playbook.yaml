@@ -35,3 +35,14 @@
           - list_1 == [1, 2, 3]
           - list_2 == [4, 5, 6]
           - list_1 + list_2 == [1, 2, 3, 4, 5, 6]
+
+    - name: test omit behaviour
+      shell:
+        execute: "{{ undefined_var | default(omit) }}"
+        revert: echo 'only revert'
+      register: result
+
+    - name: assert omit behaviour
+      assert:
+        that:
+          - result.stdout == ""
