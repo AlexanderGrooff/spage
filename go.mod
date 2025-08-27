@@ -5,14 +5,14 @@ go 1.23.3
 toolchain go1.23.8
 
 require (
-	github.com/spf13/cobra v1.2.1
+	github.com/spf13/cobra v1.9.1
 	golang.org/x/crypto v0.41.0
 )
 
 require (
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
-	github.com/inconshreveable/mousetrap v1.0.0 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/sagikazarmark/locafero v0.7.0 // indirect
 	github.com/sourcegraph/conc v0.3.0 // indirect
