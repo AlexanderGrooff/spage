@@ -30,7 +30,7 @@ require (
 	github.com/AlexanderGrooff/jinja-go v0.3.0
 	github.com/AlexanderGrooff/spage-protobuf v0.1.1
 	github.com/desops/sshpool v0.0.9
-	github.com/google/go-cmp v0.6.0
+	github.com/google/go-cmp v0.7.0
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/google/uuid v1.6.0
 	github.com/pkg/sftp v1.13.9
