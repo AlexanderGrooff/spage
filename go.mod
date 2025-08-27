@@ -27,7 +27,7 @@ require (
 )
 
 require (
-	github.com/AlexanderGrooff/jinja-go v0.3.0
+	github.com/AlexanderGrooff/jinja-go v0.3.1
 	github.com/AlexanderGrooff/spage-protobuf v0.1.1
 	github.com/desops/sshpool v0.0.9
 	github.com/google/go-cmp v0.7.0
