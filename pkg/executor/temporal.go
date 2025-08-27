@@ -917,6 +917,7 @@ func (e *TemporalGraphExecutor) executeRunOnceWithAllLoops(
 	task pkg.Task,
 	closures []*pkg.Closure,
 	hostContexts map[string]*pkg.HostContext,
+	workflowHostFacts map[string]map[string]interface{},
 	cfg *config.Config,
 	handlers []pkg.Task, // Add handlers parameter
 ) []pkg.TaskResult {
@@ -1044,6 +1045,95 @@ func (e *TemporalGraphExecutor) executeRunOnceWithAllLoops(
 		allResults = append(allResults, loopResults...)
 	}
 
+	// Propagate the aggregated facts to all hosts if task.Register is set
+	// This mirrors the behavior in the Local executor
+	if task.Register != "" && len(activityResult.LoopResults) > 0 {
+		// Use the RegisteredVars from the activity results
+		var registeredValue interface{}
+
+		// Check if any loop result has the registered variable
+		for _, loopResult := range activityResult.LoopResults {
+			if registeredVar, exists := loopResult.RegisteredVars[task.Register]; exists {
+				registeredValue = registeredVar
+				break
+			}
+		}
+
+		// If no registered variable found in RegisteredVars, fall back to creating one from ModuleOutputMap
+		if registeredValue == nil {
+			for _, loopResult := range activityResult.LoopResults {
+				if loopResult.Error == "" || loopResult.Ignored {
+					// Create a map with the loop results
+					if len(activityResult.LoopResults) > 1 {
+						// Multiple loop items - create a results array
+						var results []map[string]interface{}
+						for _, lr := range activityResult.LoopResults {
+							resultMap := map[string]interface{}{
+								"failed":  lr.Error != "" && !lr.Ignored,
+								"changed": lr.Changed,
+							}
+							if lr.ModuleOutputMap != nil {
+								for k, v := range lr.ModuleOutputMap {
+									resultMap[k] = v
+								}
+							}
+							results = append(results, resultMap)
+						}
+						registeredValue = map[string]interface{}{
+							"results": results,
+							"changed": false, // Will be set below if any result changed
+							"failed":  false,
+						}
+						// Check if any result changed
+						for _, lr := range activityResult.LoopResults {
+							if lr.Changed {
+								if m, ok := registeredValue.(map[string]interface{}); ok {
+									m["changed"] = true
+								}
+								break
+							}
+						}
+					} else {
+						// Single result - use the module output map directly
+						if activityResult.LoopResults[0].ModuleOutputMap != nil {
+							registeredValue = activityResult.LoopResults[0].ModuleOutputMap
+							// Ensure consistent fields
+							if m, ok := registeredValue.(map[string]interface{}); ok {
+								m["failed"] = false
+								if _, present := m["changed"]; !present {
+									m["changed"] = activityResult.LoopResults[0].Changed
+								}
+							}
+						} else {
+							registeredValue = map[string]interface{}{
+								"failed":  false,
+								"changed": activityResult.LoopResults[0].Changed,
+							}
+						}
+					}
+					break
+				}
+			}
+		}
+
+		// Store the registered variable in all host contexts and workflow facts
+		if registeredValue != nil {
+			logger.Debug("Propagating run_once facts to all hosts", map[string]interface{}{
+				"task":     task.Name,
+				"variable": task.Register,
+			})
+			for hostName, hostCtx := range hostContexts {
+				hostCtx.Facts.Store(task.Register, registeredValue)
+				if workflowHostFacts != nil {
+					if _, ok := workflowHostFacts[hostName]; !ok {
+						workflowHostFacts[hostName] = make(map[string]interface{})
+					}
+					workflowHostFacts[hostName][task.Register] = registeredValue
+				}
+			}
+		}
+	}
+
 	return allResults
 }
 
@@ -1054,6 +1144,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 	resultsCh workflow.Channel,
 	errCh workflow.Channel,
 	cfg *config.Config,
+	workflowHostFacts map[string]map[string]interface{},
 ) {
 	logger := workflow.GetLogger(workflowCtx)
 
@@ -1083,6 +1174,14 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 	for _, taskDefinition := range tasksInLevel {
 		task := taskDefinition
 
+		logger.Debug("Processing task", map[string]interface{}{
+			"task":            task.Name,
+			"has_loop":        task.Loop != nil,
+			"run_once_empty":  task.RunOnce.IsEmpty(),
+			"run_once_truthy": task.RunOnce.IsTruthy(nil),
+			"run_once_expr":   task.RunOnce.Expression,
+		})
+
 		// Handle run_once tasks separately
 		// TODO: template the run_once condition with actual closure
 		if !task.RunOnce.IsEmpty() && task.RunOnce.IsTruthy(nil) {
@@ -1105,9 +1204,33 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 				return
 			}
 
-			if isParallelDispatch {
-				actualDispatchedTasks++ // We'll dispatch one execution but generate results for all hosts
-				workflow.Go(workflowCtx, func(childTaskCtx workflow.Context) {
+			if len(closures) == 0 {
+				// Empty loop, do nothing and continue to the next task.
+				continue
+			}
+
+			if len(closures) > 1 {
+				// Looped run_once: execute all loop iterations on the first host and collect results
+				if isParallelDispatch {
+					actualDispatchedTasks++ // We'll dispatch one execution but generate results for all hosts
+					workflow.Go(workflowCtx, func(childTaskCtx workflow.Context) {
+						// Get handlers from the first host context
+						var handlers []pkg.Task
+						if firstHostCtx.HandlerTracker != nil {
+							handlers = firstHostCtx.HandlerTracker.GetAllHandlers()
+						}
+
+						// Execute all loop iterations on the first host and collect results
+						allLoopResults := e.executeRunOnceWithAllLoops(childTaskCtx, task, closures, hostContexts, workflowHostFacts, cfg, handlers)
+
+						// Send results for all hosts
+						for _, result := range allLoopResults {
+							resultsCh.SendAsync(result)
+						}
+
+						completionCh.SendAsync(true)
+					})
+				} else {
 					// Get handlers from the first host context
 					var handlers []pkg.Task
 					if firstHostCtx.HandlerTracker != nil {
@@ -1115,28 +1238,120 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 					}
 
 					// Execute all loop iterations on the first host and collect results
-					allLoopResults := e.executeRunOnceWithAllLoops(childTaskCtx, task, closures, hostContexts, cfg, handlers)
+					allLoopResults := e.executeRunOnceWithAllLoops(workflowCtx, task, closures, hostContexts, workflowHostFacts, cfg, handlers)
 
 					// Send results for all hosts
 					for _, result := range allLoopResults {
 						resultsCh.SendAsync(result)
 					}
-
-					completionCh.SendAsync(true)
-				})
+				}
 			} else {
-				// Get handlers from the first host context
-				var handlers []pkg.Task
-				if firstHostCtx.HandlerTracker != nil {
-					handlers = firstHostCtx.HandlerTracker.GetAllHandlers()
+				// Single run_once (no loop or loop with one item)
+				closure := closures[0]
+
+				if task.DelegateTo != "" {
+					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure, cfg)
+					if err != nil {
+						errMsg := fmt.Errorf("failed to resolve delegate_to for run_once task '%s': %w", task.Name, err)
+						common.LogError("Delegate resolution error for run_once task", map[string]interface{}{
+							"error": errMsg,
+						})
+						errCh.SendAsync(errMsg)
+						return
+					}
+					if delegatedHostContext != nil {
+						closure.HostContext = delegatedHostContext
+					}
 				}
 
-				// Execute all loop iterations on the first host and collect results
-				allLoopResults := e.executeRunOnceWithAllLoops(workflowCtx, task, closures, hostContexts, cfg, handlers)
+				logger.Info("Executing single run_once task", map[string]interface{}{
+					"task":           task.Name,
+					"execution_host": closure.HostContext.Host.Name,
+				})
 
-				// Send results for all hosts
-				for _, result := range allLoopResults {
-					resultsCh.SendAsync(result)
+				if isParallelDispatch {
+					actualDispatchedTasks++
+					workflow.Go(workflowCtx, func(childTaskCtx workflow.Context) {
+						// Execute the single run_once task
+						taskResult := e.Runner.ExecuteTask(childTaskCtx, task, closure, cfg)
+
+						// Propagate the registered variable from the single run_once execution to all hosts
+						if task.Register != "" && taskResult.Output != nil {
+							value := pkg.ConvertOutputToFactsMap(taskResult.Output)
+							if m, ok := value.(map[string]interface{}); ok {
+								// Ensure consistent fields
+								m["failed"] = false
+								if _, present := m["changed"]; !present {
+									m["changed"] = taskResult.Status == pkg.TaskStatusChanged || taskResult.Changed
+								}
+								logger.Debug("Propagating run_once facts to all hosts (single execution)", map[string]interface{}{
+									"task":     task.Name,
+									"variable": task.Register,
+								})
+								for hostName, hc := range hostContexts {
+									hc.Facts.Store(task.Register, m)
+									if workflowHostFacts != nil {
+										if _, ok := workflowHostFacts[hostName]; !ok {
+											workflowHostFacts[hostName] = make(map[string]interface{})
+										}
+										workflowHostFacts[hostName][task.Register] = m
+									}
+								}
+							}
+						}
+
+						// Create results for all hosts
+						allResults := CreateRunOnceResultsForAllHosts(taskResult, hostContexts, closure.HostContext.Host.Name)
+						logger.Debug("Created run_once results for all hosts (parallel)", map[string]interface{}{
+							"task":           task.Name,
+							"num_results":    len(allResults),
+							"execution_host": closure.HostContext.Host.Name,
+						})
+						for _, result := range allResults {
+							resultsCh.SendAsync(result)
+						}
+
+						completionCh.SendAsync(true)
+					})
+				} else {
+					// Execute the single run_once task
+					taskResult := e.Runner.ExecuteTask(workflowCtx, task, closure, cfg)
+
+					// Propagate the registered variable from the single run_once execution to all hosts
+					if task.Register != "" && taskResult.Output != nil {
+						value := pkg.ConvertOutputToFactsMap(taskResult.Output)
+						if m, ok := value.(map[string]interface{}); ok {
+							// Ensure consistent fields
+							m["failed"] = false
+							if _, present := m["changed"]; !present {
+								m["changed"] = taskResult.Status == pkg.TaskStatusChanged || taskResult.Changed
+							}
+							logger.Debug("Propagating run_once facts to all hosts (single execution)", map[string]interface{}{
+								"task":     task.Name,
+								"variable": task.Register,
+							})
+							for hostName, hc := range hostContexts {
+								hc.Facts.Store(task.Register, m)
+								if workflowHostFacts != nil {
+									if _, ok := workflowHostFacts[hostName]; !ok {
+										workflowHostFacts[hostName] = make(map[string]interface{})
+									}
+									workflowHostFacts[hostName][task.Register] = m
+								}
+							}
+						}
+					}
+
+					// Create results for all hosts
+					allResults := CreateRunOnceResultsForAllHosts(taskResult, hostContexts, closure.HostContext.Host.Name)
+					logger.Debug("Created run_once results for all hosts", map[string]interface{}{
+						"task":           task.Name,
+						"num_results":    len(allResults),
+						"execution_host": closure.HostContext.Host.Name,
+					})
+					for _, result := range allResults {
+						resultsCh.SendAsync(result)
+					}
 				}
 			}
 
@@ -1304,7 +1519,7 @@ func (e *TemporalGraphExecutor) Execute(
 		errCh := workflow.NewChannel(e.Runner.WorkflowCtx)
 
 		workflow.Go(e.Runner.WorkflowCtx, func(ctx workflow.Context) {
-			e.loadLevelTasks(ctx, tasksInLevel, hostContexts, resultsCh, errCh, cfg)
+			e.loadLevelTasks(ctx, tasksInLevel, hostContexts, resultsCh, errCh, cfg, workflowHostFacts)
 		})
 
 		levelErrored, processedResultsThisLevel, errProcessingResults := e.processLevelResults(
