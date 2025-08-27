@@ -46,10 +46,10 @@ func (i TemplateInput) ToCode() string {
 func (i TemplateInput) GetVariableUsage() []string {
 	usedVars := []string{}
 	// TODO: what if the filename itself is templated? Then we cannot read the file until we have context
-	// Note: GetVariableUsage doesn't have access to closure/role context, so falls back to default template resolution
-	template, err := pkg.ReadTemplateFile(i.Src)
+	// Note: GetVariableUsage doesn't have access to closure/role context, so falls back to default templateContents resolution
+	templateContents, err := pkg.ReadTemplateFile(i.Src)
 	if err == nil {
-		usedVars = append(usedVars, pkg.GetVariableUsageFromTemplate(template)...)
+		usedVars = append(usedVars, pkg.GetVariableUsageFromTemplate(templateContents)...)
 	}
 	// Get variables from filenames
 	usedVars = append(usedVars, pkg.GetVariableUsageFromTemplate(i.Src)...)

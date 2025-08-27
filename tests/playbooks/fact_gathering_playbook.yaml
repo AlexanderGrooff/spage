@@ -19,3 +19,11 @@
     - name: Show ssh_host_pub_keys fact
       debug:
         msg: "{{ ssh_host_pub_keys }}"
+
+    - name: Show ansible_distribution
+      debug:
+        msg: "{{ ansible_distribution }}"
+
+    - name: Show ansible_distribution_major_version
+      debug:
+        msg: "{{ ansible_distribution_major_version }}"

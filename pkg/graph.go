@@ -21,11 +21,13 @@ var SpecialVars = []string{
 
 // Facts that can be gathered by the setup module
 var AllowedFacts = map[string]struct{}{
-	"platform":                 {},
-	"user":                     {},
-	"inventory_hostname":       {},
-	"ssh_host_pub_keys":        {},
-	"inventory_hostname_short": {},
+	"platform":                           {},
+	"user":                               {},
+	"inventory_hostname":                 {},
+	"ssh_host_pub_keys":                  {},
+	"inventory_hostname_short":           {},
+	"ansible_distribution":               {},
+	"ansible_distribution_major_version": {},
 }
 
 // GraphNode represents either a list of tasks or a nested graph

@@ -66,6 +66,21 @@ func (m SetupModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pk
 		return nil, fmt.Errorf("expected SetupInput, got %T", params)
 	}
 	facts := make(map[string]interface{})
+
+	// Precompute distribution facts once if needed
+	needsDistro := false
+	for _, f := range input.Facts {
+		if f == "ansible_distribution" || f == "ansible_distribution_major_version" {
+			needsDistro = true
+			break
+		}
+	}
+	var distroName string
+	var distroMajor string
+	if needsDistro {
+		distroName, distroMajor = m.getDistributionInfo(closure)
+	}
+
 	for _, fact := range input.Facts {
 		if _, allowed := pkg.AllowedFacts[fact]; !allowed {
 			continue // skip facts not in the allowed list
@@ -94,6 +109,10 @@ func (m SetupModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pk
 		case "ssh_host_pub_keys":
 			// Placeholder: implement SSH host pub key gathering if needed
 			factValue = nil
+		case "ansible_distribution":
+			factValue = distroName
+		case "ansible_distribution_major_version":
+			factValue = distroMajor
 		}
 
 		// Store the fact in the host context and in our return map
@@ -164,4 +183,45 @@ func (m SetupModule) ParameterAliases() map[string]string {
 
 func init() {
 	pkg.RegisterModule("setup", SetupModule{})
+}
+
+// getDistributionInfo returns distribution name and major version for local hosts.
+// It parses /etc/os-release.
+func (m SetupModule) getDistributionInfo(closure *pkg.Closure) (string, string) {
+	if !closure.HostContext.Host.IsLocal {
+		return "", ""
+	}
+	// TODO: username?
+	data, err := closure.HostContext.ReadFile("/etc/os-release", "")
+	if err != nil {
+		return "", ""
+	}
+	var name string
+	var versionID string
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "NAME=") {
+			name = trimOsReleaseValue(line[len("NAME="):])
+		} else if strings.HasPrefix(line, "VERSION_ID=") {
+			versionID = trimOsReleaseValue(line[len("VERSION_ID="):])
+		}
+	}
+	major := versionID
+	if idx := strings.Index(major, "."); idx != -1 {
+		major = major[:idx]
+	}
+	return name, major
+}
+
+func trimOsReleaseValue(v string) string {
+	if v == "" {
+		return v
+	}
+	if v[0] == '"' && v[len(v)-1] == '"' {
+		return v[1 : len(v)-1]
+	}
+	if v[0] == '\'' && v[len(v)-1] == '\'' {
+		return v[1 : len(v)-1]
+	}
+	return v
 }
