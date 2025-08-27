@@ -661,6 +661,9 @@ func LoadInventory(path string, cfg *config.Config) (*Inventory, error) {
 }
 
 func LoadInventoryWithLimit(path string, limitPattern string, cfg *config.Config) (*Inventory, error) {
+	if limitPattern == "" {
+		limitPattern = cfg.Limit
+	}
 	return LoadInventoryWithPaths(path, "", ".", limitPattern, cfg)
 }
 
@@ -1026,7 +1029,7 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 			}
 		}
 
-		// Apply host variables to existing hosts or create new ones
+		// Apply host variables only to existing hosts (align with Ansible behavior)
 		for hostName, vars := range hostVars {
 			if host, exists := mergedInventory.Hosts[hostName]; exists {
 				// Host already exists, merge variables (host_vars take precedence)
@@ -1039,15 +1042,8 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 					"vars_count": len(vars),
 				})
 			} else {
-				// Create new host with variables
-				newHost := &Host{
-					Name: hostName,
-					Host: hostName, // Default host connection to hostname
-					Vars: vars,
-				}
-				newHost.Prepare()
-				mergedInventory.Hosts[hostName] = newHost
-				common.LogDebug("Created new host from host_vars", map[string]interface{}{
+				// Do not create new hosts from host_vars
+				common.LogDebug("Ignoring host_vars for unknown host (no creation)", map[string]interface{}{
 					"host":       hostName,
 					"vars_count": len(vars),
 				})

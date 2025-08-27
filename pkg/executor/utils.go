@@ -258,6 +258,15 @@ func CreateRunOnceResultsForAllHosts(originalResult pkg.TaskResult, hostContexts
 			}
 		}
 
+		// For non-execution hosts, mark as skipped to reflect run_once semantics
+		if hostCtx.Host != nil && hostCtx.Host.Name != executionHostName {
+			result.Status = pkg.TaskStatusSkipped
+			result.Changed = false
+			result.Failed = false
+			// Preserve Error only for execution host
+			result.Error = nil
+		}
+
 		results = append(results, result)
 	}
 
@@ -687,11 +696,12 @@ func SharedProcessLevelResults(
 		if processor.ProcessTaskResult(result, recapStats, executionHistoryLevel) {
 			levelHardErrored = true
 
-			// In sequential mode, stop processing further results
+			// In sequential mode, mark as failed but continue collecting results from other hosts
+			// This ensures that revert operations can be triggered for all hosts
 			if cfg.ExecutionMode == "sequential" && levelHardErrored {
-				logger.Warn("Sequential mode: task hard-failed, stopping further result processing for this level.",
+				logger.Warn("Sequential mode: task hard-failed, but continuing to collect results from other hosts for proper revert execution.",
 					"task", result.Task.Name, "host", result.Closure.HostContext.Host.Name, "level", executionLevel)
-				break
+				// Don't break here - continue collecting results from other hosts
 			}
 		}
 	}

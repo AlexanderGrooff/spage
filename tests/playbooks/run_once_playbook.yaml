@@ -9,8 +9,9 @@
       register: run_once_result
 
     - name: Verify the file was created on all hosts in facts
-      debug:
-        msg: "run_once result: {{ run_once_result }}"
+      assert:
+        that:
+          - run_once_result is defined
 
     - name: Normal task on all hosts for comparison
       shell: echo "normal_task_$(hostname)" > /tmp/spage/normal_task.txt
@@ -30,5 +31,6 @@
       register: loop_run_once_result
 
     - name: Show loop run_once result
-      debug:
-        msg: "loop run_once result: {{ loop_run_once_result }}"
+      assert:
+        that:
+          - loop_run_once_result is defined

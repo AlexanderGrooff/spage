@@ -278,9 +278,9 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 		task := taskDefinition
 
 		// Handle run_once tasks separately
-		firstHostCtx, firstHostName := GetFirstAvailableHost(hostContexts)
 		// TODO: template the run_once condition with actual closure
 		if !task.RunOnce.IsEmpty() && task.RunOnce.IsTruthy(nil) {
+			firstHostCtx, firstHostName := GetFirstAvailableHost(hostContexts)
 			if firstHostCtx == nil {
 				errMsg := fmt.Errorf("no hosts available for run_once task '%s'", task.Name)
 				common.LogError("No hosts available for run_once task", map[string]interface{}{"error": errMsg})
@@ -368,14 +368,24 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 
 				// Propagate the aggregated facts to all hosts
 				if task.Register != "" && aggregatedResult.Output != nil {
-					if facts, ok := aggregatedResult.Output.(interface{ Facts() map[string]interface{} }); ok {
-						factsToRegister := facts.Facts()
+					var m map[string]interface{}
+					if v, ok := pkg.ConvertOutputToFactsMap(aggregatedResult.Output).(map[string]interface{}); ok {
+						m = v
+					} else if withFacts, ok := aggregatedResult.Output.(interface{ Facts() map[string]interface{} }); ok {
+						m = withFacts.Facts()
+					}
+					if m != nil {
+						// Ensure consistent fields
+						m["failed"] = false
+						if _, present := m["changed"]; !present {
+							m["changed"] = aggregatedResult.Status == pkg.TaskStatusChanged || aggregatedResult.Changed
+						}
 						common.LogDebug("Propagating run_once facts to all hosts", map[string]interface{}{
 							"task":     task.Name,
 							"variable": task.Register,
 						})
 						for _, hc := range hostContexts {
-							hc.Facts.Store(task.Register, factsToRegister)
+							hc.Facts.Store(task.Register, m)
 						}
 					}
 				}
@@ -414,6 +424,26 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				})
 
 				originalResult := e.Runner.ExecuteTask(ctx, task, closure, cfg)
+
+				// Propagate the registered variable from the single run_once execution to all hosts,
+				// mirroring the behavior implemented for looped run_once above
+				if task.Register != "" && originalResult.Output != nil {
+					value := pkg.ConvertOutputToFactsMap(originalResult.Output)
+					if m, ok := value.(map[string]interface{}); ok {
+						// Ensure consistent fields
+						m["failed"] = false
+						if _, present := m["changed"]; !present {
+							m["changed"] = originalResult.Status == pkg.TaskStatusChanged || originalResult.Changed
+						}
+						common.LogDebug("Propagating run_once facts to all hosts (single execution)", map[string]interface{}{
+							"task":     task.Name,
+							"variable": task.Register,
+						})
+						for _, hc := range hostContexts {
+							hc.Facts.Store(task.Register, m)
+						}
+					}
+				}
 
 				allResults := CreateRunOnceResultsForAllHosts(originalResult, hostContexts, firstHostName)
 				for _, result := range allResults {

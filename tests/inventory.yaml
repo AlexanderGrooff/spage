@@ -1,14 +1,21 @@
 all:
-  theta:
-    host: 100.78.218.73
-    ansible_ssh_private_key_file: ~/.ssh/id_ed25519
-    specific_host_var: specific_host_var_value
-  # alpha:
-  #   host: localhost
-
-some_group:
   hosts:
     localhost:
       host: localhost
+      ansible_connection: local
+      inventory_host_var: inventory_host_var_value
+    theta:
+      host: 100.78.218.73
+      ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+      inventory_host_var: inventory_host_var_value
   vars:
-    specific_group_var: specific_group_var_value
+    inventory_allgroup_var: specific_allgroup_var_value
+
+somegroup:
+  hosts:
+    localhost:
+      inventory_group_host_var: inventory_group_host_var_value
+    theta:
+      inventory_group_host_var: inventory_group_host_var_value
+  vars:
+    inventory_group_var: specific_group_var_value

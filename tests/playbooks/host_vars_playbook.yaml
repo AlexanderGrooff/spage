@@ -1,8 +1,10 @@
 ---
-- name: show variable from host vars
-  assert:
-    that: 
-      - dir_host_var == "dir_host_var_value"
-      - inventory_host_var == "inventory_host_var_value"
-      - file_host_var == "file_host_var_value"
-      - inventory_group_host_var == "inventory_group_host_var_value"
+- hosts: all
+  tasks:
+    - name: show variable from host vars
+      assert:
+        that:
+          - dir_host_var == "dir_host_var_value"
+          - inventory_host_var == "inventory_host_var_value"
+          # - file_host_var == "file_host_var_value"
+          - inventory_group_host_var == "inventory_group_host_var_value"

@@ -18,18 +18,28 @@ import (
 	"golang.org/x/term"
 )
 
+// authMethodCache stores detected authentication methods for hosts
+type authMethodCache struct {
+	methods []string
+	expires time.Time
+}
+
 // Manager manages SSH connection pools for multiple hosts
 type Manager struct {
 	pools map[string]*desopssshpool.Pool
 	mu    sync.RWMutex
 	cfg   *config.Config
+	// Cache for SSH authentication methods to avoid repeated server detection
+	authMethodCache map[string]*authMethodCache
+	authCacheMu     sync.RWMutex
 }
 
 // NewManager creates a new SSH pool manager
 func NewManager(cfg *config.Config) *Manager {
 	return &Manager{
-		pools: make(map[string]*desopssshpool.Pool),
-		cfg:   cfg,
+		pools:           make(map[string]*desopssshpool.Pool),
+		cfg:             cfg,
+		authMethodCache: make(map[string]*authMethodCache),
 	}
 }
 
@@ -185,21 +195,34 @@ func (m *Manager) buildAuthMethods(host string, hostVars map[string]interface{},
 		})
 		supportedMethods = nil
 	} else {
-		// Check what the server actually supports first
-		var err error
-		supportedMethods, err = m.getServerAuthMethods(host, username)
-		if err != nil {
-			common.LogWarn("Failed to detect server authentication methods, proceeding with configured methods", map[string]interface{}{
-				"host":  host,
-				"error": err.Error(),
+		// Check if we need server method detection
+		// Only detect if we have methods that might not be supported (like password)
+		configMethods := m.getConfiguredAuthMethods()
+		needsDetection := m.needsServerMethodDetection(configMethods)
+
+		if !needsDetection {
+			common.LogDebug("Skipping server auth method detection - all configured methods are always available", map[string]interface{}{
+				"host":    host,
+				"methods": configMethods,
 			})
 			supportedMethods = nil
 		} else {
-			common.LogDebug("Server supports authentication methods", map[string]interface{}{
-				"host":              host,
-				"methods":           supportedMethods,
-				"supports_password": contains(supportedMethods, "password"),
-			})
+			// Check what the server actually supports first
+			var err error
+			supportedMethods, err = m.getServerAuthMethods(host, username)
+			if err != nil {
+				common.LogWarn("Failed to detect server authentication methods, proceeding with configured methods", map[string]interface{}{
+					"host":  host,
+					"error": err.Error(),
+				})
+				supportedMethods = nil
+			} else {
+				common.LogDebug("Server supports authentication methods", map[string]interface{}{
+					"host":              host,
+					"methods":           supportedMethods,
+					"supports_password": contains(supportedMethods, "password"),
+				})
+			}
 		}
 	}
 
@@ -467,6 +490,11 @@ func promptForPassword(host string) (string, error) {
 
 // getServerAuthMethods checks what authentication methods the SSH server supports
 func (m *Manager) getServerAuthMethods(host, username string) ([]string, error) {
+	// Check cache first
+	if methods, found := m.getCachedAuthMethods(host); found {
+		return methods, nil
+	}
+
 	config := &ssh.ClientConfig{
 		User: username,
 		Auth: []ssh.AuthMethod{
@@ -487,13 +515,35 @@ func (m *Manager) getServerAuthMethods(host, username string) ([]string, error) 
 				start := idx + len("attempted methods [")
 				if end := strings.Index(errorStr[start:], "]"); end != -1 {
 					methodsStr := errorStr[start : start+end]
-					return strings.Fields(methodsStr), nil
+					methods := strings.Fields(methodsStr)
+
+					// Cache the result
+					m.authCacheMu.Lock()
+					m.authMethodCache[host] = &authMethodCache{
+						methods: methods,
+						expires: time.Now().Add(10 * time.Minute), // Cache for 10 minutes
+					}
+					m.authCacheMu.Unlock()
+
+					return methods, nil
 				}
 			}
 		}
 		return nil, fmt.Errorf("failed to detect authentication methods: %w", err)
 	}
-	return []string{"password"}, nil // If connection succeeded, password is supported
+
+	// If connection succeeded, password is supported
+	methods := []string{"password"}
+
+	// Cache the result
+	m.authCacheMu.Lock()
+	m.authMethodCache[host] = &authMethodCache{
+		methods: methods,
+		expires: time.Now().Add(10 * time.Minute), // Cache for 10 minutes
+	}
+	m.authCacheMu.Unlock()
+
+	return methods, nil
 }
 
 // contains checks if a slice contains a string
@@ -517,6 +567,9 @@ func (m *Manager) Close() error {
 		delete(m.pools, host)
 	}
 
+	// Clear authentication method cache when closing
+	m.clearAuthMethodCache("")
+
 	if len(errs) > 0 {
 		return fmt.Errorf("SSH pool manager close errors: %v", errs)
 	}
@@ -532,4 +585,70 @@ func (m *Manager) CloseHost(host string) {
 		pool.Close()
 		delete(m.pools, host)
 	}
+
+	// Clear authentication method cache for this host
+	m.clearAuthMethodCache(host)
+}
+
+// getConfiguredAuthMethods returns the list of configured authentication methods
+func (m *Manager) getConfiguredAuthMethods() []string {
+	if m.cfg != nil && len(m.cfg.SSH.Auth.Methods) > 0 {
+		return m.cfg.SSH.Auth.Methods
+	}
+	return []string{"publickey", "password"}
+}
+
+// needsServerMethodDetection checks if server method detection is needed
+// Returns false if all configured methods are always available (like publickey)
+func (m *Manager) needsServerMethodDetection(methods []string) bool {
+	for _, method := range methods {
+		// Methods that might not be supported by all servers
+		if method == "password" || method == "keyboard-interactive" || method == "gssapi-with-mic" || method == "none" {
+			return true
+		}
+	}
+	return false
+}
+
+// clearAuthMethodCache clears the authentication method cache for a specific host or all hosts
+func (m *Manager) clearAuthMethodCache(host string) {
+	m.authCacheMu.Lock()
+	defer m.authCacheMu.Unlock()
+
+	if host == "" {
+		// Clear all cache entries
+		m.authMethodCache = make(map[string]*authMethodCache)
+	} else {
+		// Clear cache for specific host
+		delete(m.authMethodCache, host)
+	}
+}
+
+// ClearAuthMethodCache clears the authentication method cache for a specific host or all hosts
+// This is useful for testing or when you want to force re-detection of authentication methods
+func (m *Manager) ClearAuthMethodCache(host string) {
+	m.clearAuthMethodCache(host)
+	if host == "" {
+		common.LogDebug("Cleared all SSH authentication method caches", map[string]interface{}{})
+	} else {
+		common.LogDebug("Cleared SSH authentication method cache for host", map[string]interface{}{
+			"host": host,
+		})
+	}
+}
+
+// getCachedAuthMethods returns cached authentication methods for a host if available
+func (m *Manager) getCachedAuthMethods(host string) ([]string, bool) {
+	m.authCacheMu.RLock()
+	defer m.authCacheMu.RUnlock()
+
+	if cache, exists := m.authMethodCache[host]; exists && cache.expires.After(time.Now()) {
+		common.LogDebug("Using cached authentication methods for host", map[string]interface{}{
+			"host":    host,
+			"methods": cache.methods,
+			"expires": cache.expires,
+		})
+		return cache.methods, true
+	}
+	return nil, false
 }
