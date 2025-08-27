@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/AlexanderGrooff/jinja-go"
 	"github.com/AlexanderGrooff/spage/pkg/common"
 
 	"github.com/AlexanderGrooff/spage/pkg"
@@ -127,7 +128,26 @@ func (m TemplateModule) templateContentsToFile(src, dest string, closure *pkg.Cl
 	if err != nil {
 		return "", "", fmt.Errorf("failed to read template file %s: %v", src, err)
 	}
-	templatedContents, err := pkg.TemplateString(contents, closure)
+
+	// Build search directories for resolving includes/lookups inside this template
+	searchDirs := []string{}
+	if rolePath, ok := closure.GetFact("_spage_role_path"); ok && rolePath != "" {
+		if rolePathStr, ok := rolePath.(string); ok {
+			searchDirs = append(searchDirs, filepath.Join(rolePathStr, "templates"))
+		}
+	}
+	// Always consider the generic templates directory relative to the playbook root
+	searchDirs = append(searchDirs, "templates")
+
+	// Prepare a context copy to pass resolver hints for lookup() as well
+	facts := closure.GetFacts()
+	ctx := make(map[string]interface{}, len(facts)+1)
+	for k, v := range facts {
+		ctx[k] = v
+	}
+	ctx["__search_dirs__"] = searchDirs
+
+	templatedContents, err := jinja.TemplateStringInContext(contents, ctx, searchDirs)
 	if err != nil {
 		return "", "", err
 	}

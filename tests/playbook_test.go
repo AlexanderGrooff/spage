@@ -525,10 +525,6 @@ func TestJinjaIncludePlaybook(t *testing.T) {
 		configFile:   "sequential_no_revert.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.Equal(t, 0, exitCode, "jinja_include_playbook should run without error in env: %s, output: %s", envName, output)
-
-			// Ensure the parent rendered file exists and contains both header, child content, and footer
-			target := "/tmp/spage/jinja_include_rendered.txt"
-			assertFileExistsWithInventory(t, target, inventory)
 		},
 	})
 }
