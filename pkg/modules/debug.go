@@ -238,7 +238,6 @@ func (m DebugModule) debugAction(params DebugInput, closure *pkg.Closure, action
 		} else {
 			outputMessage = fmt.Sprintf("var: %s (not found)%s", varName, suffix)
 		}
-		common.LogInfo(outputMessage, map[string]interface{}{"host": closure.HostContext.Host.Name, "module": "debug", "variable": varName, "action": action})
 	}
 
 	return DebugOutput{MessagePrinted: outputMessage}, nil

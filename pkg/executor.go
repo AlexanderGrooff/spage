@@ -112,12 +112,6 @@ func ExecuteGraphWithLimit(executor GraphExecutor, graph *Graph, inventoryFile s
 		}
 	}()
 
-	// Use logging instead of fmt.Printf to avoid deadlocks with Temporal's error handling
-	if cfg.Logging.Format == "plain" {
-		common.LogInfo("PLAY []", map[string]interface{}{})
-	} else {
-		common.LogInfo("Starting play", map[string]interface{}{})
-	}
 	orderedGraph, err := GetOrderedGraph(cfg, graph)
 	if err != nil {
 		return err

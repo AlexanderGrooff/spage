@@ -719,3 +719,59 @@ func SharedProcessLevelResults(
 
 	return levelHardErrored, processedTasksOnLevel, nil
 }
+
+// BuildRegisteredFromOutput converts a ModuleOutput into a map suitable for `register:`
+// and ensures consistent fields like "failed" and "changed" are present.
+func BuildRegisteredFromOutput(output pkg.ModuleOutput, changed bool) interface{} {
+	if output == nil {
+		return map[string]interface{}{
+			"failed":  false,
+			"changed": changed,
+		}
+	}
+
+	if v, ok := pkg.ConvertOutputToFactsMap(output).(map[string]interface{}); ok {
+		// Ensure consistent fields
+		v["failed"] = false
+		if _, present := v["changed"]; !present {
+			v["changed"] = changed
+		}
+		return v
+	}
+
+	// Fallback minimal map
+	return map[string]interface{}{
+		"failed":  false,
+		"changed": changed,
+	}
+}
+
+// PropagateRegisteredToAllHosts stores the provided registered value into all host contexts,
+// and also mirrors it into the workflow-wide facts map if provided (Temporal executor path).
+func PropagateRegisteredToAllHosts(
+	task pkg.Task,
+	registeredValue interface{},
+	hostContexts map[string]*pkg.HostContext,
+	workflowHostFacts map[string]map[string]interface{},
+) {
+	if task.Register == "" || registeredValue == nil {
+		return
+	}
+
+	common.LogDebug("Propagating run_once facts to all hosts", map[string]interface{}{
+		"task":     task.Name,
+		"variable": task.Register,
+	})
+
+	for hostName, hc := range hostContexts {
+		if hc != nil && hc.Facts != nil {
+			hc.Facts.Store(task.Register, registeredValue)
+		}
+		if workflowHostFacts != nil {
+			if _, ok := workflowHostFacts[hostName]; !ok {
+				workflowHostFacts[hostName] = make(map[string]interface{})
+			}
+			workflowHostFacts[hostName][task.Register] = registeredValue
+		}
+	}
+}

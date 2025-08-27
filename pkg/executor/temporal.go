@@ -1122,15 +1122,7 @@ func (e *TemporalGraphExecutor) executeRunOnceWithAllLoops(
 				"task":     task.Name,
 				"variable": task.Register,
 			})
-			for hostName, hostCtx := range hostContexts {
-				hostCtx.Facts.Store(task.Register, registeredValue)
-				if workflowHostFacts != nil {
-					if _, ok := workflowHostFacts[hostName]; !ok {
-						workflowHostFacts[hostName] = make(map[string]interface{})
-					}
-					workflowHostFacts[hostName][task.Register] = registeredValue
-				}
-			}
+			PropagateRegisteredToAllHosts(task, registeredValue, hostContexts, workflowHostFacts)
 		}
 	}
 
@@ -1276,28 +1268,9 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 						taskResult := e.Runner.ExecuteTask(childTaskCtx, task, closure, cfg)
 
 						// Propagate the registered variable from the single run_once execution to all hosts
-						if task.Register != "" && taskResult.Output != nil {
-							value := pkg.ConvertOutputToFactsMap(taskResult.Output)
-							if m, ok := value.(map[string]interface{}); ok {
-								// Ensure consistent fields
-								m["failed"] = false
-								if _, present := m["changed"]; !present {
-									m["changed"] = taskResult.Status == pkg.TaskStatusChanged || taskResult.Changed
-								}
-								logger.Debug("Propagating run_once facts to all hosts (single execution)", map[string]interface{}{
-									"task":     task.Name,
-									"variable": task.Register,
-								})
-								for hostName, hc := range hostContexts {
-									hc.Facts.Store(task.Register, m)
-									if workflowHostFacts != nil {
-										if _, ok := workflowHostFacts[hostName]; !ok {
-											workflowHostFacts[hostName] = make(map[string]interface{})
-										}
-										workflowHostFacts[hostName][task.Register] = m
-									}
-								}
-							}
+						if task.Register != "" {
+							reg := BuildRegisteredFromOutput(taskResult.Output, taskResult.Status == pkg.TaskStatusChanged || taskResult.Changed)
+							PropagateRegisteredToAllHosts(task, reg, hostContexts, workflowHostFacts)
 						}
 
 						// Create results for all hosts

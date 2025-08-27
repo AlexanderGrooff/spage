@@ -146,7 +146,6 @@ func (e *LocalGraphExecutor) Execute(hostContexts map[string]*pkg.HostContext, o
 	}
 
 	e.printPlayRecap(cfg, recapStats)
-	common.LogInfo("Play finished successfully.", map[string]interface{}{})
 	return nil
 }
 
@@ -367,27 +366,9 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				}
 
 				// Propagate the aggregated facts to all hosts
-				if task.Register != "" && aggregatedResult.Output != nil {
-					var m map[string]interface{}
-					if v, ok := pkg.ConvertOutputToFactsMap(aggregatedResult.Output).(map[string]interface{}); ok {
-						m = v
-					} else if withFacts, ok := aggregatedResult.Output.(interface{ Facts() map[string]interface{} }); ok {
-						m = withFacts.Facts()
-					}
-					if m != nil {
-						// Ensure consistent fields
-						m["failed"] = false
-						if _, present := m["changed"]; !present {
-							m["changed"] = aggregatedResult.Status == pkg.TaskStatusChanged || aggregatedResult.Changed
-						}
-						common.LogDebug("Propagating run_once facts to all hosts", map[string]interface{}{
-							"task":     task.Name,
-							"variable": task.Register,
-						})
-						for _, hc := range hostContexts {
-							hc.Facts.Store(task.Register, m)
-						}
-					}
+				if task.Register != "" {
+					reg := BuildRegisteredFromOutput(aggregatedResult.Output, aggregatedResult.Status == pkg.TaskStatusChanged || aggregatedResult.Changed)
+					PropagateRegisteredToAllHosts(task, reg, hostContexts, nil)
 				}
 
 				allResults := CreateRunOnceResultsForAllHosts(aggregatedResult, hostContexts, firstHostName)
@@ -427,22 +408,9 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 
 				// Propagate the registered variable from the single run_once execution to all hosts,
 				// mirroring the behavior implemented for looped run_once above
-				if task.Register != "" && originalResult.Output != nil {
-					value := pkg.ConvertOutputToFactsMap(originalResult.Output)
-					if m, ok := value.(map[string]interface{}); ok {
-						// Ensure consistent fields
-						m["failed"] = false
-						if _, present := m["changed"]; !present {
-							m["changed"] = originalResult.Status == pkg.TaskStatusChanged || originalResult.Changed
-						}
-						common.LogDebug("Propagating run_once facts to all hosts (single execution)", map[string]interface{}{
-							"task":     task.Name,
-							"variable": task.Register,
-						})
-						for _, hc := range hostContexts {
-							hc.Facts.Store(task.Register, m)
-						}
-					}
+				if task.Register != "" {
+					reg := BuildRegisteredFromOutput(originalResult.Output, originalResult.Status == pkg.TaskStatusChanged || originalResult.Changed)
+					PropagateRegisteredToAllHosts(task, reg, hostContexts, nil)
 				}
 
 				allResults := CreateRunOnceResultsForAllHosts(originalResult, hostContexts, firstHostName)
