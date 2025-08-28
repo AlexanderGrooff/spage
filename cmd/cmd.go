@@ -279,7 +279,18 @@ func GetDaemonClient() (*daemon.Client, error) {
 var generateCmd = &cobra.Command{
 	Use:   "generate",
 	Short: "Generate a graph from a playbook and save it as Go code",
+	Args:  cobra.RangeArgs(0, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Accept playbook as positional argument (preferred), fallback to --playbook flag
+		if playbookFile == "" {
+			if len(args) >= 1 {
+				playbookFile = args[0]
+			}
+		}
+		if playbookFile == "" {
+			return fmt.Errorf("playbook file is required; provide it as a positional argument (spage run playbook.yaml) or with --playbook")
+		}
+
 		// Resolve bundle references using FS (no disk extraction)
 		var cleanup func()
 		var graph pkg.Graph
@@ -659,10 +670,6 @@ func init() {
 	generateCmd.Flags().StringSliceVarP(&tags, "tags", "t", []string{}, "Only include tasks with these tags (comma-separated)")
 	generateCmd.Flags().StringSliceVar(&skipTags, "skip-tags", []string{}, "Skip tasks with these tags (comma-separated)")
 	generateCmd.Flags().BoolVar(&becomeMode, "become", false, "Run all tasks with become: true and become_user: root")
-
-	if err := generateCmd.MarkFlagRequired("playbook"); err != nil {
-		panic(fmt.Sprintf("failed to mark playbook flag as required: %v", err))
-	}
 
 	runCmd.Flags().StringVarP(&playbookFile, "playbook", "p", "", "Playbook file")
 	runCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file (default: localhost)")
