@@ -325,9 +325,19 @@ var generateCmd = &cobra.Command{
 }
 
 var runCmd = &cobra.Command{
-	Use:   "run",
+	Use:   "run [playbook]",
 	Short: "Run a playbook by compiling & executing it",
+	Args:  cobra.RangeArgs(0, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Accept playbook as positional argument (preferred), fallback to --playbook flag
+		if playbookFile == "" {
+			if len(args) >= 1 {
+				playbookFile = args[0]
+			}
+		}
+		if playbookFile == "" {
+			return fmt.Errorf("playbook file is required; provide it as a positional argument (spage run playbook.yaml) or with --playbook")
+		}
 		daemonClient, err := GetDaemonClient()
 		if err != nil {
 			return fmt.Errorf("failed to get daemon client: %w", err)
@@ -654,7 +664,7 @@ func init() {
 		panic(fmt.Sprintf("failed to mark playbook flag as required: %v", err))
 	}
 
-	runCmd.Flags().StringVarP(&playbookFile, "playbook", "p", "", "Playbook file (required)")
+	runCmd.Flags().StringVarP(&playbookFile, "playbook", "p", "", "Playbook file")
 	runCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file (default: localhost)")
 	runCmd.Flags().StringVarP(&outputFile, "output", "o", "generated_tasks.go", "Output file (default: generated_tasks.go)")
 	runCmd.Flags().StringVarP(&limitHosts, "limit", "l", "", "Limit selected hosts to an additional pattern")
@@ -669,10 +679,6 @@ func init() {
 	// Daemon communication flags
 	runCmd.Flags().StringVar(&daemonGRPC, "daemon-grpc", "", "Daemon gRPC endpoint (default: localhost:9091)")
 	runCmd.Flags().StringVar(&playID, "play-id", "", "Play ID for daemon communication")
-
-	if err := runCmd.MarkFlagRequired("playbook"); err != nil {
-		panic(fmt.Sprintf("failed to mark playbook flag as required: %v", err))
-	}
 
 	RootCmd.AddCommand(generateCmd)
 	RootCmd.AddCommand(runCmd)
