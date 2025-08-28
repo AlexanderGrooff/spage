@@ -139,7 +139,7 @@ func TestPluginManager_LoadInventoryFromPlugin(t *testing.T) {
 	// Mock the LoadPlugin method by creating a test that doesn't actually call external plugins
 	// This would normally call pm.LoadPlugin, but we'll test the conversion logic directly
 
-	inventory := convertPluginResultToInventory(pluginResult)
+	inventory := convertPluginResultToInventory("test", pluginResult)
 
 	// Test inventory structure
 	assert.NotNil(t, inventory)
@@ -171,61 +171,6 @@ func TestPluginManager_LoadInventoryFromPlugin(t *testing.T) {
 	assert.Len(t, databases.Hosts, 1)
 	assert.Contains(t, databases.Hosts, "db01")
 	assert.Equal(t, 3306, databases.Vars["db_port"])
-}
-
-// Helper function to test the conversion logic without external dependencies
-func convertPluginResultToInventory(pluginResult *PluginInventoryResult) *Inventory {
-	inventory := &Inventory{
-		Hosts:  make(map[string]*Host),
-		Groups: make(map[string]*Group),
-		Vars:   make(map[string]interface{}),
-	}
-
-	// Convert plugin hosts to standard hosts
-	for hostName, pluginHost := range pluginResult.Hosts {
-		host := &Host{
-			Name: hostName,
-			Host: hostName,
-			Vars: pluginHost.Vars,
-		}
-		if host.Vars == nil {
-			host.Vars = make(map[string]interface{})
-		}
-		host.Prepare()
-		inventory.Hosts[hostName] = host
-	}
-
-	// Convert plugin groups to standard groups
-	for groupName, pluginGroup := range pluginResult.Groups {
-		group := &Group{
-			Hosts: make(map[string]*Host),
-			Vars:  pluginGroup.Vars,
-		}
-		if group.Vars == nil {
-			group.Vars = make(map[string]interface{})
-		}
-
-		// Add hosts to group
-		for _, hostName := range pluginGroup.Hosts {
-			if host, exists := inventory.Hosts[hostName]; exists {
-				group.Hosts[hostName] = host
-			} else {
-				// Create host if it doesn't exist
-				host := &Host{
-					Name: hostName,
-					Host: hostName,
-					Vars: make(map[string]interface{}),
-				}
-				host.Prepare()
-				inventory.Hosts[hostName] = host
-				group.Hosts[hostName] = host
-			}
-		}
-
-		inventory.Groups[groupName] = group
-	}
-
-	return inventory
 }
 
 func TestHost_Prepare(t *testing.T) {

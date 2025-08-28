@@ -1922,6 +1922,60 @@ all:
 	t.Logf("Successfully tested inventory merging with %d hosts", len(inventory.Hosts))
 }
 
+// TestLoadExecutableInventoryFile ensures that when an inventory path points to an executable file,
+// it is executed with --list and the JSON output is parsed into the Inventory.
+func TestLoadExecutableInventoryFile(t *testing.T) {
+	// Create a temporary directory
+	tmpDir, err := os.MkdirTemp("", "spage-exec-inventory-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Failed to remove temp dir: %v", err)
+		}
+	}()
+
+	// Create an executable script that prints ansible-inventory --list JSON
+	scriptPath := filepath.Join(tmpDir, "inventory_exec.sh")
+	scriptContent := `#!/bin/sh
+cat <<'EOF'
+{
+  "_meta": {
+    "hostvars": {
+      "exec-host": {"custom": "from_exec"}
+    }
+  },
+  "all": {
+    "hosts": ["exec-host"],
+    "vars": {"global_var": "gval"}
+  }
+}
+EOF
+`
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
+		t.Fatalf("Failed to write executable script: %v", err)
+	}
+
+	// Load inventory from the executable path
+	inv, err := LoadInventoryWithPaths(scriptPath, "", tmpDir, "", nil)
+	if err != nil {
+		t.Fatalf("Failed to load executable inventory: %v", err)
+	}
+
+	// Validate host exists and vars are present
+	host, ok := inv.Hosts["exec-host"]
+	if !ok {
+		t.Fatalf("Expected host 'exec-host' to be present")
+	}
+	if host.Vars["custom"] != "from_exec" {
+		t.Errorf("Expected host var 'custom' to be 'from_exec', got %v", host.Vars["custom"])
+	}
+	if host.Vars["global_var"] != "gval" {
+		t.Errorf("Expected global_var to be 'gval' from group 'all', got %v", host.Vars["global_var"])
+	}
+}
+
 func TestInventoryDecryption(t *testing.T) {
 	// Create a temporary test directory
 	tmpDir, err := os.MkdirTemp("", "spage-merging-test")

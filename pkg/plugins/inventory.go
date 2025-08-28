@@ -14,6 +14,11 @@ import (
 	"github.com/AlexanderGrooff/spage/pkg/types"
 )
 
+// Use shared types from pkg/types to avoid duplication
+type Inventory = types.Inventory
+type Host = types.Host
+type Group = types.Group
+
 // InventoryPlugin defines the interface that all inventory plugins must implement
 type InventoryPlugin interface {
 	// Name returns the name of the plugin
@@ -274,51 +279,9 @@ func (pm *PluginManager) parseAnsibleInventoryOutput(output []byte) (*PluginInve
 	return result, nil
 }
 
-// DiscoverPlugins discovers available inventory plugins
-func (pm *PluginManager) DiscoverPlugins() ([]string, error) {
-	var plugins []string
-
-	// Discover Go plugins
-	for _, dir := range pm.pluginDirs {
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			continue
-		}
-
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-
-			name := entry.Name()
-			if strings.HasPrefix(name, "spage-inventory-plugin-") && strings.HasSuffix(name, ".so") {
-				// Extract plugin name from filename
-				pluginName := strings.TrimPrefix(name, "spage-inventory-plugin-")
-				pluginName = strings.TrimSuffix(pluginName, ".so")
-				plugins = append(plugins, pluginName)
-			}
-		}
-	}
-
-	common.LogDebug("Discovered inventory plugins", map[string]interface{}{
-		"plugins": plugins,
-	})
-
-	return plugins, nil
-}
-
-// loadInventoryFromPlugin loads inventory from a plugin and converts to standard Inventory format
-func (pm *PluginManager) LoadInventoryFromPlugin(ctx context.Context, pluginName string, config map[string]interface{}) (*Inventory, error) {
-	pluginResult, err := pm.LoadPlugin(ctx, pluginName, config)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert plugin result to standard Inventory format
+// convertPluginResultToInventory converts a parsed PluginInventoryResult into the standard Inventory format
+// This is shared between Go/Python plugins and external executables producing ansible-inventory compatible JSON
+func convertPluginResultToInventory(pluginName string, pluginResult *PluginInventoryResult) *Inventory {
 	inventory := &Inventory{
 		Hosts:  make(map[string]*Host),
 		Groups: make(map[string]*Group),
@@ -370,10 +333,103 @@ func (pm *PluginManager) LoadInventoryFromPlugin(ctx context.Context, pluginName
 		inventory.Groups[groupName] = group
 	}
 
-	return inventory, nil
+	return inventory
 }
 
-// Use shared types from pkg/types to avoid duplication
-type Inventory = types.Inventory
-type Host = types.Host
-type Group = types.Group
+// DiscoverPlugins discovers available inventory plugins
+func (pm *PluginManager) DiscoverPlugins() ([]string, error) {
+	var plugins []string
+
+	// Discover Go plugins
+	for _, dir := range pm.pluginDirs {
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			continue
+		}
+
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+
+			name := entry.Name()
+			if strings.HasPrefix(name, "spage-inventory-plugin-") && strings.HasSuffix(name, ".so") {
+				// Extract plugin name from filename
+				pluginName := strings.TrimPrefix(name, "spage-inventory-plugin-")
+				pluginName = strings.TrimSuffix(pluginName, ".so")
+				plugins = append(plugins, pluginName)
+			}
+		}
+	}
+
+	common.LogDebug("Discovered inventory plugins", map[string]interface{}{
+		"plugins": plugins,
+	})
+
+	return plugins, nil
+}
+
+// LoadInventoryFromPlugin loads inventory from a plugin and converts to standard Inventory format
+func (pm *PluginManager) LoadInventoryFromPlugin(ctx context.Context, pluginName string, config map[string]interface{}) (*Inventory, error) {
+	pluginResult, err := pm.LoadPlugin(ctx, pluginName, config)
+	if err != nil {
+		return nil, err
+	}
+	return convertPluginResultToInventory(pluginName, pluginResult), nil
+}
+
+// LoadInventoryFromExecutable executes an external inventory script/binary that outputs
+// Ansible-compatible JSON for `--list` and converts it into the standard Inventory format.
+// It reuses the same JSON parsing logic used for Python plugins.
+func (pm *PluginManager) LoadInventoryFromExecutable(ctx context.Context, execPath string, args ...string) (*Inventory, error) {
+    if execPath == "" {
+        return nil, fmt.Errorf("executable path is empty")
+    }
+
+    // Prefix cwd to execPath if it's not an absolute path
+    if !filepath.IsAbs(execPath) {
+        cwd, err := os.Getwd()
+        if err != nil {
+            return nil, fmt.Errorf("failed to get current working directory: %w", err)
+        }
+        execPath = filepath.Join(cwd, execPath)
+    }
+
+    // Default to --list if no args provided
+    if len(args) == 0 {
+        args = []string{"--list"}
+    }
+
+    common.LogDebug("Executing inventory executable", map[string]interface{}{
+        "path": execPath,
+        "args": strings.Join(args, " "),
+    })
+
+    cmd := exec.CommandContext(ctx, execPath, args...)
+    output, err := cmd.Output()
+    if err != nil {
+        if exitError, ok := err.(*exec.ExitError); ok {
+            return nil, fmt.Errorf("inventory executable failed: %s", string(exitError.Stderr))
+        }
+        return nil, fmt.Errorf("failed to execute inventory executable: %w", err)
+    }
+
+    // Parse the JSON output using the same parser as Python plugins
+    pluginResult, err := pm.parseAnsibleInventoryOutput(output)
+    if err != nil {
+        return nil, fmt.Errorf("failed to parse inventory executable output: %w", err)
+    }
+
+    inventory := convertPluginResultToInventory("executable", pluginResult)
+
+    common.LogDebug("Successfully loaded inventory from executable", map[string]interface{}{
+        "hosts_count":  len(inventory.Hosts),
+        "groups_count": len(inventory.Groups),
+    })
+
+    return inventory, nil
+}

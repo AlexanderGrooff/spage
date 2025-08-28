@@ -84,74 +84,6 @@ func decryptMapValues(vars map[string]interface{}, vaultPassword string) error {
 	return nil
 }
 
-// convertPluginInventoryToStandard converts a plugin inventory to standard inventory format
-func convertPluginInventoryToStandard(pluginInventory *plugins.Inventory) *types.Inventory {
-	inventory := &types.Inventory{
-		Hosts:  make(map[string]*types.Host),
-		Groups: make(map[string]*types.Group),
-		Vars:   pluginInventory.Vars,
-	}
-
-	// Convert plugin hosts to standard hosts
-	for hostName, pluginHost := range pluginInventory.Hosts {
-		host := &types.Host{
-			Name:    pluginHost.Name,
-			Host:    pluginHost.Host,
-			IsLocal: pluginHost.IsLocal,
-			Vars:    pluginHost.Vars,
-			Groups:  pluginHost.Groups,
-		}
-		if host.Vars == nil {
-			host.Vars = make(map[string]interface{})
-		}
-		if host.Groups == nil {
-			host.Groups = make(map[string]string)
-		}
-		host.Prepare()
-		inventory.Hosts[hostName] = host
-	}
-
-	// Convert plugin groups to standard groups
-	for groupName, pluginGroup := range pluginInventory.Groups {
-		group := &types.Group{
-			Hosts: make(map[string]*types.Host),
-			Vars:  pluginGroup.Vars,
-		}
-		if group.Vars == nil {
-			group.Vars = make(map[string]interface{})
-		}
-
-		// Link hosts to groups
-		for hostName, pluginHost := range pluginGroup.Hosts {
-			if host, exists := inventory.Hosts[hostName]; exists {
-				group.Hosts[hostName] = host
-			} else {
-				// Convert plugin host to standard host
-				host := &types.Host{
-					Name:    pluginHost.Name,
-					Host:    pluginHost.Host,
-					IsLocal: pluginHost.IsLocal,
-					Vars:    pluginHost.Vars,
-					Groups:  pluginHost.Groups,
-				}
-				if host.Vars == nil {
-					host.Vars = make(map[string]interface{})
-				}
-				if host.Groups == nil {
-					host.Groups = make(map[string]string)
-				}
-				host.Prepare()
-				inventory.Hosts[hostName] = host
-				group.Hosts[hostName] = host
-			}
-		}
-
-		inventory.Groups[groupName] = group
-	}
-
-	return inventory
-}
-
 // splitInventoryPaths splits a colon-delimited inventory paths string into individual paths
 func splitInventoryPaths(inventoryPaths string) []string {
 	if inventoryPaths == "" {
@@ -736,6 +668,21 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 			"file": filePath,
 		})
 
+		// If the file is executable, execute it with --list to obtain JSON inventory
+		if info, err := os.Stat(filePath); err == nil {
+			if !info.IsDir() && (info.Mode()&0111) != 0 { // any execute bit set
+				common.LogDebug("Detected executable inventory file, executing", map[string]interface{}{
+					"file": filePath,
+				})
+				execInv, err := pm.LoadInventoryFromExecutable(context.Background(), filePath, "--list")
+				if err != nil {
+					return nil, fmt.Errorf("failed to load inventory from executable %s: %w", filePath, err)
+				}
+				inventories = append(inventories, execInv)
+				continue
+			}
+		}
+
 		data, err := os.ReadFile(filePath)
 		if err != nil {
 			// Change from log.Fatalf to return error to allow fallback behavior
@@ -762,7 +709,7 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 				}
 
 				// Convert plugin inventory to standard inventory format
-				inventory := convertPluginInventoryToStandard(pluginInventory)
+				inventory := pluginInventory
 				inventory.Plugin = fmt.Sprintf("%v", pluginName)
 				inventories = append(inventories, inventory)
 				continue
