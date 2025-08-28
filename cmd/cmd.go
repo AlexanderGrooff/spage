@@ -477,8 +477,15 @@ var inventoryListCmd = &cobra.Command{
 This command supports both static inventory files and dynamic inventory plugins.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		err := LoadConfig(configFile)
+
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
+		}
+		if inventoryFile == "" {
+			inventoryFile = cfg.Inventory
+		}
+		if inventoryFile == "" {
+			return fmt.Errorf("inventory file not specified and no default inventory configured")
 		}
 		// Use our inventory loading system which supports plugins
 		inventory, err := pkg.LoadInventoryWithPaths(inventoryFile, cfg.Inventory, ".", "", cfg)
@@ -672,7 +679,6 @@ func init() {
 
 	// Inventory list flags
 	inventoryListCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file or directory")
-	_ = inventoryListCmd.MarkFlagRequired("inventory")
 
 	// Add inventory subcommands
 	inventoryCmd.AddCommand(inventoryListCmd)
