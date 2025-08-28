@@ -151,8 +151,11 @@ func (pm *PluginManager) loadPythonPlugin(ctx context.Context, pluginName string
 	inventoryFile := filepath.Join(tempDir, "plugin_inventory.yml")
 	inventoryContent := fmt.Sprintf("plugin: %s\n", pluginName)
 
-	// Add configuration parameters
+	// Add configuration parameters (skip internal keys prefixed with "__")
 	for key, value := range config {
+		if strings.HasPrefix(key, "__") {
+			continue
+		}
 		inventoryContent += fmt.Sprintf("%s: %v\n", key, value)
 	}
 
@@ -160,8 +163,58 @@ func (pm *PluginManager) loadPythonPlugin(ctx context.Context, pluginName string
 		return nil, fmt.Errorf("failed to write plugin inventory file: %w", err)
 	}
 
+	// Prepare environment to respect ansible.cfg and plugin paths
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "."
+	}
+	// Allow caller to hint the working directory (directory of inventory file)
+	if v, ok := config["__spage_cwd"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			cwd = s
+		}
+	}
+
 	// Execute ansible-inventory
 	cmd := exec.CommandContext(ctx, ansibleCmd, "-i", inventoryFile, "--list")
+	cmd.Dir = cwd
+
+	// Build environment with possible plugin settings from spage.yaml
+	env := os.Environ()
+	// Inventory plugin paths (colon-delimited)
+	if v, ok := config["__spage_inventory_plugins"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			env = append(env, "ANSIBLE_INVENTORY_PLUGINS="+s)
+		}
+	} else {
+		// Fallback to common local plugin path pattern if present
+		localInvPlugins := filepath.Join(cwd, "plugins", "inventory")
+		if _, err := os.Stat(localInvPlugins); err == nil {
+			env = append(env, "ANSIBLE_INVENTORY_PLUGINS="+localInvPlugins)
+		}
+	}
+	// Whitelist of enabled inventory plugins (comma-delimited)
+	if v, ok := config["__spage_enable_plugins"]; ok {
+		switch vv := v.(type) {
+		case []string:
+			env = append(env, "ANSIBLE_INVENTORY_ENABLED="+strings.Join(vv, ","))
+		case []interface{}:
+			var parts []string
+			for _, it := range vv {
+				if s, ok := it.(string); ok {
+					parts = append(parts, s)
+				}
+			}
+			if len(parts) > 0 {
+				env = append(env, "ANSIBLE_INVENTORY_ENABLED="+strings.Join(parts, ","))
+			}
+		case string:
+			if vv != "" {
+				env = append(env, "ANSIBLE_INVENTORY_ENABLED="+vv)
+			}
+		}
+	}
+	cmd.Env = env
 	output, err := cmd.Output()
 	if err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
@@ -386,50 +439,50 @@ func (pm *PluginManager) LoadInventoryFromPlugin(ctx context.Context, pluginName
 // Ansible-compatible JSON for `--list` and converts it into the standard Inventory format.
 // It reuses the same JSON parsing logic used for Python plugins.
 func (pm *PluginManager) LoadInventoryFromExecutable(ctx context.Context, execPath string, args ...string) (*Inventory, error) {
-    if execPath == "" {
-        return nil, fmt.Errorf("executable path is empty")
-    }
+	if execPath == "" {
+		return nil, fmt.Errorf("executable path is empty")
+	}
 
-    // Prefix cwd to execPath if it's not an absolute path
-    if !filepath.IsAbs(execPath) {
-        cwd, err := os.Getwd()
-        if err != nil {
-            return nil, fmt.Errorf("failed to get current working directory: %w", err)
-        }
-        execPath = filepath.Join(cwd, execPath)
-    }
+	// Prefix cwd to execPath if it's not an absolute path
+	if !filepath.IsAbs(execPath) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get current working directory: %w", err)
+		}
+		execPath = filepath.Join(cwd, execPath)
+	}
 
-    // Default to --list if no args provided
-    if len(args) == 0 {
-        args = []string{"--list"}
-    }
+	// Default to --list if no args provided
+	if len(args) == 0 {
+		args = []string{"--list"}
+	}
 
-    common.LogDebug("Executing inventory executable", map[string]interface{}{
-        "path": execPath,
-        "args": strings.Join(args, " "),
-    })
+	common.LogDebug("Executing inventory executable", map[string]interface{}{
+		"path": execPath,
+		"args": strings.Join(args, " "),
+	})
 
-    cmd := exec.CommandContext(ctx, execPath, args...)
-    output, err := cmd.Output()
-    if err != nil {
-        if exitError, ok := err.(*exec.ExitError); ok {
-            return nil, fmt.Errorf("inventory executable failed: %s", string(exitError.Stderr))
-        }
-        return nil, fmt.Errorf("failed to execute inventory executable: %w", err)
-    }
+	cmd := exec.CommandContext(ctx, execPath, args...)
+	output, err := cmd.Output()
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("inventory executable failed: %s", string(exitError.Stderr))
+		}
+		return nil, fmt.Errorf("failed to execute inventory executable: %w", err)
+	}
 
-    // Parse the JSON output using the same parser as Python plugins
-    pluginResult, err := pm.parseAnsibleInventoryOutput(output)
-    if err != nil {
-        return nil, fmt.Errorf("failed to parse inventory executable output: %w", err)
-    }
+	// Parse the JSON output using the same parser as Python plugins
+	pluginResult, err := pm.parseAnsibleInventoryOutput(output)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse inventory executable output: %w", err)
+	}
 
-    inventory := convertPluginResultToInventory("executable", pluginResult)
+	inventory := convertPluginResultToInventory("executable", pluginResult)
 
-    common.LogDebug("Successfully loaded inventory from executable", map[string]interface{}{
-        "hosts_count":  len(inventory.Hosts),
-        "groups_count": len(inventory.Groups),
-    })
+	common.LogDebug("Successfully loaded inventory from executable", map[string]interface{}{
+		"hosts_count":  len(inventory.Hosts),
+		"groups_count": len(inventory.Groups),
+	})
 
-    return inventory, nil
+	return inventory, nil
 }

@@ -11,18 +11,23 @@ import (
 
 // Config holds all configuration settings
 type Config struct {
-	Logging             LoggingConfig             `mapstructure:"logging"`
-	ExecutionMode       string                    `mapstructure:"execution_mode"`
-	Executor            string                    `mapstructure:"executor"` // "local" or "temporal"
-	Temporal            TemporalConfig            `mapstructure:"temporal"`
-	API                 APIConfig                 `mapstructure:"api"`
-	Daemon              DaemonConfig              `mapstructure:"daemon"`
-	Revert              bool                      `mapstructure:"revert"`
-	Tags                TagsConfig                `mapstructure:"tags"`
-	Facts               map[string]interface{}    `mapstructure:"facts"`
-	HostKeyChecking     bool                      `mapstructure:"host_key_checking"`
-	RolesPath           string                    `mapstructure:"roles_path"` // Colon-delimited paths to search for roles
-	Inventory           string                    `mapstructure:"inventory"`  // Colon-delimited paths to search for inventory files
+	Logging         LoggingConfig          `mapstructure:"logging"`
+	ExecutionMode   string                 `mapstructure:"execution_mode"`
+	Executor        string                 `mapstructure:"executor"` // "local" or "temporal"
+	Temporal        TemporalConfig         `mapstructure:"temporal"`
+	API             APIConfig              `mapstructure:"api"`
+	Daemon          DaemonConfig           `mapstructure:"daemon"`
+	Revert          bool                   `mapstructure:"revert"`
+	Tags            TagsConfig             `mapstructure:"tags"`
+	Facts           map[string]interface{} `mapstructure:"facts"`
+	HostKeyChecking bool                   `mapstructure:"host_key_checking"`
+	RolesPath       string                 `mapstructure:"roles_path"` // Colon-delimited paths to search for roles
+	Inventory       string                 `mapstructure:"inventory"`  // Colon-delimited paths to search for inventory files
+	// Inventory plugins configuration (Ansible-like behaviour)
+	// Colon-delimited paths to search for inventory plugins (e.g. "./plugins/inventory:/usr/share/ansible/plugins/inventory")
+	InventoryPlugins string `mapstructure:"inventory_plugins"`
+	// List of enabled plugin names/patterns (e.g. ["host_list", "script", "yaml", "monkeypatch_batch_strategy"])
+	EnablePlugins       []string                  `mapstructure:"enable_plugins"`
 	PrivilegeEscalation PrivilegeEscalationConfig `mapstructure:"privilege_escalation"`
 	SSH                 SSHConfig                 `mapstructure:"ssh"`
 
@@ -302,6 +307,9 @@ func setDefaults(v *viper.Viper) {
 
 	// Inventory default
 	v.SetDefault("inventory", "") // Default to empty, SDK will use default inventory
+	// Inventory plugins defaults
+	v.SetDefault("inventory_plugins", "")
+	v.SetDefault("enable_plugins", []string{})
 
 	// PrivilegeEscalation defaults
 	v.SetDefault("privilege_escalation.use_interactive", false) // Default to non-interactive (-u) for SSH sessions

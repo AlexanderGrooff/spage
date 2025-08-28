@@ -702,7 +702,20 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 					"plugin": pluginName,
 				})
 
-				// Load inventory via plugin
+				// Hint plugin loader about the working directory of this inventory file
+				if pluginConfig == nil {
+					pluginConfig = make(map[string]interface{})
+				}
+				pluginConfig["__spage_cwd"] = filepath.Dir(filePath)
+				// Pass through inventory plugin settings from spage config
+				if cfg != nil {
+					if cfg.InventoryPlugins != "" {
+						pluginConfig["__spage_inventory_plugins"] = cfg.InventoryPlugins
+					}
+					if len(cfg.EnablePlugins) > 0 {
+						pluginConfig["__spage_enable_plugins"] = cfg.EnablePlugins
+					}
+				}
 				pluginInventory, err := pm.LoadInventoryFromPlugin(context.Background(), fmt.Sprintf("%v", pluginName), pluginConfig)
 				if err != nil {
 					return nil, fmt.Errorf("failed to load inventory from plugin %s: %w", pluginName, err)
