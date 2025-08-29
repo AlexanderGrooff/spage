@@ -107,6 +107,29 @@ type Module interface {
 	ParameterAliases() map[string]string
 }
 
+// ModuleDocProvider is an optional interface that a Module can implement to
+// provide additional Markdown documentation (description, examples, notes).
+// If implemented, tooling like docgen can surface this content in generated docs.
+type ModuleDocProvider interface {
+	Doc() string
+}
+
+// ParameterDoc carries additional documentation for a single input parameter.
+// All fields are optional; tooling will merge these with reflected types and comments.
+type ParameterDoc struct {
+	Description string   // Human-readable description
+	Required    *bool    // Whether the parameter is required (nil = unspecified)
+	Default     string   // Default value rendered as text
+	Choices     []string // Enumerated valid values, if applicable
+}
+
+// ParameterDocsProvider is an optional interface that a Module can implement
+// to provide enriched documentation for its input parameters.
+// The map key should be the YAML parameter name (e.g., "name", "state").
+type ParameterDocsProvider interface {
+	ParameterDocs() map[string]ParameterDoc
+}
+
 var registeredModules = make(map[string]Module)
 
 // RegisterModule allows modules to register themselves by name.
@@ -121,4 +144,15 @@ func RegisterModule(name string, module Module) {
 func GetModule(name string) (Module, bool) {
 	module, ok := registeredModules[name]
 	return module, ok
+}
+
+// ListRegisteredModules returns a copy of the registered modules map.
+// This function is useful for tooling like documentation generators that
+// need to introspect available modules without mutating the registry.
+func ListRegisteredModules() map[string]Module {
+	out := make(map[string]Module, len(registeredModules))
+	for k, v := range registeredModules {
+		out[k] = v
+	}
+	return out
 }

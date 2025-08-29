@@ -16,6 +16,7 @@ spage.log
 generated_tasks.go
 generated_tasks
 test.conf
+/docgen
 
 # pre-commit prettier hook
 node_modules

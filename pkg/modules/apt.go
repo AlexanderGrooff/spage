@@ -21,6 +21,38 @@ func (am AptModule) OutputType() reflect.Type {
 	return reflect.TypeOf(AptOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (am AptModule) Doc() string {
+	return `Use the apt module to install, upgrade, or remove Debian packages using ` + "`apt-get`" + `. It also supports updating the package cache via 'update_cache'.
+
+## Examples
+
+` + "```yaml" + `
+- name: Ensure curl is present
+  apt:
+    name: curl
+    state: present
+
+- name: Install multiple packages
+  apt:
+    name: [curl, git]
+
+- name: Update apt cache
+  apt:
+    update_cache: true
+
+- name: Ensure package is absent
+  apt:
+    name: telnet
+    state: absent
+` + "```" + `
+
+Notes
+- 'state: latest' will attempt to upgrade packages to the latest available version.
+- You can also specify 'pkg' instead of 'name' (alias).
+`
+}
+
 // AptInput defines the parameters for the apt module.
 type AptInput struct {
 	Name        interface{} `yaml:"name"`         // Name of the package(s) (string or list of strings)
@@ -524,5 +556,29 @@ func init() {
 func (m AptModule) ParameterAliases() map[string]string {
 	return map[string]string{
 		"pkg": "name",
+	}
+}
+
+// ParameterDocs provides rich documentation for apt module inputs.
+func (m AptModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	optional := false
+	return map[string]pkg.ParameterDoc{
+		"name": {
+			Description: "Name of the package(s) to operate on. Can be a string or a list of strings.",
+			Required:    &optional,
+			Default:     "",
+		},
+		"state": {
+			Description: "Desired package state.",
+			Required:    &optional,
+			Default:     "present",
+			Choices:     []string{"present", "absent", "latest"},
+		},
+		"update_cache": {
+			Description: "Run apt-get update before the operation.",
+			Required:    &optional,
+			Default:     "false",
+			Choices:     []string{"true", "false"},
+		},
 	}
 }
