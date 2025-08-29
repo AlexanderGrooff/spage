@@ -721,7 +721,17 @@ func TestCommandPlaybook(t *testing.T) {
 		playbookFile: "playbooks/command_playbook.yaml",
 		configFile:   "sequential.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
-			assert.NotEqual(t, 0, exitCode, "command_playbook should fail to test revert")
+			assert.Equal(t, 0, exitCode, "command_playbook should succeed")
+		},
+	})
+}
+
+func TestCommandRevertPlaybook(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/command_revert_playbook.yaml",
+		configFile:   "sequential.yaml",
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.NotEqual(t, 0, exitCode, "command_revert_playbook should fail to test revert")
 			assertFileExistsWithInventory(t, "/tmp/spage/spage_command_test_file1.txt", inventory)
 			assertFileExistsWithInventory(t, "/tmp/spage/spage_command_test_file2.txt", inventory)
 			assertDirectoryExistsWithInventory(t, "/tmp/spage/spage_command_dir", inventory)
@@ -1279,6 +1289,36 @@ func TestOverwritingVariablesPlaybook(t *testing.T) {
 		configFile:   "sequential_no_revert.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.Equal(t, 0, exitCode, "overwriting_variables should succeed")
+		},
+	})
+}
+
+func TestDebugPlaybook(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/debug_playbook.yaml",
+		configFile:   "sequential.yaml",
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "debug_playbook should succeed")
+		},
+	})
+}
+
+func TestDebugRevertPlaybook(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/debug_revert_playbook.yaml",
+		configFile:   "sequential.yaml",
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 1, exitCode, "debug_revert_playbook should fail")
+		},
+	})
+}
+
+func TestBlockPlaybook(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/block_playbook.yaml",
+		configFile:   "sequential.yaml",
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "block_playbook should succeed")
 		},
 	})
 }

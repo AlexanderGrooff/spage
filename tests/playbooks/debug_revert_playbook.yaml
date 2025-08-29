@@ -11,16 +11,6 @@
         variable_name_to_debug: "{{ nested_var }}"
         another_variable: "This is another var"
         my_list_item: "list item"
-        map_var:
-          nested_key_1: 123
-          nested_key_2: "nested var string"
-          nested_map:
-            nested_key_3: "nested map string"
-            nested_key_4: 456
-            nested_key_5:
-              - "nested list item 1"
-              - "nested list item 2"
-              - "nested list item 3"
 
     - name: Debug with a static message (should execute)
       debug:
@@ -41,6 +31,15 @@
       debug:
         var: variable_name_to_debug
 
-    - name: Debug map variable
+    - name: Intentionally fail to trigger revert of preceding debug tasks
+      command: /bin/false
+      # This task's failure should trigger revert on the three debug tasks above.
+
+    # These tasks should NOT be executed due to the failure above.
+    - name: This debug task (msg) should NOT run
       debug:
-        var: map_var
+        msg: "This message should NOT appear in logs."
+
+    - name: This debug task (var) should NOT run
+      debug:
+        var: another_variable

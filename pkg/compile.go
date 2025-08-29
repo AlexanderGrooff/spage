@@ -612,23 +612,23 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			if pythonModule, ok := GetModule("ansible_python"); ok {
 				module = pythonModule
 
-				// Convert rawParams to map[string]interface{}
-				var paramsMap map[string]interface{}
-				if moduleParams != nil {
-					if pm, ok := moduleParams.(map[string]interface{}); ok {
-						paramsMap = pm
-					} else {
-						// Try to convert other types to a simple parameter
-						paramsMap = map[string]interface{}{"value": moduleParams}
-					}
-				} else {
-					paramsMap = make(map[string]interface{})
+				// Preserve map or slice params for args; wrap other types
+				var args interface{}
+				switch v := moduleParams.(type) {
+				case map[string]interface{}:
+					args = v
+				case []interface{}:
+					args = v
+				case nil:
+					args = map[string]interface{}{}
+				default:
+					args = map[string]interface{}{"value": moduleParams}
 				}
 
 				// Create the AnsiblePythonInput structure
 				moduleParams = map[string]interface{}{
 					"module_name": moduleName,
-					"args":        paramsMap,
+					"args":        args,
 				}
 			} else {
 				errors = append(errors, fmt.Errorf("ansible_python module not registered for unknown module %s", moduleName))

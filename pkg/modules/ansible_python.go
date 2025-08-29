@@ -17,52 +17,89 @@ import (
 
 // AnsiblePythonInput defines parameters for executing Python Ansible modules
 type AnsiblePythonInput struct {
-	ModuleName string                 `yaml:"module_name" json:"module_name"`
-	Args       map[string]interface{} `yaml:"args" json:"args"`
+	ModuleName string      `yaml:"module_name" json:"module_name"`
+	Args       interface{} `yaml:"args" json:"args"`
 }
 
 func (i AnsiblePythonInput) ToCode() string {
-	// Convert Args map to Go code format
-	argsCode := "map[string]interface{}{"
-	for k, v := range i.Args {
-		switch val := v.(type) {
-		case string:
-			argsCode += fmt.Sprintf("%q:%q,", k, val)
-		case bool:
-			argsCode += fmt.Sprintf("%q:%t,", k, val)
-		case int, int32, int64:
-			argsCode += fmt.Sprintf("%q:%v,", k, val)
-		case float32, float64:
-			argsCode += fmt.Sprintf("%q:%v,", k, val)
-		case []interface{}:
-			// Handle slice values like ["hostname test-switch","interface Ethernet1","  no shutdown"]
-			sliceCode := "[]interface{}{"
-			for _, item := range val {
-				switch itemVal := item.(type) {
-				case string:
-					sliceCode += fmt.Sprintf("%q,", itemVal)
-				default:
-					sliceCode += fmt.Sprintf("%v,", itemVal)
-				}
-			}
-			sliceCode += "}"
-			argsCode += fmt.Sprintf("%q:%s,", k, sliceCode)
-		default:
-			argsCode += fmt.Sprintf("%q:interface{}(%v),", k, val)
+	// Convert Args (map or slice) to Go code format
+	var argsCode string
+	switch v := i.Args.(type) {
+	case map[string]interface{}:
+		b := strings.Builder{}
+		b.WriteString("map[string]interface{}{")
+		for mk, mv := range v {
+			b.WriteString(fmt.Sprintf("%q:%s,", mk, generateGoLiteral(mv)))
 		}
+		b.WriteString("}")
+		argsCode = b.String()
+	case []interface{}:
+		b := strings.Builder{}
+		b.WriteString("[]interface{}{")
+		for _, sv := range v {
+			b.WriteString(generateGoLiteral(sv))
+			b.WriteString(",")
+		}
+		b.WriteString("}")
+		argsCode = b.String()
+	case nil:
+		argsCode = "nil"
+	default:
+		argsCode = fmt.Sprintf("interface{}(%v)", v)
 	}
-	argsCode += "}"
 	return fmt.Sprintf("modules.AnsiblePythonInput{ModuleName: %q, Args: %s}", i.ModuleName, argsCode)
+}
+
+// generateGoLiteral renders a best-effort Go code literal for common JSON/YAML-like values
+func generateGoLiteral(val interface{}) string {
+	switch v := val.(type) {
+	case string:
+		return fmt.Sprintf("%q", v)
+	case bool:
+		return fmt.Sprintf("%t", v)
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return fmt.Sprintf("%v", v)
+	case map[string]interface{}:
+		b := strings.Builder{}
+		b.WriteString("map[string]interface{}{")
+		for mk, mv := range v {
+			b.WriteString(fmt.Sprintf("%q:%s,", mk, generateGoLiteral(mv)))
+		}
+		b.WriteString("}")
+		return b.String()
+	case []interface{}:
+		b := strings.Builder{}
+		b.WriteString("[]interface{}{")
+		for _, sv := range v {
+			b.WriteString(generateGoLiteral(sv))
+			b.WriteString(",")
+		}
+		b.WriteString("}")
+		return b.String()
+	default:
+		return fmt.Sprintf("interface{}(%v)", v)
+	}
 }
 
 func (i AnsiblePythonInput) GetVariableUsage() []string {
 	var variables []string
-	// Extract variables from arguments recursively
-	for _, v := range i.Args {
-		if str, ok := v.(string); ok {
-			variables = append(variables, pkg.GetVariableUsageFromTemplate(str)...)
+	// Extract variables from arguments recursively, handling map and slice
+	var walk func(val interface{})
+	walk = func(val interface{}) {
+		switch tv := val.(type) {
+		case string:
+			variables = append(variables, pkg.GetVariableUsageFromTemplate(tv)...)
+		case map[string]interface{}:
+			for _, mv := range tv {
+				walk(mv)
+			}
+		case []interface{}:
+			for _, sv := range tv {
+				walk(sv)
+			}
 		}
 	}
+	walk(i.Args)
 	return variables
 }
 
@@ -456,23 +493,23 @@ func (m PythonFallbackModule) ParameterAliases() map[string]string {
 
 // GetPythonFallbackForCompilation creates a Python fallback module and params for compilation phase
 func GetPythonFallbackForCompilation(moduleName string, rawParams interface{}) (pkg.Module, interface{}) {
-	// Convert rawParams to map[string]interface{}
-	var paramsMap map[string]interface{}
-	if rawParams != nil {
-		if pm, ok := rawParams.(map[string]interface{}); ok {
-			paramsMap = pm
-		} else {
-			// Try to convert other types to a simple parameter
-			paramsMap = map[string]interface{}{"value": rawParams}
-		}
-	} else {
-		paramsMap = make(map[string]interface{})
+	// Preserve map or slice params as-is; fallback to map with single value otherwise
+	var args interface{}
+	switch v := rawParams.(type) {
+	case map[string]interface{}:
+		args = v
+	case []interface{}:
+		args = v
+	case nil:
+		args = map[string]interface{}{}
+	default:
+		args = map[string]interface{}{"value": rawParams}
 	}
 
 	// Create the AnsiblePythonInput structure directly
 	pythonInput := AnsiblePythonInput{
 		ModuleName: moduleName,
-		Args:       paramsMap,
+		Args:       args,
 	}
 
 	return PythonFallbackModule{}, pythonInput

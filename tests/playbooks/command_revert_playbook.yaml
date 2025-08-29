@@ -23,3 +23,8 @@
     # Revert action: remove the file created by execute
     revert: rm -f /tmp/spage/spage_command_revert.txt
   after: Test command with arguments (create directory)
+
+# This task is designed to fail, triggering the revert of the previous task
+- name: Fail intentionally to trigger revert
+  command: /bin/false # Use command to ensure it runs directly
+  after: Test revert command (create file)

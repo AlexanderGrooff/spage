@@ -188,3 +188,46 @@ func TestParseAnsibleOutput_ErrorWithoutJSON(t *testing.T) {
 	assert.True(t, ok)
 	assert.Contains(t, ro, "ERROR!")
 }
+
+func TestAnsiblePythonInput_SliceArgs_ToCodeAndVars(t *testing.T) {
+	apt := &AnsiblePythonInput{
+		ModuleName: "block",
+		Args: []interface{}{
+			map[string]interface{}{"name": "task 1", "command": "/bin/true"},
+			map[string]interface{}{"name": "task {{ myvar }}", "command": "/bin/true"},
+		},
+	}
+
+	// Ensure it implements ConcreteModuleInputProvider
+	var _ pkg.ConcreteModuleInputProvider = apt
+
+	mi := &pkg.ModuleInput{Actual: apt}
+	code := mi.ToCode()
+	assert.Contains(t, code, "AnsiblePythonInput")
+	assert.Contains(t, code, "[]interface{}", "ToCode should render slice args when provided a slice")
+	assert.Contains(t, code, "\"block\"")
+
+	vars := mi.GetVariableUsage()
+	assert.Contains(t, vars, "myvar", "Variable extraction should find variables in slice args")
+}
+
+func TestGetPythonFallbackForCompilation_SliceArgs(t *testing.T) {
+	raw := []interface{}{
+		map[string]interface{}{"name": "task 1", "command": "/bin/true"},
+		map[string]interface{}{"name": "task 2", "command": "/bin/true"},
+	}
+	mod, params := GetPythonFallbackForCompilation("block", raw)
+	assert.NotNil(t, mod)
+
+	inp, ok := params.(AnsiblePythonInput)
+	if !ok {
+		t.Fatalf("expected AnsiblePythonInput, got %T", params)
+	}
+	assert.Equal(t, "block", inp.ModuleName)
+
+	argsSlice, ok := inp.Args.([]interface{})
+	if !ok {
+		t.Fatalf("expected slice args, got %T", inp.Args)
+	}
+	assert.Equal(t, 2, len(argsSlice))
+}

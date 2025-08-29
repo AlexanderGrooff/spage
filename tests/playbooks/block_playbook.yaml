@@ -1,0 +1,20 @@
+---
+- name: series of tasks
+  block:
+    - name: task 1
+      command: /bin/true
+    - name: task 2
+      command: /bin/true
+    - name: task 3
+      command: /bin/true
+    - name: task 4
+      command: /bin/true
+    - name: task 5
+      command: /bin/true
+  rescue:
+    - name: task 6
+      command: /bin/true
+  always:
+    - name: task 7
+      command: /bin/true
+  when: true
