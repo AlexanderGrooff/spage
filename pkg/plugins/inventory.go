@@ -264,8 +264,16 @@ func (pm *PluginManager) parseAnsibleInventoryOutput(output []byte) (*PluginInve
 								Name: hostName,
 								Vars: hostVars,
 							}
+						} else {
+							common.LogWarn(fmt.Sprintf("Key %s for host %s is not a map", hostName, hostName), map[string]interface{}{
+								"hostvars": hostvars,
+							})
 						}
 					}
+				} else {
+					common.LogWarn("Meta hostvars is not a map", map[string]interface{}{
+						"hostvars": hostvars,
+					})
 				}
 			}
 		}
