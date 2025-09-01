@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/AlexanderGrooff/spage/pkg"
+	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/config"
 	"github.com/AlexanderGrooff/spage/pkg/executor"
 )
@@ -54,6 +55,7 @@ var (
 	temporalSkipTags      []string
 	temporalExtraVars     []string
 	temporalBecomeMode    bool
+	temporalVerbose       bool
 )
 
 func NewTemporalExecutorCmd(graph pkg.Graph) *cobra.Command {
@@ -81,6 +83,12 @@ func NewTemporalExecutorCmd(graph pkg.Graph) *cobra.Command {
 				log.Printf("Spage config loaded from '%s'.", spageConfigPath)
 			}
 			spageAppConfig := GetConfig() // GetConfig() provides defaults if loading failed or no file specified
+
+			// Set verbose logging if enabled
+			if temporalVerbose {
+				common.SetLogLevel("debug")
+				common.LogInfo("Verbose logging enabled", nil)
+			}
 
 			if temporalCheckMode {
 				if spageAppConfig.Facts == nil {
@@ -141,6 +149,7 @@ func NewTemporalExecutorCmd(graph pkg.Graph) *cobra.Command {
 	temporalCmd.Flags().StringSliceVar(&temporalSkipTags, "skip-tags", []string{}, "Skip tasks with these tags (comma-separated)")
 	temporalCmd.Flags().StringSliceVarP(&temporalExtraVars, "extra-vars", "e", []string{}, "Set additional variables as key=value or YAML/JSON")
 	temporalCmd.Flags().BoolVar(&temporalBecomeMode, "become", false, "Run all tasks with become: true and become_user: root")
+	temporalCmd.Flags().BoolVarP(&temporalVerbose, "verbose", "v", false, "Enable verbose logging (sets log level to debug)")
 	temporalCmd.Flags().StringVarP(&limitHosts, "limit", "l", "", "Limit execution to hosts matching the given pattern")
 
 	return temporalCmd

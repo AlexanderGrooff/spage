@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/AlexanderGrooff/spage/pkg"
+	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/config"
 	"github.com/AlexanderGrooff/spage/pkg/executor"
 )
@@ -34,6 +35,7 @@ var (
 	localSkipTags      []string
 	localExtraVars     []string
 	localBecomeMode    bool
+	localVerbose       bool
 )
 
 func NewLocalExecutorCmd(graph pkg.Graph) *cobra.Command {
@@ -47,6 +49,12 @@ func NewLocalExecutorCmd(graph pkg.Graph) *cobra.Command {
 			if err != nil {
 				fmt.Printf("Error loading config: %v\n", err)
 				return err
+			}
+
+			// Set verbose logging if enabled
+			if localVerbose {
+				common.SetLogLevel("debug")
+				common.LogInfo("Verbose logging enabled", nil)
 			}
 
 			cfg := GetConfig()
@@ -106,6 +114,7 @@ func NewLocalExecutorCmd(graph pkg.Graph) *cobra.Command {
 	localCmd.Flags().StringSliceVar(&localSkipTags, "skip-tags", []string{}, "Skip tasks with these tags (comma-separated)")
 	localCmd.Flags().StringSliceVarP(&localExtraVars, "extra-vars", "e", []string{}, "Set additional variables as key=value or YAML/JSON")
 	localCmd.Flags().BoolVar(&localBecomeMode, "become", false, "Run all tasks with become: true and become_user: root")
+	localCmd.Flags().BoolVarP(&localVerbose, "verbose", "v", false, "Enable verbose logging (sets log level to debug)")
 	localCmd.Flags().StringVarP(&limitHosts, "limit", "l", "", "Limit execution to hosts matching the given pattern")
 
 	return localCmd

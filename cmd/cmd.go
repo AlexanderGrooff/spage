@@ -42,6 +42,7 @@ var (
 	becomeMode     bool
 	limitHosts     string // Host pattern to limit execution to
 	connectionType string // Connection type override (e.g., local)
+	verbose        bool   // Verbose logging flag
 
 	// Daemon communication flags
 	daemonGRPC string
@@ -93,6 +94,11 @@ var LoadConfig = func(configFile string) error {
 	// Call SetLogFormat with the loaded logging config
 	if err := common.SetLogFormat(cfg.Logging); err != nil {
 		return fmt.Errorf("error setting log format: %w", err)
+	}
+
+	if verbose {
+		common.SetLogLevel("debug")
+		common.LogInfo("Verbose logging enabled", nil)
 	}
 
 	return nil
@@ -662,6 +668,7 @@ var bundleUploadCmd = &cobra.Command{
 func init() {
 	// Add config flag to root command so it's available to all subcommands
 	RootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "", "Config file path (default: ./spage.yaml)")
+	RootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose logging (sets log level to debug)")
 
 	generateCmd.Flags().StringVarP(&playbookFile, "playbook", "p", "", "Playbook file (required)")
 	generateCmd.Flags().StringVarP(&outputFile, "output", "o", "generated_tasks.go", "Output file (default: generated_tasks.go)")
