@@ -60,7 +60,7 @@
       register: tmp_dir
 
     - set_fact:
-        build_dir: '{{ tmp_dir.path }}/{{ inventory_hostname }}/'
+        build_dir: "{{ tmp_dir.path }}/{{ inventory_hostname }}/"
 
     - name: test file
       file:
@@ -72,3 +72,11 @@
       assert:
         that:
           - not file_result.failed
+
+    - name: loop with ansible_python
+      ping:
+        data: "{{ item }}"
+      loop:
+        - item1
+        - item2
+        - item3

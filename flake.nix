@@ -14,7 +14,7 @@
       {
         devShells.default = pkgs.mkShell {
           nativeBuildInputs = [
-            pkgs.go_1_23 # Or your preferred Go version
+            pkgs.go_1_24
             pkgs.temporal-cli
             pkgs.golangci-lint
             pkgs.ansible

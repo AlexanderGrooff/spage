@@ -1,8 +1,6 @@
 module github.com/AlexanderGrooff/spage
 
-go 1.23.3
-
-toolchain go1.23.8
+go 1.24
 
 require (
 	github.com/spf13/cobra v1.9.1
