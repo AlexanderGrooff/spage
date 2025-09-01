@@ -34,11 +34,11 @@ require (
 	github.com/pkg/sftp v1.13.9
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.10.0
-	go.temporal.io/sdk v1.35.0
+	go.temporal.io/sdk v1.36.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/term v0.34.0
 	google.golang.org/grpc v1.67.3
-	google.golang.org/protobuf v1.36.5
+	google.golang.org/protobuf v1.36.6
 )
 
 require (
@@ -46,14 +46,14 @@ require (
 	github.com/facebookgo/clock v0.0.0-20150410010913-600d898af40a // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/mock v1.6.0 // indirect
-	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0 // indirect
+	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.2 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.22.0 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/nexus-rpc/sdk-go v0.3.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.3 // indirect
 	github.com/robfig/cron v1.2.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
-	go.temporal.io/api v1.49.1 // indirect
+	go.temporal.io/api v1.51.0 // indirect
 	golang.org/x/net v0.42.0 // indirect
 	golang.org/x/sync v0.16.0 // indirect
 	golang.org/x/time v0.8.0 // indirect
