@@ -514,6 +514,9 @@ This command supports both static inventory files and dynamic inventory plugins.
 		if inventoryFile == "" {
 			return fmt.Errorf("inventory file not specified and no default inventory configured")
 		}
+		common.LogDebug("Loading inventory", map[string]interface{}{
+			"inventory_file": inventoryFile,
+		})
 		// Use our inventory loading system which supports plugins
 		inventory, err := pkg.LoadInventoryWithPaths(inventoryFile, cfg.Inventory, ".", "", cfg)
 		if err != nil {
@@ -694,9 +697,6 @@ func init() {
 	runCmd.Flags().StringVar(&daemonGRPC, "daemon-grpc", "", "Daemon gRPC endpoint (default: localhost:9091)")
 	runCmd.Flags().StringVar(&playID, "play-id", "", "Play ID for daemon communication")
 
-	RootCmd.AddCommand(generateCmd)
-	RootCmd.AddCommand(runCmd)
-
 	// Inventory list flags
 	inventoryListCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file or directory")
 
@@ -719,7 +719,11 @@ func init() {
 
 	bundleCmd.AddCommand(bundleCreateCmd)
 	bundleCmd.AddCommand(bundleUploadCmd)
+
+	RootCmd.AddCommand(generateCmd)
+	RootCmd.AddCommand(runCmd)
 	RootCmd.AddCommand(bundleCmd)
+	RootCmd.AddCommand(inventoryCmd)
 }
 
 // GetConfig returns the loaded configuration
