@@ -42,7 +42,7 @@ var (
 	becomeMode     bool
 	limitHosts     string // Host pattern to limit execution to
 	connectionType string // Connection type override (e.g., local)
-	verbose        bool   // Verbose logging flag
+	verbose        bool
 
 	// Daemon communication flags
 	daemonGRPC string
@@ -98,7 +98,6 @@ var LoadConfig = func(configFile string) error {
 
 	if verbose {
 		common.SetLogLevel("debug")
-		common.LogInfo("Verbose logging enabled", nil)
 	}
 
 	return nil

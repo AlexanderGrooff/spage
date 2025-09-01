@@ -87,7 +87,6 @@ func NewTemporalExecutorCmd(graph pkg.Graph) *cobra.Command {
 			// Set verbose logging if enabled
 			if temporalVerbose {
 				common.SetLogLevel("debug")
-				common.LogInfo("Verbose logging enabled", nil)
 			}
 
 			if temporalCheckMode {

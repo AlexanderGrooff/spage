@@ -54,7 +54,6 @@ func NewLocalExecutorCmd(graph pkg.Graph) *cobra.Command {
 			// Set verbose logging if enabled
 			if localVerbose {
 				common.SetLogLevel("debug")
-				common.LogInfo("Verbose logging enabled", nil)
 			}
 
 			cfg := GetConfig()
