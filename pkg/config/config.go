@@ -26,7 +26,7 @@ type Config struct {
 	// Inventory plugins configuration (Ansible-like behaviour)
 	// Colon-delimited paths to search for inventory plugins (e.g. "./plugins/inventory:/usr/share/ansible/plugins/inventory")
 	InventoryPlugins string `mapstructure:"inventory_plugins"`
-	// List of enabled plugin names/patterns (e.g. ["host_list", "script", "yaml", "monkeypatch_batch_strategy"])
+	// List of enabled plugin names/patterns (e.g. ["host_list"])
 	EnablePlugins       []string                  `mapstructure:"enable_plugins"`
 	PrivilegeEscalation PrivilegeEscalationConfig `mapstructure:"privilege_escalation"`
 	SSH                 SSHConfig                 `mapstructure:"ssh"`

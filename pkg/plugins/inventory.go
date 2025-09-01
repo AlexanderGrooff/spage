@@ -64,7 +64,7 @@ func NewPluginManager() *PluginManager {
 }
 
 // LoadPlugin attempts to load an inventory plugin by name
-func (pm *PluginManager) LoadPlugin(ctx context.Context, pluginName string, config map[string]interface{}) (*PluginInventoryResult, error) {
+func (pm *PluginManager) LoadPlugin(ctx context.Context, pluginName string, config map[string]interface{}, inventoryContent []byte) (*PluginInventoryResult, error) {
 	common.LogDebug("Loading inventory plugin", map[string]interface{}{
 		"plugin": pluginName,
 		"config": config,
@@ -81,7 +81,7 @@ func (pm *PluginManager) LoadPlugin(ctx context.Context, pluginName string, conf
 	}
 
 	// Fallback to Python/Ansible plugin
-	return pm.loadPythonPlugin(ctx, pluginName, config)
+	return pm.loadPythonPlugin(ctx, pluginName, config, inventoryContent)
 }
 
 // loadGoPlugin attempts to load a Go-based inventory plugin
@@ -124,7 +124,7 @@ func (pm *PluginManager) loadGoPlugin(ctx context.Context, pluginName string, co
 }
 
 // loadPythonPlugin attempts to load a Python/Ansible-based inventory plugin
-func (pm *PluginManager) loadPythonPlugin(ctx context.Context, pluginName string, config map[string]interface{}) (*PluginInventoryResult, error) {
+func (pm *PluginManager) loadPythonPlugin(ctx context.Context, pluginName string, config map[string]interface{}, inventoryContent []byte) (*PluginInventoryResult, error) {
 	common.LogDebug("Attempting to load Python inventory plugin", map[string]interface{}{
 		"plugin": pluginName,
 	})
@@ -149,17 +149,9 @@ func (pm *PluginManager) loadPythonPlugin(ctx context.Context, pluginName string
 	}()
 
 	inventoryFile := filepath.Join(tempDir, "plugin_inventory.yml")
-	inventoryContent := fmt.Sprintf("plugin: %s\n", pluginName)
 
-	// Add configuration parameters (skip internal keys prefixed with "__")
-	for key, value := range config {
-		if strings.HasPrefix(key, "__") {
-			continue
-		}
-		inventoryContent += fmt.Sprintf("%s: %v\n", key, value)
-	}
-
-	if err := os.WriteFile(inventoryFile, []byte(inventoryContent), 0644); err != nil {
+	// Use the full inventory content instead of creating minimal content
+	if err := os.WriteFile(inventoryFile, inventoryContent, 0644); err != nil {
 		return nil, fmt.Errorf("failed to write plugin inventory file: %w", err)
 	}
 
@@ -214,6 +206,7 @@ func (pm *PluginManager) loadPythonPlugin(ctx context.Context, pluginName string
 			}
 		}
 	}
+
 	cmd.Env = env
 	output, err := cmd.Output()
 	if err != nil {
@@ -243,7 +236,7 @@ func (pm *PluginManager) parseAnsibleInventoryOutput(output []byte) (*PluginInve
 	// Parse the JSON output from ansible-inventory --list
 	// Format documented at: https://docs.ansible.com/ansible/latest/dev_guide/developing_inventory.html
 
-	common.LogDebug("Parsing ansible-inventory output", map[string]interface{}{})
+	common.LogDebug("Parsing ansible-inventory output", map[string]interface{}{"output": string(output)})
 
 	var rawInventory map[string]interface{}
 	if err := json.Unmarshal(output, &rawInventory); err != nil {
@@ -306,6 +299,17 @@ func (pm *PluginManager) parseAnsibleInventoryOutput(output []byte) (*PluginInve
 									Name: hostName,
 									Vars: make(map[string]interface{}),
 								}
+							}
+						}
+					}
+				} else if hostsMap, ok := hostsData.(map[string]interface{}); ok {
+					// Some inventories represent hosts as a map of hostname -> (ignored value)
+					for hostName := range hostsMap {
+						group.Hosts = append(group.Hosts, hostName)
+						if _, exists := result.Hosts[hostName]; !exists {
+							result.Hosts[hostName] = &PluginHost{
+								Name: hostName,
+								Vars: make(map[string]interface{}),
 							}
 						}
 					}
@@ -437,8 +441,8 @@ func (pm *PluginManager) DiscoverPlugins() ([]string, error) {
 }
 
 // LoadInventoryFromPlugin loads inventory from a plugin and converts to standard Inventory format
-func (pm *PluginManager) LoadInventoryFromPlugin(ctx context.Context, pluginName string, config map[string]interface{}) (*Inventory, error) {
-	pluginResult, err := pm.LoadPlugin(ctx, pluginName, config)
+func (pm *PluginManager) LoadInventoryFromPlugin(ctx context.Context, pluginName string, config map[string]interface{}, inventoryContent []byte) (*Inventory, error) {
+	pluginResult, err := pm.LoadPlugin(ctx, pluginName, config, inventoryContent)
 	if err != nil {
 		return nil, err
 	}

@@ -35,13 +35,10 @@ func TestPluginInventoryWithGroupAndHostVarsMerged(t *testing.T) {
 		}
 	}()
 
-	// 1) Plugin inventory file: use host_list plugin to define three hosts
+	// 1) Plugin inventory file: use script plugin to define three hosts via external script
 	pluginInvPath := filepath.Join(tempDir, "01-plugin.yaml")
-	pluginInvContent := `plugin: host_list
-hosts:
-  - web01.example.com
-  - web02.example.com
-  - db01.example.com
+	pluginInvContent := `plugin: script
+script: ../inventory_script.py
 `
 	err = os.WriteFile(pluginInvPath, []byte(pluginInvContent), 0644)
 	require.NoError(t, err)
@@ -101,6 +98,14 @@ shared: from_host
 	require.Contains(t, inventory.Hosts, "db01.example.com")
 	require.Contains(t, inventory.Groups, "web")
 	require.Contains(t, inventory.Groups, "databases")
+
+	// Validate that exactly 3 hosts were loaded from the script plugin
+	assert.Equal(t, 3, len(inventory.Hosts), "Script plugin should have loaded exactly 3 hosts")
+	hostNames := make([]string, 0, len(inventory.Hosts))
+	for name := range inventory.Hosts {
+		hostNames = append(hostNames, name)
+	}
+	t.Logf("Successfully loaded %d hosts from script plugin: %v", len(inventory.Hosts), hostNames)
 
 	// Verify facts merging for a web group member with host_vars override
 	web01 := inventory.Hosts["web01.example.com"]

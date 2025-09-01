@@ -683,7 +683,7 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 			}
 		}
 
-		data, err := os.ReadFile(filePath)
+		invData, err := os.ReadFile(filePath)
 		if err != nil {
 			// Change from log.Fatalf to return error to allow fallback behavior
 			common.LogWarn("Failed to read inventory file, skipping", map[string]interface{}{
@@ -695,7 +695,7 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 
 		// Check if this is a plugin-based inventory
 		var pluginConfig map[string]interface{}
-		if err := yaml.Unmarshal(data, &pluginConfig); err == nil {
+		if err := yaml.Unmarshal(invData, &pluginConfig); err == nil {
 			if pluginName, hasPlugin := pluginConfig["plugin"]; hasPlugin {
 				common.LogDebug("Detected plugin-based inventory", map[string]interface{}{
 					"file":   filePath,
@@ -716,7 +716,7 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 						pluginConfig["__spage_enable_plugins"] = cfg.EnablePlugins
 					}
 				}
-				pluginInventory, err := pm.LoadInventoryFromPlugin(context.Background(), fmt.Sprintf("%v", pluginName), pluginConfig)
+				pluginInventory, err := pm.LoadInventoryFromPlugin(context.Background(), fmt.Sprintf("%v", pluginName), pluginConfig, invData)
 				if err != nil {
 					return nil, fmt.Errorf("failed to load inventory from plugin %s: %w", pluginName, err)
 				}
@@ -733,7 +733,7 @@ func LoadInventoryWithPaths(path string, inventoryPaths string, workingDir strin
 		var inventory Inventory
 		inventory.Hosts = make(map[string]*Host)
 		inventory.Groups = make(map[string]*Group)
-		err = yaml.Unmarshal(data, &inventory)
+		err = yaml.Unmarshal(invData, &inventory)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing inventory file %s: %w", filePath, err)
 		}

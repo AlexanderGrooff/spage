@@ -77,7 +77,7 @@ func TestPluginManager_LoadPlugin_GoPluginNotFound(t *testing.T) {
 	}
 
 	// Test with non-existent Go plugin - should try Python fallback
-	result, err := pm.LoadPlugin(ctx, "nonexistent", config)
+	result, err := pm.LoadPlugin(ctx, "nonexistent", config, nil)
 
 	// Two possible outcomes:
 	// 1. Error if ansible-inventory is not available or plugin fails
