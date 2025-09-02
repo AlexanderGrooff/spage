@@ -247,12 +247,10 @@ func (m AnsiblePythonModule) executePythonModule(params AnsiblePythonInput, clos
 	}
 
 	// Create inventory file
-	inventoryContent := map[string]interface{}{
-		"all": map[string]interface{}{
-			"hosts": map[string]interface{}{
-				hostname: map[string]interface{}{
-					"ansible_connection": connection,
-				},
+	inventoryContent := map[string]any{
+		"all": map[string]any{
+			"hosts": map[string]any{
+				hostname: closure.GetFacts(),
 			},
 		},
 	}
