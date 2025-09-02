@@ -231,3 +231,49 @@ func TestGetPythonFallbackForCompilation_SliceArgs(t *testing.T) {
 	}
 	assert.Equal(t, 2, len(argsSlice))
 }
+
+func TestParseAnsibleOutput_HttpApi(t *testing.T) {
+	m := AnsiblePythonModule{}
+	// Sample output captured from ansible-playbook -v on localhost with tempfile module
+	raw := `Using /some/path/ansible.cfg as config file
+
+PLAY [somehost] ***************************************************************
+
+TASK [Execute eoscommand] ********************************************************
+[WARNING]: Platform darwin on host somehost is using the discovered Python
+interpreter at /usr/local/bin/python3.12, but future installation of
+another Python interpreter could change the meaning of that path. See
+https://docs.ansible.com/ansible-
+core/2.14/reference_appendices/interpreter_discovery.html for more information.
+ok: [somehost] => {
+    "changed": false,
+}
+
+STDOUT:
+
+[{"some_key": "some_value"}]
+
+PLAY RECAP *********************************************************************
+somehost                  : ok=1    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+`
+
+	out := m.parseAnsibleOutput(raw, "eoscommand")
+
+	assert.True(t, out.WasChanged, "changed should be true")
+	assert.False(t, out.Failed, "failed should be false")
+	assert.Equal(t, "", out.Msg, "msg should be empty when not present in JSON")
+
+	// Results should contain parsed JSON without raw_output
+	_, hasRaw := out.Results["raw_output"]
+	assert.False(t, hasRaw, "raw_output should not be present when JSON was parsed")
+	assert.Contains(t, out.Results, "some_key")
+
+	facts, ok := out.Results["some_key"].([]interface{})
+	assert.True(t, ok, "ansible_facts should be a slice")
+
+	fact, ok := facts[0].(map[string]interface{})
+	assert.True(t, ok, "some_key should be a map")
+
+	_, ok = fact["some_key"].(string)
+	assert.True(t, ok, "some_key value should be a string")
+}

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 
 	"github.com/AlexanderGrooff/spage/pkg"
@@ -344,9 +345,51 @@ func (m AnsiblePythonModule) parseAnsibleOutput(output, moduleName string) Ansib
 	var buf strings.Builder
 	accumulating := false
 	braceDepth := 0
+	inStdout := false
+	var stdoutBuf strings.Builder
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
+
+		// Capture JSON printed under a separate STDOUT: section
+		if strings.HasPrefix(line, "STDOUT:") {
+			inStdout = true
+			stdoutBuf.Reset()
+			continue
+		}
+		if inStdout {
+			// Only terminate and parse when we have captured some content and hit a blank line
+			if line == "" {
+				if stdoutBuf.Len() == 0 {
+					// Ignore leading blank right after STDOUT:
+					continue
+				}
+				var stdoutVal interface{}
+				if err := json.Unmarshal([]byte(stdoutBuf.String()), &stdoutVal); err == nil {
+					// If array of objects, expose keys mapping to the array
+					if arr, ok := stdoutVal.([]interface{}); ok {
+						if len(arr) > 0 {
+							if obj, ok := arr[0].(map[string]interface{}); ok {
+								for k := range obj {
+									result.Results[k] = arr
+								}
+							}
+						}
+					} else if obj, ok := stdoutVal.(map[string]interface{}); ok {
+						for k, v := range obj {
+							result.Results[k] = v
+						}
+					}
+				}
+				inStdout = false
+				continue
+			}
+			if stdoutBuf.Len() > 0 {
+				stdoutBuf.WriteString("\n")
+			}
+			stdoutBuf.WriteString(line)
+			continue
+		}
 
 		// Look for JSON output in ansible verbose mode (single- or multi-line)
 		if !accumulating {
@@ -436,6 +479,21 @@ func (m AnsiblePythonModule) parseAnsibleOutput(output, moduleName string) Ansib
 			result.Failed = true
 			if result.Msg == "" {
 				result.Msg = fmt.Sprintf("Ansible error: %s", line)
+			}
+		}
+
+		// Parse PLAY RECAP summary line to infer changed/failed
+		if strings.Contains(line, " ok=") && strings.Contains(line, " changed=") && strings.Contains(line, " failed=") {
+			reChanged := regexp.MustCompile(`\bchanged=(\d+)`)
+			if m := reChanged.FindStringSubmatch(line); len(m) == 2 && m[1] != "0" {
+				result.WasChanged = true
+			}
+			reFailed := regexp.MustCompile(`\bfailed=(\d+)`)
+			if m := reFailed.FindStringSubmatch(line); len(m) == 2 && m[1] != "0" {
+				result.Failed = true
+				if result.Msg == "" {
+					result.Msg = "Ansible execution failed"
+				}
 			}
 		}
 	}
