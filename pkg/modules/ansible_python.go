@@ -121,10 +121,10 @@ func (i AnsiblePythonInput) ProvidesVariables() []string {
 
 // AnsiblePythonOutput defines the output from a Python Ansible module execution
 type AnsiblePythonOutput struct {
-	WasChanged bool        `yaml:"changed" json:"changed"`
-	Failed     bool        `yaml:"failed" json:"failed"`
-	Msg        string      `yaml:"msg" json:"msg"`
-	Results    interface{} `yaml:"results" json:"results"`
+	WasChanged bool                   `yaml:"changed" json:"changed"`
+	Failed     bool                   `yaml:"failed" json:"failed"`
+	Msg        string                 `yaml:"msg" json:"msg"`
+	Results    map[string]interface{} `yaml:"results" json:"results"`
 	pkg.ModuleOutput
 }
 
@@ -149,18 +149,10 @@ func (o AnsiblePythonOutput) AsFacts() map[string]interface{} {
 	facts["failed"] = o.Failed
 	facts["msg"] = o.Msg
 
-	// Attach/flatten results
+	// Flatten the results into the top level
 	if o.Results != nil {
-		switch rv := o.Results.(type) {
-		case map[string]interface{}:
-			common.LogDebug("Flattening Python module results (map)", map[string]interface{}{"results": rv})
-			maps.Copy(facts, rv)
-		case []interface{}:
-			common.LogDebug("Attaching Python module results (slice)", map[string]interface{}{"len": len(rv)})
-			facts["results"] = rv
-		default:
-			facts["results"] = rv
-		}
+		common.LogDebug("Flattening Python module results (map)", map[string]interface{}{"results": o.Results})
+		maps.Copy(facts, o.Results)
 	}
 
 	return facts
@@ -312,7 +304,7 @@ func (m AnsiblePythonModule) executePythonModule(params AnsiblePythonInput, clos
 }
 
 func (m AnsiblePythonModule) parseAnsibleOutput(output, moduleName string) AnsiblePythonOutput {
-	result := AnsiblePythonOutput{Results: nil}
+	result := AnsiblePythonOutput{Results: make(map[string]interface{})}
 	lines := strings.Split(output, "\n")
 
 	var buf strings.Builder
@@ -450,10 +442,10 @@ func (m AnsiblePythonModule) tryParseModuleJSON(jsonStr string, result *AnsibleP
 		if yerr := yaml.Unmarshal([]byte(jsonStr), &yv); yerr == nil {
 			moduleResult = yv
 		} else {
-			return true
+			return false
 		}
 	}
-	result.Results = moduleResult
+	maps.Copy(result.Results, moduleResult)
 	if changed, ok := moduleResult["changed"].(bool); ok {
 		result.WasChanged = changed
 	}
@@ -483,7 +475,7 @@ func (m AnsiblePythonModule) handleStdoutLine(line string, stdoutBuf *strings.Bu
 				return true
 			}
 		}
-		result.Results = stdoutVal
+		result.Results["stdout"] = stdoutVal
 		return true
 	}
 	if stdoutBuf.Len() > 0 {
@@ -500,11 +492,7 @@ func (m AnsiblePythonModule) handleModuleNotFound(line, moduleName string, resul
 	}
 	result.Failed = true
 	result.Msg = fmt.Sprintf("Module '%s' not found in Ansible installation. This module may require additional Ansible collections or may not exist.", moduleName)
-	if mm, ok := result.Results.(map[string]interface{}); ok {
-		mm["ansible_error"] = "module_not_found"
-	} else {
-		result.Results = map[string]interface{}{"ansible_error": "module_not_found"}
-	}
+	result.Results["ansible_error"] = "module_not_found"
 	return true
 }
 

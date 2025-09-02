@@ -81,17 +81,17 @@ localhost                  : ok=1    changed=1    unreachable=0    failed=0    s
 	assert.Equal(t, "", out.Msg, "msg should be empty when not present in JSON")
 
 	// Results should contain parsed JSON without raw_output
-	_, hasRaw := out.Results.(map[string]interface{})["raw_output"]
+	_, hasRaw := out.Results["raw_output"]
 	assert.False(t, hasRaw, "raw_output should not be present when JSON was parsed")
 	assert.Contains(t, out.Results, "ansible_facts")
 
-	facts, ok := out.Results.(map[string]interface{})["ansible_facts"].(map[string]interface{})
+	facts, ok := out.Results["ansible_facts"].(map[string]interface{})
 	assert.True(t, ok, "ansible_facts should be a map")
 
 	_, ok = facts["discovered_interpreter_python"].(string)
 	assert.True(t, ok, "discovered_interpreter_python should be a string")
 
-	_, ok = out.Results.(map[string]interface{})["path"].(string)
+	_, ok = out.Results["path"].(string)
 	assert.True(t, ok, "path should be a string")
 }
 
@@ -132,17 +132,17 @@ somehost                  : ok=1    changed=1    unreachable=0    failed=0    sk
 	assert.Equal(t, "", out.Msg, "msg should be empty when not present in JSON")
 
 	// Results should contain parsed JSON without raw_output
-	_, hasRaw := out.Results.(map[string]interface{})["raw_output"]
+	_, hasRaw := out.Results["raw_output"]
 	assert.False(t, hasRaw, "raw_output should not be present when JSON was parsed")
 	assert.Contains(t, out.Results, "ansible_facts")
 
-	facts, ok := out.Results.(map[string]interface{})["ansible_facts"].(map[string]interface{})
+	facts, ok := out.Results["ansible_facts"].(map[string]interface{})
 	assert.True(t, ok, "ansible_facts should be a map")
 
 	_, ok = facts["discovered_interpreter_python"].(string)
 	assert.True(t, ok, "discovered_interpreter_python should be a string")
 
-	_, ok = out.Results.(map[string]interface{})["path"].(string)
+	_, ok = out.Results["path"].(string)
 	assert.True(t, ok, "path should be a string")
 }
 
@@ -158,8 +158,7 @@ ERROR! couldn't resolve module/action 'unknown_module'. This often indicates a m
 	assert.True(t, out.Failed)
 	assert.False(t, out.WasChanged)
 	assert.Contains(t, out.Msg, "Module 'unknown_module' not found")
-	resMap3, _ := out.Results.(map[string]interface{})
-	assert.Equal(t, "module_not_found", resMap3["ansible_error"])
+	assert.Equal(t, "module_not_found", out.Results["ansible_error"])
 }
 
 func TestParseAnsibleOutput_FailedWithJSON(t *testing.T) {
@@ -172,9 +171,8 @@ func TestParseAnsibleOutput_FailedWithJSON(t *testing.T) {
 	assert.False(t, out.WasChanged)
 	assert.Equal(t, "kaboom", out.Msg)
 	// Ensure JSON was parsed
-	resMap4, _ := out.Results.(map[string]interface{})
-	assert.Equal(t, true, resMap4["failed"])
-	assert.Equal(t, false, resMap4["changed"])
+	assert.Equal(t, true, out.Results["failed"])
+	assert.Equal(t, false, out.Results["changed"])
 }
 
 func TestParseAnsibleOutput_ErrorWithoutJSON(t *testing.T) {
@@ -186,8 +184,7 @@ func TestParseAnsibleOutput_ErrorWithoutJSON(t *testing.T) {
 	assert.True(t, out.Failed)
 	assert.Contains(t, out.Msg, "Ansible error:")
 	// Fallback should include raw_output since no JSON was found
-	resMap5, _ := out.Results.(map[string]interface{})
-	ro, ok := resMap5["raw_output"].(string)
+	ro, ok := out.Results["raw_output"].(string)
 	assert.True(t, ok)
 	assert.Contains(t, ro, "ERROR!")
 }
@@ -267,16 +264,16 @@ somehost                  : ok=1    changed=0    unreachable=0    failed=0    sk
 	assert.Equal(t, "", out.Msg, "msg should be empty when not present in JSON")
 
 	// Results should contain parsed JSON without raw_output and be a slice
-	if _, isSlice := out.Results.([]interface{}); !isSlice {
-		t.Fatalf("expected slice results for httpapi stdout, got %T", out.Results)
+	stdout, isSlice := out.Results["stdout"].([]interface{})
+	if !isSlice {
+		t.Fatalf("expected stdout slice, got %T", out.Results["stdout"])
 	}
-	resSlice := out.Results.([]interface{})
 	// For convenience, also ensure no raw_output key exists when treated as map
-	_, hasRaw := map[string]interface{}{"noop": 0}["raw_output"]
+	_, hasRaw := out.Results["raw_output"]
 	assert.False(t, hasRaw, "raw_output should not be present when JSON was parsed")
-	fact1, ok := resSlice[0].(map[string]interface{})
+	fact1, ok := stdout[0].(map[string]interface{})
 	assert.True(t, ok)
-	fact2, ok := resSlice[1].(map[string]interface{})
+	fact2, ok := stdout[1].(map[string]interface{})
 	assert.True(t, ok)
 
 	_, ok = fact1["some_key"].(bool)
@@ -323,17 +320,17 @@ somehost                  : ok=1    changed=0    unreachable=0    failed=0    sk
 	assert.False(t, out.Failed, "failed should be false")
 	assert.Equal(t, "", out.Msg, "msg should be empty when not present in JSON")
 
-	// Results should contain parsed JSON without raw_output and be a slice
-	if _, isSlice := out.Results.([]interface{}); !isSlice {
-		t.Fatalf("expected slice results for httpapi stdout, got %T", out.Results)
+	// Results should contain parsed JSON without raw_output
+	stdout, isSlice := out.Results["stdout"].([]interface{})
+	if !isSlice {
+		t.Fatalf("expected stdout slice, got %T", out.Results["stdout"])
 	}
-	resSlice := out.Results.([]interface{})
 	// For convenience, also ensure no raw_output key exists when treated as map
-	_, hasRaw := map[string]interface{}{"noop": 0}["raw_output"]
+	_, hasRaw := out.Results["raw_output"]
 	assert.False(t, hasRaw, "raw_output should not be present when JSON was parsed")
-	fact1, ok := resSlice[0].(map[string]interface{})
+	fact1, ok := stdout[0].(map[string]interface{})
 	assert.True(t, ok)
-	fact2, ok := resSlice[1].(map[string]interface{})
+	fact2, ok := stdout[1].(map[string]interface{})
 	assert.True(t, ok)
 
 	_, ok = fact1["some_key"].(bool)
