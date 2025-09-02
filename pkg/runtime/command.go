@@ -42,7 +42,7 @@ func NewCommandOptions(cfg *config.Config) *CommandOptions {
 		UseShell:        false,
 		Interactive:     false,
 		UseSudo:         false,
-		InteractiveSudo: cfg.PrivilegeEscalation.UseInteractive,
+		InteractiveSudo: false,
 		BecomeFlags:     cfg.PrivilegeEscalation.BecomeFlags,
 	}
 }

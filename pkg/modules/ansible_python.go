@@ -135,6 +135,19 @@ func (o AnsiblePythonOutput) String() string {
 	} else if o.WasChanged {
 		status = "changed"
 	}
+	// When Results are available, expose flattened facts similarly to AsFacts
+	if len(o.Results) > 0 {
+		facts := o.AsFacts()
+
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("  status: %s\n", status))
+		if len(facts) > 0 {
+			for k, v := range facts {
+				b.WriteString(fmt.Sprintf("  %s: %v\n", k, v))
+			}
+		}
+		return b.String()
+	}
 	return fmt.Sprintf("  status: %s\n  msg: %q\n  changed: %v\n", status, o.Msg, o.WasChanged)
 }
 
