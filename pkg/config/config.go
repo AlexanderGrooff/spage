@@ -86,11 +86,9 @@ type PrivilegeEscalationConfig struct {
 
 // SSHConfig holds SSH-related configuration
 type SSHConfig struct {
-	// Legacy configuration (maintained for backwards compatibility)
-	UsePasswordFallback bool   `mapstructure:"use_password_fallback"` // Enable interactive password authentication as fallback
-	JumpHost            string `mapstructure:"jump_host"`             // SSH jump host (ProxyJump equivalent), use "none" to disable
-	JumpUser            string `mapstructure:"jump_user"`             // Username for jump host
-	JumpPort            int    `mapstructure:"jump_port"`             // Port for jump host (default 22)
+	JumpHost string `mapstructure:"jump_host"` // SSH jump host (ProxyJump equivalent), use "none" to disable
+	JumpUser string `mapstructure:"jump_user"` // Username for jump host
+	JumpPort int    `mapstructure:"jump_port"` // Port for jump host (default 22)
 
 	// Authentication configuration
 	Auth SSHAuthConfig `mapstructure:"auth"`
@@ -132,7 +130,6 @@ type SSHAuthConfig struct {
 	PublicKeys      []string `mapstructure:"public_keys"`      // Paths to specific public key files (if empty, uses SSH agent + default keys)
 	PasswordAuth    bool     `mapstructure:"password"`         // Enable password authentication
 	KeyboardAuth    bool     `mapstructure:"keyboard"`         // Enable keyboard-interactive authentication
-	GSSAPIAuth      bool     `mapstructure:"gssapi"`           // Enable GSSAPI authentication
 	NoneAuth        bool     `mapstructure:"none"`             // Enable "none" authentication method
 	PreferredAuth   string   `mapstructure:"preferred"`        // Preferred authentication method
 	IdentitiesOnly  bool     `mapstructure:"identities_only"`  // Only use explicitly configured identities

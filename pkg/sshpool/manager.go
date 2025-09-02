@@ -158,7 +158,7 @@ func (m *Manager) createSSHConfig(host string, hostVars map[string]interface{}) 
 		Auth:            authMethods,
 		HostKeyCallback: hostKeyCallback,
 		Timeout:         timeout,
-		ClientVersion:   "SSH-2.0-spage",
+		ClientVersion:   "SSH-spage",
 	}
 
 	// Optionally check what authentication methods the server supports (skip when jump_host == "none")
@@ -267,11 +267,6 @@ func (m *Manager) buildAuthMethods(host string, hostVars map[string]interface{},
 			// Allow keyboard-interactive when enabled in config
 			if m.cfg == nil || m.cfg.SSH.Auth.KeyboardAuth {
 				authMethods = append(authMethods, m.buildKeyboardInteractiveAuth(host))
-			}
-		case "gssapi-with-mic":
-			if m.cfg != nil && m.cfg.SSH.Auth.GSSAPIAuth {
-				// TODO: Implement GSSAPI auth
-				common.LogWarn("GSSAPI auth requested but not implemented yet", map[string]interface{}{"host": host})
 			}
 		case "none":
 			if m.cfg != nil && m.cfg.SSH.Auth.NoneAuth {
@@ -432,8 +427,7 @@ func (m *Manager) isPasswordAuthEnabled() bool {
 	if m.cfg == nil {
 		return true // Default behavior for backwards compatibility
 	}
-	// Check both legacy and new config
-	return m.cfg.SSH.UsePasswordFallback || m.cfg.SSH.Auth.PasswordAuth
+	return m.cfg.SSH.Auth.PasswordAuth
 }
 
 // buildHostKeyCallback creates the appropriate host key callback

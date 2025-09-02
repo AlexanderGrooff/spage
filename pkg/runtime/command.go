@@ -42,7 +42,7 @@ func NewCommandOptions(cfg *config.Config) *CommandOptions {
 		UseShell:        false,
 		Interactive:     false,
 		UseSudo:         false,
-		InteractiveSudo: false,
+		InteractiveSudo: cfg.PrivilegeEscalation.UseInteractive,
 		BecomeFlags:     cfg.PrivilegeEscalation.BecomeFlags,
 	}
 }
@@ -420,16 +420,6 @@ func checkSudoPasswordError(stderrOutput, host string) error {
 	return nil
 }
 
-// Public API functions - these maintain backward compatibility
-
-func RunLocalCommand(command, username string, cfg *config.Config) (int, string, string, error) {
-	opts := NewCommandOptions(cfg)
-	if username != "" {
-		opts.WithUsername(username)
-	}
-	return executeLocalCommand(command, opts)
-}
-
 func RunLocalCommandWithShell(command, username string, useShell bool, cfg *config.Config) (int, string, string, error) {
 	opts := NewCommandOptions(cfg)
 	if username != "" {
@@ -441,14 +431,6 @@ func RunLocalCommandWithShell(command, username string, useShell bool, cfg *conf
 	return executeLocalCommand(command, opts)
 }
 
-func RunRemoteCommand(pool *desopssshpool.Pool, host, command, username string, cfg *config.Config) (int, string, string, error) {
-	opts := NewCommandOptions(cfg)
-	if username != "" {
-		opts.WithUsername(username)
-	}
-	return executeRemoteCommand(pool, host, command, opts, cfg)
-}
-
 func RunRemoteCommandWithShell(pool *desopssshpool.Pool, host, command, username string, cfg *config.Config, useShell bool) (int, string, string, error) {
 	opts := NewCommandOptions(cfg)
 	if username != "" {
@@ -458,13 +440,4 @@ func RunRemoteCommandWithShell(pool *desopssshpool.Pool, host, command, username
 		opts.WithShell()
 	}
 	return executeRemoteCommand(pool, host, command, opts, cfg)
-}
-
-func RunInteractiveRemoteCommand(pool *desopssshpool.Pool, host, command, username string, cfg *config.Config) (int, string, string, error) {
-	opts := NewCommandOptions(cfg)
-	if username != "" {
-		opts.WithUsername(username).WithInteractiveSudo()
-	}
-	opts.WithInteractive()
-	return executeInteractiveRemoteCommand(pool, host, command, opts, cfg)
 }

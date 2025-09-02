@@ -236,7 +236,7 @@ func (pm *PluginManager) parseAnsibleInventoryOutput(output []byte) (*PluginInve
 	// Parse the JSON output from ansible-inventory --list
 	// Format documented at: https://docs.ansible.com/ansible/latest/dev_guide/developing_inventory.html
 
-	common.LogDebug("Parsing ansible-inventory output", map[string]interface{}{"output": string(output)})
+	common.LogDebug("Parsing ansible-inventory output", map[string]interface{}{})
 
 	var rawInventory map[string]interface{}
 	if err := json.Unmarshal(output, &rawInventory); err != nil {
