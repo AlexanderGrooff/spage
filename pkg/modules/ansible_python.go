@@ -351,7 +351,7 @@ func (m AnsiblePythonModule) parseAnsibleOutput(output, moduleName string) Ansib
 				if braceDepth == 0 {
 					if m.tryParseModuleJSON(buf.String(), &result) {
 						foundStructured = true
-						break
+						// do not break; keep scanning for STDOUT override
 					}
 					buf.Reset()
 					accumulating = false
@@ -368,7 +368,7 @@ func (m AnsiblePythonModule) parseAnsibleOutput(output, moduleName string) Ansib
 			if braceDepth <= 0 {
 				if m.tryParseModuleJSON(buf.String(), &result) {
 					foundStructured = true
-					break
+					// do not break; keep scanning for STDOUT override
 				}
 				buf.Reset()
 				accumulating = false
@@ -445,7 +445,13 @@ func countBracesOutsideStrings(s string) int {
 func (m AnsiblePythonModule) tryParseModuleJSON(jsonStr string, result *AnsiblePythonOutput) bool {
 	var moduleResult map[string]interface{}
 	if err := json.Unmarshal([]byte(jsonStr), &moduleResult); err != nil {
-		return false
+		// Fallback to YAML for single-quoted arrays/objects
+		var yv map[string]interface{}
+		if yerr := yaml.Unmarshal([]byte(jsonStr), &yv); yerr == nil {
+			moduleResult = yv
+		} else {
+			return true
+		}
 	}
 	result.Results = moduleResult
 	if changed, ok := moduleResult["changed"].(bool); ok {
@@ -466,10 +472,18 @@ func (m AnsiblePythonModule) handleStdoutLine(line string, stdoutBuf *strings.Bu
 		if stdoutBuf.Len() == 0 {
 			return false
 		}
+
 		var stdoutVal interface{}
-		if err := json.Unmarshal([]byte(stdoutBuf.String()), &stdoutVal); err == nil {
-			result.Results = stdoutVal
+		if err := json.Unmarshal([]byte(stdoutBuf.String()), &stdoutVal); err != nil {
+			// Fallback to YAML for single-quoted arrays/objects
+			var yv interface{}
+			if yerr := yaml.Unmarshal([]byte(stdoutBuf.String()), &yv); yerr == nil {
+				stdoutVal = yv
+			} else {
+				return true
+			}
 		}
+		result.Results = stdoutVal
 		return true
 	}
 	if stdoutBuf.Len() > 0 {

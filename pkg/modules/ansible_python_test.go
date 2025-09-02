@@ -254,7 +254,7 @@ ok: [somehost] => {
 
 STDOUT:
 
-[{"some_key": "some_value"}]
+[{"some_key": false, "some_value": "some_value", "nested": {"some_key": "some_value"}}, {"some_key": true, "some_value": "some_value", "nested": {"some_key": "some_value"}}]
 
 PLAY RECAP *********************************************************************
 somehost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
@@ -274,9 +274,77 @@ somehost                  : ok=1    changed=0    unreachable=0    failed=0    sk
 	// For convenience, also ensure no raw_output key exists when treated as map
 	_, hasRaw := map[string]interface{}{"noop": 0}["raw_output"]
 	assert.False(t, hasRaw, "raw_output should not be present when JSON was parsed")
-	fact, ok := resSlice[0].(map[string]interface{})
-	assert.True(t, ok, "some_key should be a map")
+	fact1, ok := resSlice[0].(map[string]interface{})
+	assert.True(t, ok)
+	fact2, ok := resSlice[1].(map[string]interface{})
+	assert.True(t, ok)
 
-	_, ok = fact["some_key"].(string)
-	assert.True(t, ok, "some_key value should be a string")
+	_, ok = fact1["some_key"].(bool)
+	assert.True(t, ok, "some_key value should be a bool")
+
+	_, ok = fact1["nested"].(map[string]interface{})
+	assert.True(t, ok, "nested should be a map")
+
+	_, ok = fact2["some_key"].(bool)
+	assert.True(t, ok, "some_key value should be a bool")
+
+	_, ok = fact2["nested"].(map[string]interface{})
+	assert.True(t, ok, "nested should be a map")
+}
+
+func TestParseAnsibleOutput_HttpApi_SingleQuotes(t *testing.T) {
+	m := AnsiblePythonModule{}
+	// Sample output captured from ansible-playbook -v on localhost with tempfile module
+	raw := `Using /some/path/ansible.cfg as config file
+
+PLAY [somehost] ***************************************************************
+
+TASK [Execute eoscommand] ********************************************************
+[WARNING]: Platform darwin on host somehost is using the discovered Python
+interpreter at /usr/local/bin/python3.12, but future installation of
+another Python interpreter could change the meaning of that path. See
+https://docs.ansible.com/ansible-
+core/2.14/reference_appendices/interpreter_discovery.html for more information.
+ok: [somehost] => {
+    "changed": false,
+}
+
+STDOUT:
+
+[{'some_key': false, 'some_value': 'some_value', 'nested': {'some_key': 'some_value'}}, {'some_key': true, 'some_value': 'some_value', 'nested': {'some_key': 'some_value'}}]
+
+PLAY RECAP *********************************************************************
+somehost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+`
+
+	out := m.parseAnsibleOutput(raw, "eoscommand")
+
+	assert.False(t, out.WasChanged, "changed should be false")
+	assert.False(t, out.Failed, "failed should be false")
+	assert.Equal(t, "", out.Msg, "msg should be empty when not present in JSON")
+
+	// Results should contain parsed JSON without raw_output and be a slice
+	if _, isSlice := out.Results.([]interface{}); !isSlice {
+		t.Fatalf("expected slice results for httpapi stdout, got %T", out.Results)
+	}
+	resSlice := out.Results.([]interface{})
+	// For convenience, also ensure no raw_output key exists when treated as map
+	_, hasRaw := map[string]interface{}{"noop": 0}["raw_output"]
+	assert.False(t, hasRaw, "raw_output should not be present when JSON was parsed")
+	fact1, ok := resSlice[0].(map[string]interface{})
+	assert.True(t, ok)
+	fact2, ok := resSlice[1].(map[string]interface{})
+	assert.True(t, ok)
+
+	_, ok = fact1["some_key"].(bool)
+	assert.True(t, ok, "some_key value should be a bool")
+
+	_, ok = fact1["nested"].(map[string]interface{})
+	assert.True(t, ok, "nested should be a map")
+
+	_, ok = fact2["some_key"].(bool)
+	assert.True(t, ok, "some_key value should be a bool")
+
+	_, ok = fact2["nested"].(map[string]interface{})
+	assert.True(t, ok, "nested should be a map")
 }
