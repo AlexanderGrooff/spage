@@ -121,10 +121,10 @@ func (i AnsiblePythonInput) ProvidesVariables() []string {
 
 // AnsiblePythonOutput defines the output from a Python Ansible module execution
 type AnsiblePythonOutput struct {
-	WasChanged bool                   `yaml:"changed" json:"changed"`
-	Failed     bool                   `yaml:"failed" json:"failed"`
-	Msg        string                 `yaml:"msg" json:"msg"`
-	Results    map[string]interface{} `yaml:"results" json:"results"`
+	WasChanged bool        `yaml:"changed" json:"changed"`
+	Failed     bool        `yaml:"failed" json:"failed"`
+	Msg        string      `yaml:"msg" json:"msg"`
+	Results    interface{} `yaml:"results" json:"results"`
 	pkg.ModuleOutput
 }
 
@@ -149,12 +149,18 @@ func (o AnsiblePythonOutput) AsFacts() map[string]interface{} {
 	facts["failed"] = o.Failed
 	facts["msg"] = o.Msg
 
-	// Flatten the results into the top level
+	// Attach/flatten results
 	if o.Results != nil {
-		common.LogDebug("Flattening Python module results", map[string]interface{}{
-			"results": o.Results,
-		})
-		maps.Copy(facts, o.Results)
+		switch rv := o.Results.(type) {
+		case map[string]interface{}:
+			common.LogDebug("Flattening Python module results (map)", map[string]interface{}{"results": rv})
+			maps.Copy(facts, rv)
+		case []interface{}:
+			common.LogDebug("Attaching Python module results (slice)", map[string]interface{}{"len": len(rv)})
+			facts["results"] = rv
+		default:
+			facts["results"] = rv
+		}
 	}
 
 	return facts
@@ -306,175 +312,84 @@ func (m AnsiblePythonModule) executePythonModule(params AnsiblePythonInput, clos
 }
 
 func (m AnsiblePythonModule) parseAnsibleOutput(output, moduleName string) AnsiblePythonOutput {
-	result := AnsiblePythonOutput{
-		Results: make(map[string]interface{}),
-	}
-
+	result := AnsiblePythonOutput{Results: nil}
 	lines := strings.Split(output, "\n")
-
-	// Helper to count braces outside of string literals
-	countBraces := func(s string) int {
-		depth := 0
-		inStr := false
-		escaped := false
-		for _, r := range s {
-			if escaped {
-				escaped = false
-				continue
-			}
-			if r == '\\' && inStr {
-				escaped = true
-				continue
-			}
-			if r == '"' {
-				inStr = !inStr
-				continue
-			}
-			if !inStr {
-				switch r {
-				case '{':
-					depth++
-				case '}':
-					depth--
-				}
-			}
-		}
-		return depth
-	}
 
 	var buf strings.Builder
 	accumulating := false
 	braceDepth := 0
 	inStdout := false
 	var stdoutBuf strings.Builder
+	foundStructured := false
 
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
 
-		// Capture JSON printed under a separate STDOUT: section
+		// STDOUT JSON section
 		if strings.HasPrefix(line, "STDOUT:") {
 			inStdout = true
 			stdoutBuf.Reset()
 			continue
 		}
 		if inStdout {
-			// Only terminate and parse when we have captured some content and hit a blank line
-			if line == "" {
-				if stdoutBuf.Len() == 0 {
-					// Ignore leading blank right after STDOUT:
-					continue
-				}
-				var stdoutVal interface{}
-				if err := json.Unmarshal([]byte(stdoutBuf.String()), &stdoutVal); err == nil {
-					// If array of objects, expose keys mapping to the array
-					if arr, ok := stdoutVal.([]interface{}); ok {
-						if len(arr) > 0 {
-							if obj, ok := arr[0].(map[string]interface{}); ok {
-								for k := range obj {
-									result.Results[k] = arr
-								}
-							}
-						}
-					} else if obj, ok := stdoutVal.(map[string]interface{}); ok {
-						for k, v := range obj {
-							result.Results[k] = v
-						}
-					}
-				}
+			if m.handleStdoutLine(line, &stdoutBuf, &result) {
 				inStdout = false
+				foundStructured = true
 				continue
 			}
-			if stdoutBuf.Len() > 0 {
-				stdoutBuf.WriteString("\n")
-			}
-			stdoutBuf.WriteString(line)
 			continue
 		}
 
-		// Look for JSON output in ansible verbose mode (single- or multi-line)
-		if !accumulating {
-			if strings.Contains(line, "=>") && strings.Contains(line, "{") {
-				jsonStart := strings.Index(line, "{")
-				if jsonStart != -1 {
-					fragment := line[jsonStart:]
-					buf.WriteString(fragment)
-					braceDepth += countBraces(fragment)
-					accumulating = true
-
-					// If JSON is complete on one line, parse immediately
-					if braceDepth == 0 {
-						jsonStr := buf.String()
-						var moduleResult map[string]interface{}
-						if err := json.Unmarshal([]byte(jsonStr), &moduleResult); err == nil {
-							result.Results = moduleResult
-							if changed, ok := moduleResult["changed"].(bool); ok {
-								result.WasChanged = changed
-							}
-							if failed, ok := moduleResult["failed"].(bool); ok {
-								result.Failed = failed
-							}
-							if msg, ok := moduleResult["msg"].(string); ok {
-								result.Msg = msg
-							}
-							break
-						} else {
-							// Reset and continue scanning other lines
-							buf.Reset()
-							accumulating = false
-							braceDepth = 0
-						}
+		// Inline JSON lines `=> { ... }`
+		if !accumulating && strings.Contains(line, "=>") && strings.Contains(line, "{") {
+			jsonStart := strings.Index(line, "{")
+			if jsonStart != -1 {
+				fragment := line[jsonStart:]
+				buf.WriteString(fragment)
+				braceDepth += countBracesOutsideStrings(fragment)
+				accumulating = true
+				if braceDepth == 0 {
+					if m.tryParseModuleJSON(buf.String(), &result) {
+						foundStructured = true
+						break
 					}
-					// Continue to next line to accumulate multi-line JSON
-					continue
+					buf.Reset()
+					accumulating = false
+					braceDepth = 0
 				}
+				continue
 			}
-		} else {
-			// Accumulate subsequent lines until braces balance
+		}
+
+		if accumulating {
 			buf.WriteString("\n")
 			buf.WriteString(line)
-			braceDepth += countBraces(line)
+			braceDepth += countBracesOutsideStrings(line)
 			if braceDepth <= 0 {
-				jsonStr := buf.String()
-				var moduleResult map[string]interface{}
-				if err := json.Unmarshal([]byte(jsonStr), &moduleResult); err == nil {
-					result.Results = moduleResult
-					if changed, ok := moduleResult["changed"].(bool); ok {
-						result.WasChanged = changed
-					}
-					if failed, ok := moduleResult["failed"].(bool); ok {
-						result.Failed = failed
-					}
-					if msg, ok := moduleResult["msg"].(string); ok {
-						result.Msg = msg
-					}
+				if m.tryParseModuleJSON(buf.String(), &result) {
+					foundStructured = true
 					break
 				}
-				// Parsing failed: reset accumulation and fall through to other checks
 				buf.Reset()
 				accumulating = false
 				braceDepth = 0
 			}
-			// Move to next line while accumulating
 			continue
 		}
 
-		// Look for module not found errors
-		if strings.Contains(line, "couldn't resolve module/action") {
-			result.Failed = true
-			result.Msg = fmt.Sprintf("Module '%s' not found in Ansible installation. This module may require additional Ansible collections or may not exist.", moduleName)
-			result.Results["ansible_error"] = "module_not_found"
+		// Module not found pattern
+		if m.handleModuleNotFound(line, moduleName, &result) {
+			foundStructured = true
 			break
 		}
 
-		// Look for general failure indicators
+		// Generic failure indicators
 		if strings.Contains(line, "FAILED!") {
 			result.Failed = true
 			if result.Msg == "" {
 				result.Msg = "Ansible execution failed"
 			}
 		}
-
-		// Look for ERROR! indicators
 		if strings.Contains(line, "ERROR!") {
 			result.Failed = true
 			if result.Msg == "" {
@@ -482,31 +397,119 @@ func (m AnsiblePythonModule) parseAnsibleOutput(output, moduleName string) Ansib
 			}
 		}
 
-		// Parse PLAY RECAP summary line to infer changed/failed
-		if strings.Contains(line, " ok=") && strings.Contains(line, " changed=") && strings.Contains(line, " failed=") {
-			reChanged := regexp.MustCompile(`\bchanged=(\d+)`)
-			if m := reChanged.FindStringSubmatch(line); len(m) == 2 && m[1] != "0" {
-				result.WasChanged = true
-			}
-			reFailed := regexp.MustCompile(`\bfailed=(\d+)`)
-			if m := reFailed.FindStringSubmatch(line); len(m) == 2 && m[1] != "0" {
-				result.Failed = true
-				if result.Msg == "" {
-					result.Msg = "Ansible execution failed"
-				}
-			}
-		}
+		// Recap line
+		m.updateFromRecapLine(line, &result)
 	}
 
-	// If we didn't find any structured output, use the raw output
-	if len(result.Results) == 0 {
-		result.Results["raw_output"] = output
+	if !foundStructured {
+		result.Results = map[string]interface{}{"raw_output": output}
 		if result.Msg == "" {
 			result.Msg = fmt.Sprintf("Executed %s via ansible-playbook", moduleName)
 		}
 	}
 
 	return result
+}
+
+// countBracesOutsideStrings counts JSON brace depth ignoring quoted strings.
+func countBracesOutsideStrings(s string) int {
+	depth := 0
+	inStr := false
+	escaped := false
+	for _, r := range s {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' && inStr {
+			escaped = true
+			continue
+		}
+		if r == '"' {
+			inStr = !inStr
+			continue
+		}
+		if !inStr {
+			switch r {
+			case '{':
+				depth++
+			case '}':
+				depth--
+			}
+		}
+	}
+	return depth
+}
+
+// tryParseModuleJSON attempts to parse a module JSON blob and update result.
+func (m AnsiblePythonModule) tryParseModuleJSON(jsonStr string, result *AnsiblePythonOutput) bool {
+	var moduleResult map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &moduleResult); err != nil {
+		return false
+	}
+	result.Results = moduleResult
+	if changed, ok := moduleResult["changed"].(bool); ok {
+		result.WasChanged = changed
+	}
+	if failed, ok := moduleResult["failed"].(bool); ok {
+		result.Failed = failed
+	}
+	if msg, ok := moduleResult["msg"].(string); ok {
+		result.Msg = msg
+	}
+	return true
+}
+
+// handleStdoutLine accumulates STDOUT JSON lines; returns true when parsed and closed.
+func (m AnsiblePythonModule) handleStdoutLine(line string, stdoutBuf *strings.Builder, result *AnsiblePythonOutput) bool {
+	if line == "" {
+		if stdoutBuf.Len() == 0 {
+			return false
+		}
+		var stdoutVal interface{}
+		if err := json.Unmarshal([]byte(stdoutBuf.String()), &stdoutVal); err == nil {
+			result.Results = stdoutVal
+		}
+		return true
+	}
+	if stdoutBuf.Len() > 0 {
+		stdoutBuf.WriteString("\n")
+	}
+	stdoutBuf.WriteString(line)
+	return false
+}
+
+// handleModuleNotFound detects module-not-found lines and annotates results.
+func (m AnsiblePythonModule) handleModuleNotFound(line, moduleName string, result *AnsiblePythonOutput) bool {
+	if !strings.Contains(line, "couldn't resolve module/action") {
+		return false
+	}
+	result.Failed = true
+	result.Msg = fmt.Sprintf("Module '%s' not found in Ansible installation. This module may require additional Ansible collections or may not exist.", moduleName)
+	if mm, ok := result.Results.(map[string]interface{}); ok {
+		mm["ansible_error"] = "module_not_found"
+	} else {
+		result.Results = map[string]interface{}{"ansible_error": "module_not_found"}
+	}
+	return true
+}
+
+// updateFromRecapLine parses the PLAY RECAP summary for changed/failed flags.
+func (m AnsiblePythonModule) updateFromRecapLine(line string, result *AnsiblePythonOutput) {
+	if strings.Contains(line, " ok=") || strings.Contains(line, " changed=") || strings.Contains(line, " failed=") {
+		return
+	}
+	reChanged := regexp.MustCompile(`\bchanged=(\d+)`)
+	if m := reChanged.FindStringSubmatch(line); len(m) == 2 && m[1] != "0" {
+		result.WasChanged = true
+	}
+	reFailed := regexp.MustCompile(`\bfailed=(\d+)`)
+	if m := reFailed.FindStringSubmatch(line); len(m) == 2 && m[1] != "0" {
+		result.Failed = true
+		if result.Msg == "" {
+			result.Msg = "Ansible execution failed"
+		}
+	}
 }
 
 func (m AnsiblePythonModule) ParameterAliases() map[string]string {
