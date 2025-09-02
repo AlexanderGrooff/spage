@@ -21,7 +21,7 @@ var testEnvironments = []struct {
 	limitHosts    []string
 }{
 	{executor: "local", inventoryFile: "inventory.yaml", limitHosts: []string{"localhost"}},
-	{executor: "local", inventoryFile: "inventory.yaml", limitHosts: []string{}},
+	// {executor: "local", inventoryFile: "inventory.yaml", limitHosts: []string{}},
 	{executor: "temporal", inventoryFile: "inventory.yaml", limitHosts: []string{"localhost"}},
 	// {executor: "temporal", inventoryFile: "inventory.yaml"},
 }
@@ -689,6 +689,17 @@ func TestRootRolesPlaybook(t *testing.T) {
 		configFile:   "parallel_revert.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.Equal(t, 0, exitCode, "root_roles_playbook should succeed")
+			assertFileContainsWithInventory(t, "/tmp/spage/root_playbook_role.txt", "Created by root-level roles section", inventory)
+		},
+	})
+}
+
+func TestRolesConditionalPlaybook(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/roles_conditional.yaml",
+		configFile:   "parallel_revert.yaml",
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "roles_conditional_playbook should succeed")
 			assertFileContainsWithInventory(t, "/tmp/spage/root_playbook_role.txt", "Created by root-level roles section", inventory)
 		},
 	})

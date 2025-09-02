@@ -1,0 +1,9 @@
+---
+- name: Root playbook with conditional roles
+  hosts: localhost
+  roles:
+    - name: test_root_role
+      when: false
+
+    - name: test_root_role
+      when: true

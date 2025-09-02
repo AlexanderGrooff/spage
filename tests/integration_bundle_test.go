@@ -181,8 +181,8 @@ func TestIntegrationBundleFS(t *testing.T) {
 
 		assert.NotNil(t, graph)
 		// Verify the graph has the expected structure
-		assert.NotEmpty(t, graph.Tasks, "Graph should have tasks")
-		assert.NotEmpty(t, graph.Tasks[0], "First task step should have tasks")
+		assert.NotEmpty(t, graph.Nodes, "Graph should have tasks")
+		assert.NotEmpty(t, graph.Nodes[0], "First task step should have tasks")
 	})
 }
 

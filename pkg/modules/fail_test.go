@@ -49,7 +49,7 @@ func TestFailInput_Validate(t *testing.T) {
 
 func TestFailModule_Execute(t *testing.T) {
 	mod := FailModule{}
-	closure := pkg.ConstructClosure(&pkg.HostContext{Host: &pkg.Host{Name: "localhost"}, Facts: &sync.Map{}}, pkg.Task{}, &config.Config{})
+	closure := pkg.Task{}.ConstructClosure(&pkg.HostContext{Host: &pkg.Host{Name: "localhost"}, Facts: &sync.Map{}}, &config.Config{})
 
 	t.Run("simple message", func(t *testing.T) {
 		input := FailInput{Msg: "Intentional failure for test."}
@@ -90,7 +90,7 @@ func TestFailModule_Execute(t *testing.T) {
 
 func TestFailModule_Revert(t *testing.T) {
 	mod := FailModule{}
-	closure := pkg.ConstructClosure(&pkg.HostContext{Host: &pkg.Host{Name: "localhost"}, Facts: &sync.Map{}}, pkg.Task{}, &config.Config{})
+	closure := pkg.Task{}.ConstructClosure(&pkg.HostContext{Host: &pkg.Host{Name: "localhost"}, Facts: &sync.Map{}}, &config.Config{})
 	input := FailInput{Msg: "revert test"}
 
 	// Revert with no previous output

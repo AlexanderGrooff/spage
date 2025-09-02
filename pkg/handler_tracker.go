@@ -9,27 +9,27 @@ import (
 // HandlerTracker tracks which handlers have been notified and which have already run
 type HandlerTracker struct {
 	mu       sync.RWMutex
-	notified map[string]bool // Maps handler name to whether it's been notified
-	executed map[string]bool // Maps handler name to whether it's been executed
-	handlers map[string]Task // Maps handler name to handler task
-	hostName string          // Name of the host this tracker is for
+	notified map[string]bool      // Maps handler name to whether it's been notified
+	executed map[string]bool      // Maps handler name to whether it's been executed
+	handlers map[string]GraphNode // Maps handler name to handler task
+	hostName string               // Name of the host this tracker is for
 }
 
 // NewHandlerTracker creates a new HandlerTracker for the given host and handlers
-func NewHandlerTracker(hostName string, handlers []Task) *HandlerTracker {
+func NewHandlerTracker(hostName string, handlers []GraphNode) *HandlerTracker {
 
 	ht := &HandlerTracker{
 		notified: make(map[string]bool),
 		executed: make(map[string]bool),
-		handlers: make(map[string]Task),
+		handlers: make(map[string]GraphNode),
 		hostName: hostName,
 	}
 
 	// Index handlers by name
 	for _, handler := range handlers {
-		ht.handlers[handler.Name] = handler
+		ht.handlers[handler.GetName()] = handler
 		common.LogDebug("Added handler to tracker", map[string]interface{}{
-			"handler": handler.Name,
+			"handler": handler.GetName(),
 			"host":    hostName,
 		})
 	}
@@ -104,11 +104,11 @@ func (ht *HandlerTracker) MarkExecuted(handlerName string) {
 }
 
 // GetNotifiedHandlers returns a list of handlers that have been notified but not yet executed
-func (ht *HandlerTracker) GetNotifiedHandlers() []Task {
+func (ht *HandlerTracker) GetNotifiedHandlers() []GraphNode {
 	ht.mu.RLock()
 	defer ht.mu.RUnlock()
 
-	var notifiedHandlers []Task
+	var notifiedHandlers []GraphNode
 	for handlerName, isNotified := range ht.notified {
 		if isNotified && !ht.executed[handlerName] {
 			if handler, exists := ht.handlers[handlerName]; exists {
@@ -121,11 +121,11 @@ func (ht *HandlerTracker) GetNotifiedHandlers() []Task {
 }
 
 // GetAllHandlers returns all handlers registered with this tracker
-func (ht *HandlerTracker) GetAllHandlers() []Task {
+func (ht *HandlerTracker) GetAllHandlers() []GraphNode {
 	ht.mu.RLock()
 	defer ht.mu.RUnlock()
 
-	var allHandlers []Task
+	var allHandlers []GraphNode
 	for _, handler := range ht.handlers {
 		allHandlers = append(allHandlers, handler)
 	}

@@ -1,9 +1,6 @@
 package pkg
 
 import (
-	"log"
-
-	"github.com/AlexanderGrooff/jinja-go"
 	"github.com/AlexanderGrooff/spage/pkg/config"
 )
 
@@ -11,46 +8,6 @@ type Closure struct {
 	HostContext *HostContext
 	ExtraFacts  map[string]interface{}
 	Config      *config.Config
-}
-
-func ConstructClosure(c *HostContext, t Task, cfg *config.Config) *Closure {
-	closure := Closure{
-		HostContext: c,
-		Config:      cfg,
-		ExtraFacts:  make(map[string]interface{}),
-	}
-
-	if t.Loop != nil {
-		closure.ExtraFacts["item"] = t.Loop
-	}
-	if t.Vars != nil {
-		switch t.Vars.(type) {
-		case string:
-			vars, err := jinja.ParseVariables(t.Vars.(string))
-			if err != nil {
-				log.Fatalf("Failed to parse vars: %v", err)
-			}
-			for _, v := range vars {
-				closure.ExtraFacts[v] = t.Vars
-			}
-		case map[string]interface{}:
-			for k, v := range t.Vars.(map[string]interface{}) {
-				closure.ExtraFacts[k] = v
-			}
-		default:
-			log.Fatalf("Invalid vars type: %T", t.Vars)
-		}
-	}
-
-	// Add role context to closure if available
-	if t.RoleName != "" {
-		closure.ExtraFacts["_spage_role_name"] = t.RoleName
-	}
-	if t.RolePath != "" {
-		closure.ExtraFacts["_spage_role_path"] = t.RolePath
-	}
-
-	return &closure
 }
 
 func (c *Closure) GetFacts() map[string]interface{} {

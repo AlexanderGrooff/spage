@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/AlexanderGrooff/jinja-go"
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/compile"
+	"github.com/AlexanderGrooff/spage/pkg/config"
 )
 
 // Don't look for dependencies for these vars
@@ -34,19 +34,30 @@ var AllowedFacts = map[string]struct{}{
 type GraphNode interface {
 	String() string
 	ToCode() string
+	GetVariableUsage() ([]string, error)
+	ConstructClosure(c *HostContext, cfg *config.Config) *Closure
+	ExecuteModule(closure *Closure) TaskResult
+	RevertModule(closure *Closure) TaskResult
+
+	// Getters
+	GetId() int
+	SetId(id int)
+	GetName() string
+	GetIsHandler() bool
+	GetTags() []string
 }
 
 type Graph struct {
 	RequiredInputs []string
-	Tasks          [][]Task
-	Handlers       []Task
+	Nodes          [][]GraphNode
+	Handlers       []GraphNode
 	Vars           map[string]interface{}
 	PlaybookPath   string
 }
 
 func (g Graph) String() string {
 	var b strings.Builder
-	for i, node := range g.Tasks {
+	for i, node := range g.Nodes {
 		fmt.Fprintf(&b, "- Step %d:\n", i)
 		for _, task := range node {
 			fmt.Fprintf(&b, "  - %s\n", task.String())
@@ -83,7 +94,7 @@ func (g Graph) ToCode() string {
 	fmt.Fprintf(&f, "%s},\n", Indent(1))
 	fmt.Fprintf(&f, "%sTasks: [][]pkg.Task{\n", Indent(1))
 
-	for _, node := range g.Tasks {
+	for _, node := range g.Nodes {
 		fmt.Fprintf(&f, "%s  []pkg.Task{\n", Indent(2))
 		for _, task := range node {
 			fmt.Fprintf(&f, "%s    %s", Indent(3), task.ToCode())
@@ -167,28 +178,28 @@ import (
 }
 
 // Order tasks by their id
-func (g Graph) SequentialTasks() [][]Task {
+func (g Graph) SequentialTasks() [][]GraphNode {
 	maxId := -1
-	for _, nodes := range g.Tasks {
+	for _, nodes := range g.Nodes {
 		for _, node := range nodes {
-			if node.Id > maxId {
-				maxId = node.Id
+			if node.GetId() > maxId {
+				maxId = node.GetId()
 			}
 		}
 	}
 
-	sortedTasks := make([][]Task, maxId+1)
-	for _, nodes := range g.Tasks {
+	sortedTasks := make([][]GraphNode, maxId+1)
+	for _, nodes := range g.Nodes {
 		for _, node := range nodes {
-			sortedTasks[node.Id] = []Task{node}
+			sortedTasks[node.GetId()] = []GraphNode{node}
 		}
 	}
 	return sortedTasks
 }
 
 // Order tasks based on execution level
-func (g Graph) ParallelTasks() [][]Task {
-	return g.Tasks
+func (g Graph) ParallelTasks() [][]GraphNode {
+	return g.Nodes
 }
 
 func NewGraphFromFile(playbookPath string, rolesPaths string) (Graph, error) {
@@ -307,130 +318,14 @@ func NewGraphFromFS(sourceFS fs.FS, playbookPath string, rolesPaths string) (Gra
 	return graph, nil
 }
 
-// Helper function to flatten GraphNodes into a list of TaskNodes
-// while preserving a semblance of original order.
-func flattenNodes(nodes []GraphNode) []Task {
-	var flatTasks []Task
-	var collectTasks func(node GraphNode)
-	collectTasks = func(node GraphNode) {
-		switch n := node.(type) {
-		case Task:
-			flatTasks = append(flatTasks, n)
-		case Graph:
-			// Recursively process nodes within the nested graph's internal structure first.
-			for _, step := range n.Tasks {
-				for _, subNode := range step {
-					collectTasks(subNode)
-				}
-			}
-			// default: // Should not happen if parsing is correct, ignore unknown types
-		}
-	}
-
-	for _, node := range nodes {
-		collectTasks(node)
-	}
-	return flatTasks
-}
-
-func GetVariableUsage(task Task) ([]string, error) {
-	varsUsage, err := GetVariableUsageFromModule(task.Params.Actual)
-	if err != nil {
-		return nil, fmt.Errorf("error getting variable usage from module: %w", err)
-	}
-
-	tVal := reflect.ValueOf(task)
-	tType := reflect.TypeOf(task)
-	for i := 0; i < tVal.NumField(); i++ {
-		field := tVal.Field(i)
-		fieldType := tType.Field(i)
-		fieldName := fieldType.Name
-
-		if fieldName == "Params" || fieldName == "Id" || fieldName == "Name" || fieldName == "Module" || fieldName == "Register" || fieldName == "IsHandler" || fieldName == "Tags" || fieldName == "Notify" {
-			continue
-		}
-
-		if field.Kind() == reflect.String {
-			str := field.String()
-			if str != "" {
-				varsUsage = append(varsUsage, GetVariableUsageFromTemplate(str)...)
-			}
-			continue
-		}
-
-		if field.Kind() == reflect.Slice && field.Type().Elem().Kind() == reflect.String {
-			for j := 0; j < field.Len(); j++ {
-				str := field.Index(j).String()
-				if str != "" {
-					varsUsage = append(varsUsage, GetVariableUsageFromTemplate(str)...)
-				}
-			}
-			continue
-		}
-
-		if field.Kind() == reflect.Interface && !field.IsNil() {
-			val := field.Interface()
-			switch v := val.(type) {
-			case string:
-				varsUsage = append(varsUsage, GetVariableUsageFromTemplate(v)...)
-			case []interface{}:
-				for _, item := range v {
-					if s, ok := item.(string); ok {
-						varsUsage = append(varsUsage, GetVariableUsageFromTemplate(s)...)
-					}
-				}
-			case map[string]interface{}:
-				for _, vv := range v {
-					if s, ok := vv.(string); ok {
-						varsUsage = append(varsUsage, GetVariableUsageFromTemplate(s)...)
-					}
-				}
-			}
-			continue
-		}
-
-		// Explicitly handle Jinja expression types on the Task struct
-		if field.CanInterface() {
-			switch v := field.Interface().(type) {
-			case JinjaExpression:
-				if v.Expression != "" {
-					vars, _ := jinja.ParseVariablesFromExpression(v.Expression)
-					varsUsage = append(varsUsage, vars...)
-				}
-				continue
-			case JinjaExpressionList:
-				for _, expr := range v {
-					if expr.Expression != "" {
-						vars, _ := jinja.ParseVariablesFromExpression(expr.Expression)
-						varsUsage = append(varsUsage, vars...)
-					}
-				}
-				continue
-			}
-		}
-	}
-
-	varsUsage = common.RemoveFromSlice(varsUsage, "item")
-
-	unique := make(map[string]struct{})
-	for _, v := range varsUsage {
-		unique[v] = struct{}{}
-	}
-	result := make([]string, 0, len(unique))
-	for k := range unique {
-		result = append(result, k)
-	}
-	return result, nil
-}
-
 func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playbookPath string) (Graph, error) {
 	if graphAttributes["vars"] == nil {
 		graphAttributes["vars"] = make(map[string]interface{})
 	}
 	g := Graph{RequiredInputs: []string{}, Vars: graphAttributes["vars"].(map[string]interface{}), PlaybookPath: playbookPath}
 	dependsOn := map[string][]string{}
-	taskIdMapping := map[int]Task{}
-	lastTaskNameMapping := map[string]Task{}
+	taskIdMapping := map[int]GraphNode{}
+	lastTaskNameMapping := map[string]GraphNode{}
 	originalIndexMap := map[string]int{} // Map task name to its original flattened index
 	dependsOnVariables := map[string][]string{}
 	variableProvidedBy := map[string]string{}
@@ -438,13 +333,13 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 	recStack := map[string]bool{}
 
 	// 1. Flatten nodes and record original order index
-	flattenedTasks := flattenNodes(nodes)
+	flattenedTasks := nodes
 
 	// 1.5. Separate handlers from regular tasks
-	var regularTasks []Task
-	var handlers []Task
+	var regularTasks []GraphNode
+	var handlers []GraphNode
 	for _, task := range flattenedTasks {
-		if task.IsHandler {
+		if task.GetIsHandler() {
 			handlers = append(handlers, task)
 		} else {
 			regularTasks = append(regularTasks, task)
@@ -456,25 +351,31 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 
 	// Process only regular tasks for the main execution flow
 	for i, task := range regularTasks {
-		if _, exists := lastTaskNameMapping[task.Name]; exists {
+		if _, exists := lastTaskNameMapping[task.GetName()]; exists {
 			// Handle potential duplicate task names if necessary, though Ansible usually requires unique names within a play
-			common.LogWarn("Duplicate task name found during flattening", map[string]interface{}{"name": task.Name, "index": i})
+			common.LogWarn("Duplicate task name found during flattening", map[string]interface{}{"name": task.GetName(), "index": i})
 			// For now, we'll overwrite, assuming later tasks with the same name take precedence or are errors
 		}
-		taskIdMapping[task.Id] = task
-		lastTaskNameMapping[task.Name] = task
-		originalIndexMap[task.Name] = i
+		taskIdMapping[task.GetId()] = task
+		lastTaskNameMapping[task.GetName()] = task
+		originalIndexMap[task.GetName()] = i
 	}
 
 	// 2. Build dependencies based on flattened tasks
-	for _, t := range taskIdMapping {
+	for _, gn := range taskIdMapping {
+		// TODO: Handle TaskCollection
+		t, ok := gn.(*Task)
+		if !ok {
+			continue
+		}
+
 		common.DebugOutput("Processing node TaskNode %q %q: %+v", t.Name, t.Module, t.Params)
 		// Check if n.Params.Actual is nil, as n.Params is a struct and cannot be nil itself.
 		if t.Params.Actual == nil {
 			common.DebugOutput("Task %q has no actual params, skipping dependency analysis for params", t.Name)
 			// Continue processing other dependencies like before/after
 		} else {
-			vars, err := GetVariableUsage(t)
+			vars, err := t.GetVariableUsage()
 			if err != nil {
 				return Graph{}, fmt.Errorf("error getting variable usage for task %q: %w", t.Name, err)
 			}
@@ -530,28 +431,29 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 		}
 	}
 
-	// Extract required inputs from nested graphs (if any were present in the original structure)
-	var collectRequiredInputs func(node GraphNode)
-	collectRequiredInputs = func(node GraphNode) {
-		switch n := node.(type) {
-		case Graph:
-			for _, input := range n.RequiredInputs {
-				if !containsInSlice(g.RequiredInputs, input) {
-					g.RequiredInputs = append(g.RequiredInputs, input)
-				}
-			}
-			// Recursively check nested graphs
-			for _, step := range n.Tasks {
-				for _, subNode := range step {
-					collectRequiredInputs(subNode)
-				}
-			}
-			// Ignore TaskNode and Task types for required inputs collection
-		}
-	}
-	for _, node := range nodes { // Iterate original nodes structure for nested graph inputs
-		collectRequiredInputs(node)
-	}
+	// TODO: does this do anything?
+	// // Extract required inputs from nested graphs (if any were present in the original structure)
+	// var collectRequiredInputs func(node GraphNode)
+	// collectRequiredInputs = func(node GraphNode) {
+	// 	switch n := node.(type) {
+	// 	case Graph:
+	// 		for _, input := range n.RequiredInputs {
+	// 			if !containsInSlice(g.RequiredInputs, input) {
+	// 				g.RequiredInputs = append(g.RequiredInputs, input)
+	// 			}
+	// 		}
+	// 		// Recursively check nested graphs
+	// 		for _, step := range n.Nodes {
+	// 			for _, subNode := range step {
+	// 				collectRequiredInputs(subNode)
+	// 			}
+	// 		}
+	// 		// Ignore TaskNode and Task types for required inputs collection
+	// 	}
+	// }
+	// for _, node := range nodes { // Iterate original nodes structure for nested graph inputs
+	// 	collectRequiredInputs(node)
+	// }
 
 	// Get required inputs from graph attributes
 	for _, v := range graphAttributes["vars"].(map[string]interface{}) {
@@ -614,7 +516,7 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 	sort.Ints(allTaskIds)
 	for _, taskId := range allTaskIds {
 		task := taskIdMapping[taskId]
-		if _, processed := executedOnStep[task.Id]; !processed {
+		if _, processed := executedOnStep[task.GetId()]; !processed {
 			executedOnStep = ResolveExecutionLevel(task, lastTaskNameMapping, dependsOn, executedOnStep)
 		}
 	}
@@ -628,7 +530,7 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 	// 6.5. Determine if we need to inject a gather facts task and create it
 	usedFacts := make(map[string]struct{})
 	for _, task := range taskIdMapping {
-		vars, _ := GetVariableUsage(task)
+		vars, _ := task.GetVariableUsage()
 		for _, v := range vars {
 			if _, ok := AllowedFacts[v]; ok {
 				usedFacts[v] = struct{}{}
@@ -663,9 +565,9 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 		maxExecutionLevel++
 	}
 
-	g.Tasks = make([][]Task, maxExecutionLevel+1)
-	for i := range g.Tasks {
-		g.Tasks[i] = []Task{}
+	g.Nodes = make([][]GraphNode, maxExecutionLevel+1)
+	for i := range g.Nodes {
+		g.Nodes[i] = []GraphNode{}
 	}
 
 	// 7. Populate tasks into levels
@@ -705,7 +607,7 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 			BecomeUser: "",
 			When:       JinjaExpressionList{},
 		}
-		g.Tasks[0] = []Task{setupTask}
+		g.Nodes[0] = []GraphNode{&setupTask}
 
 		// Register that the setup task provides facts
 		variableProvidedBy["ansible_facts"] = "gather facts"
@@ -719,33 +621,33 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 		task := taskIdMapping[taskId]
 		// Increment task ID by 1 if we have a setup task
 		if hasSetupTask {
-			task.Id = task.Id + 1
+			task.SetId(task.GetId() + 1)
 		}
-		g.Tasks[executionLevel] = append(g.Tasks[executionLevel], task)
+		g.Nodes[executionLevel] = append(g.Nodes[executionLevel], task)
 	}
 
 	// 8. Sort tasks within each level based on original index
-	for i := range g.Tasks {
-		sort.SliceStable(g.Tasks[i], func(a, b int) bool {
-			taskA := g.Tasks[i][a]
-			taskB := g.Tasks[i][b]
+	for i := range g.Nodes {
+		sort.SliceStable(g.Nodes[i], func(a, b int) bool {
+			taskA := g.Nodes[i][a]
+			taskB := g.Nodes[i][b]
 			// Compare based on the original flattened index
-			return originalIndexMap[taskA.Name] < originalIndexMap[taskB.Name]
+			return originalIndexMap[taskA.GetName()] < originalIndexMap[taskB.GetName()]
 		})
 	}
 
 	return g, nil
 }
 
-func ResolveExecutionLevel(task Task, taskNameMapping map[string]Task, dependsOn map[string][]string, executedOnStep map[int]int) map[int]int {
-	if len(dependsOn[task.Name]) == 0 {
-		executedOnStep[task.Id] = 0
+func ResolveExecutionLevel(task GraphNode, taskNameMapping map[string]GraphNode, dependsOn map[string][]string, executedOnStep map[int]int) map[int]int {
+	if len(dependsOn[task.GetName()]) == 0 {
+		executedOnStep[task.GetId()] = 0
 		return executedOnStep
 	}
-	for _, parentTaskName := range dependsOn[task.Name] {
+	for _, parentTaskName := range dependsOn[task.GetName()] {
 		parentTask := taskNameMapping[parentTaskName]
 		executedOnStep = ResolveExecutionLevel(parentTask, taskNameMapping, dependsOn, executedOnStep)
-		executedOnStep[task.Id] = max(executedOnStep[task.Id], executedOnStep[parentTask.Id]+1)
+		executedOnStep[task.GetId()] = max(executedOnStep[task.GetId()], executedOnStep[parentTask.GetId()]+1)
 	}
 	return executedOnStep
 }

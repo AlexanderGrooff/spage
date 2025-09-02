@@ -1,3 +1,6 @@
 ---
+- name: fail if the file already exists
+  shell: test -f /tmp/spage/root_playbook_role.txt && exit 1
+
 - name: Task from test_root_role
   shell: echo "Created by root-level roles section" > /tmp/spage/root_playbook_role.txt

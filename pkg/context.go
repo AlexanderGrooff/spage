@@ -293,7 +293,7 @@ func GetVariableUsageFromTemplate(s string) []string {
 }
 
 // InitializeHandlerTracker initializes the HandlerTracker with the provided handlers
-func (c *HostContext) InitializeHandlerTracker(handlers []Task) {
+func (c *HostContext) InitializeHandlerTracker(handlers []GraphNode) {
 	if c.HandlerTracker == nil {
 		c.HandlerTracker = NewHandlerTracker(c.Host.Name, handlers)
 	}

@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"reflect"
 	"strings"
 	"time"
 
+	"github.com/AlexanderGrooff/jinja-go"
 	"github.com/AlexanderGrooff/spage/pkg/common"
+	"github.com/AlexanderGrooff/spage/pkg/config"
 
 	// Remove pongo2 import if no longer needed directly here
 	// "github.com/flosch/pongo2"
@@ -387,6 +390,157 @@ func (t Task) ToCode() string {
 
 func (t Task) String() string {
 	return t.Name
+}
+
+// Conform to GraphNode interface
+func (t Task) GetId() int {
+	return t.Id
+}
+
+func (t *Task) SetId(id int) {
+	t.Id = id
+}
+
+func (t Task) GetName() string {
+	return t.Name
+}
+
+func (t Task) GetIsHandler() bool {
+	return t.IsHandler
+}
+
+func (t Task) GetTags() []string {
+	return t.Tags
+}
+
+func (t Task) GetVariableUsage() ([]string, error) {
+	varsUsage, err := GetVariableUsageFromModule(t.Params.Actual)
+	if err != nil {
+		return nil, fmt.Errorf("error getting variable usage from module: %w", err)
+	}
+
+	tVal := reflect.ValueOf(t)
+	tType := reflect.TypeOf(t)
+	for i := 0; i < tVal.NumField(); i++ {
+		field := tVal.Field(i)
+		fieldType := tType.Field(i)
+		fieldName := fieldType.Name
+
+		if fieldName == "Params" || fieldName == "Id" || fieldName == "Name" || fieldName == "Module" || fieldName == "Register" || fieldName == "IsHandler" || fieldName == "Tags" || fieldName == "Notify" {
+			continue
+		}
+
+		if field.Kind() == reflect.String {
+			str := field.String()
+			if str != "" {
+				varsUsage = append(varsUsage, GetVariableUsageFromTemplate(str)...)
+			}
+			continue
+		}
+
+		if field.Kind() == reflect.Slice && field.Type().Elem().Kind() == reflect.String {
+			for j := 0; j < field.Len(); j++ {
+				str := field.Index(j).String()
+				if str != "" {
+					varsUsage = append(varsUsage, GetVariableUsageFromTemplate(str)...)
+				}
+			}
+			continue
+		}
+
+		if field.Kind() == reflect.Interface && !field.IsNil() {
+			val := field.Interface()
+			switch v := val.(type) {
+			case string:
+				varsUsage = append(varsUsage, GetVariableUsageFromTemplate(v)...)
+			case []interface{}:
+				for _, item := range v {
+					if s, ok := item.(string); ok {
+						varsUsage = append(varsUsage, GetVariableUsageFromTemplate(s)...)
+					}
+				}
+			case map[string]interface{}:
+				for _, vv := range v {
+					if s, ok := vv.(string); ok {
+						varsUsage = append(varsUsage, GetVariableUsageFromTemplate(s)...)
+					}
+				}
+			}
+			continue
+		}
+
+		// Explicitly handle Jinja expression types on the Task struct
+		if field.CanInterface() {
+			switch v := field.Interface().(type) {
+			case JinjaExpression:
+				if v.Expression != "" {
+					vars, _ := jinja.ParseVariablesFromExpression(v.Expression)
+					varsUsage = append(varsUsage, vars...)
+				}
+				continue
+			case JinjaExpressionList:
+				for _, expr := range v {
+					if expr.Expression != "" {
+						vars, _ := jinja.ParseVariablesFromExpression(expr.Expression)
+						varsUsage = append(varsUsage, vars...)
+					}
+				}
+				continue
+			}
+		}
+	}
+
+	varsUsage = common.RemoveFromSlice(varsUsage, "item")
+
+	unique := make(map[string]struct{})
+	for _, v := range varsUsage {
+		unique[v] = struct{}{}
+	}
+	result := make([]string, 0, len(unique))
+	for k := range unique {
+		result = append(result, k)
+	}
+	return result, nil
+}
+
+func (t Task) ConstructClosure(c *HostContext, cfg *config.Config) *Closure {
+	closure := Closure{
+		HostContext: c,
+		Config:      cfg,
+		ExtraFacts:  make(map[string]interface{}),
+	}
+
+	if t.Loop != nil {
+		closure.ExtraFacts["item"] = t.Loop
+	}
+	if t.Vars != nil {
+		switch t.Vars.(type) {
+		case string:
+			vars, err := jinja.ParseVariables(t.Vars.(string))
+			if err != nil {
+				log.Fatalf("Failed to parse vars: %v", err)
+			}
+			for _, v := range vars {
+				closure.ExtraFacts[v] = t.Vars
+			}
+		case map[string]interface{}:
+			for k, v := range t.Vars.(map[string]interface{}) {
+				closure.ExtraFacts[k] = v
+			}
+		default:
+			log.Fatalf("Invalid vars type: %T", t.Vars)
+		}
+	}
+
+	// Add role context to closure if available
+	if t.RoleName != "" {
+		closure.ExtraFacts["_spage_role_name"] = t.RoleName
+	}
+	if t.RolePath != "" {
+		closure.ExtraFacts["_spage_role_path"] = t.RolePath
+	}
+
+	return &closure
 }
 
 func (t Task) ShouldExecute(closure *Closure) (bool, error) {

@@ -22,12 +22,18 @@ func InitializeRecapStats(hostContexts map[string]*pkg.HostContext) map[string]m
 }
 
 func CalculateExpectedResults(
-	tasksInLevel []pkg.Task,
+	nodesInLevel []pkg.GraphNode,
 	hostContexts map[string]*pkg.HostContext,
 	cfg *config.Config,
 ) (int, error) {
 	numExpectedResultsOnLevel := 0
-	for _, task := range tasksInLevel {
+	for _, node := range nodesInLevel {
+		task, ok := node.(*pkg.Task)
+		if !ok {
+			// Not a task so it won't produce any results
+			continue
+		}
+
 		// Special handling for run_once, as it executes on one host but produces results for all.
 		// TODO: template the run_once condition with actual closure
 		if !task.RunOnce.IsEmpty() && task.RunOnce.IsTruthy(nil) {
@@ -42,8 +48,8 @@ func CalculateExpectedResults(
 		for _, hc := range hostContexts {
 			// Create a temporary closure for delegate_to resolution.
 			// The actual host context used for closure calculation depends on delegate_to.
-			resolutionClosure := pkg.ConstructClosure(hc, task, cfg)
-			effectiveHostCtx, err := GetDelegatedHostContext(task, hostContexts, resolutionClosure, cfg)
+			resolutionClosure := task.ConstructClosure(hc, cfg)
+			effectiveHostCtx, err := GetDelegatedHostContext(*task, hostContexts, resolutionClosure, cfg)
 			if err != nil {
 				return 0, fmt.Errorf("failed to resolve delegate_to for count on task '%s', host '%s': %w", task.Name, hc.Host.Name, err)
 			}
@@ -51,7 +57,7 @@ func CalculateExpectedResults(
 				effectiveHostCtx = hc // No delegation, use original host context.
 			}
 
-			closures, err := GetTaskClosures(task, effectiveHostCtx, cfg)
+			closures, err := GetTaskClosures(*task, effectiveHostCtx, cfg)
 			if err != nil {
 				return 0, fmt.Errorf("failed to get task closures for count on task '%s', host '%s': %w", task.Name, effectiveHostCtx.Host.Name, err)
 			}
@@ -62,19 +68,19 @@ func CalculateExpectedResults(
 }
 
 func PrepareLevelHistoryAndGetCount(
-	tasksInLevel []pkg.Task,
+	nodesInLevel []pkg.GraphNode,
 	hostContexts map[string]*pkg.HostContext,
 	executionLevel int,
 	cfg *config.Config,
-) (map[string]chan pkg.Task, int, error) {
-	levelHistoryForRevert := make(map[string]chan pkg.Task)
+) (map[string]chan pkg.GraphNode, int, error) {
+	levelHistoryForRevert := make(map[string]chan pkg.GraphNode)
 	for hostname := range hostContexts {
 		// Buffer size can be a best-effort guess; it doesn't need to be perfect for local execution.
 		// A safer approach might be to calculate per-host task count, but total count is simpler.
-		levelHistoryForRevert[hostname] = make(chan pkg.Task, len(tasksInLevel)*2) // Simple heuristic
+		levelHistoryForRevert[hostname] = make(chan pkg.GraphNode, len(nodesInLevel)*2) // Simple heuristic
 	}
 
-	numExpectedResultsOnLevel, err := CalculateExpectedResults(tasksInLevel, hostContexts, cfg)
+	numExpectedResultsOnLevel, err := CalculateExpectedResults(nodesInLevel, hostContexts, cfg)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -105,7 +111,7 @@ func GetFirstAvailableHost(hostContexts map[string]*pkg.HostContext) (*pkg.HostC
 // GetTaskClosures generates one or more Closures for a task, handling loops.
 func GetTaskClosures(task pkg.Task, c *pkg.HostContext, cfg *config.Config) ([]*pkg.Closure, error) {
 	if task.Loop == nil {
-		closure := pkg.ConstructClosure(c, task, cfg) // Assumes ConstructClosure is available
+		closure := task.ConstructClosure(c, cfg)
 		return []*pkg.Closure{closure}, nil
 	}
 
@@ -116,7 +122,7 @@ func GetTaskClosures(task pkg.Task, c *pkg.HostContext, cfg *config.Config) ([]*
 
 	var closures []*pkg.Closure
 	for _, item := range loopItems {
-		tClosure := pkg.ConstructClosure(c, task, cfg)
+		tClosure := task.ConstructClosure(c, cfg)
 		// "item" is the standard variable name for loop items.
 		// Ansible's loop_control.loop_var allows customization; this is not currently supported here.
 		tClosure.ExtraFacts["item"] = item
@@ -128,7 +134,7 @@ func GetTaskClosures(task pkg.Task, c *pkg.HostContext, cfg *config.Config) ([]*
 // ParseLoop parses the loop directive of a task, evaluating expressions and returning items to iterate over.
 func ParseLoop(task pkg.Task, c *pkg.HostContext, cfg *config.Config) ([]interface{}, error) {
 	var loopItems []interface{}
-	closure := pkg.ConstructClosure(c, task, cfg)
+	closure := task.ConstructClosure(c, cfg)
 
 	switch loopValue := task.Loop.(type) {
 	case string:
@@ -469,7 +475,7 @@ type ResultProcessor struct {
 func (rp *ResultProcessor) ProcessTaskResult(
 	result pkg.TaskResult,
 	recapStats map[string]map[string]int,
-	executionHistoryLevel map[string]chan pkg.Task,
+	executionHistoryLevel map[string]chan pkg.GraphNode,
 ) bool {
 	return rp.processResult(result, recapStats, executionHistoryLevel, "TASK", true)
 }
@@ -489,7 +495,7 @@ func (rp *ResultProcessor) ProcessHandlerResult(
 func (rp *ResultProcessor) processResult(
 	result pkg.TaskResult,
 	recapStats map[string]map[string]int,
-	executionHistoryLevel map[string]chan pkg.Task,
+	executionHistoryLevel map[string]chan pkg.GraphNode,
 	taskType string,
 	stopOnError bool,
 ) bool {
@@ -511,7 +517,7 @@ func (rp *ResultProcessor) processResult(
 	if executionHistoryLevel != nil {
 		if hostChan, ok := executionHistoryLevel[hostname]; ok {
 			select {
-			case hostChan <- task:
+			case hostChan <- &task:
 			default:
 				rp.Logger.Warn("Failed to record task in history channel (full or closed)",
 					"task", task.Name, "host", hostname)
@@ -613,17 +619,6 @@ func (rp *ResultProcessor) processResult(
 	return isHardError
 }
 
-// ProcessSingleResult handles the common logic for processing a single task result
-// Returns whether the result represents a hard error that should stop execution
-// DEPRECATED: Use ProcessTaskResult instead
-func (rp *ResultProcessor) ProcessSingleResult(
-	result pkg.TaskResult,
-	recapStats map[string]map[string]int,
-	executionHistoryLevel map[string]chan pkg.Task,
-) bool {
-	return rp.ProcessTaskResult(result, recapStats, executionHistoryLevel)
-}
-
 // SharedProcessLevelResults contains the common logic for processing level results
 // that can be used by both local and temporal executors
 func SharedProcessLevelResults(
@@ -634,7 +629,7 @@ func SharedProcessLevelResults(
 	cfg *config.Config,
 	numExpectedResultsOnLevel int,
 	recapStats map[string]map[string]int,
-	executionHistoryLevel map[string]chan pkg.Task, // nil for temporal executor
+	executionHistoryLevel map[string]chan pkg.GraphNode, // nil for temporal executor
 	onResult func(pkg.TaskResult) error, // additional processing for temporal executor
 ) (bool, []pkg.TaskResult, error) {
 	var levelHardErrored bool

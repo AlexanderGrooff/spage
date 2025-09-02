@@ -112,3 +112,7 @@ func findSubstring(s, substr string) int {
 	}
 	return -1
 }
+
+func TestTaskAsGraphNode(t *testing.T) {
+	var _ GraphNode = &Task{} // Verify Task implements GraphNode at compile time
+}

@@ -88,10 +88,10 @@ func (r *LocalTaskRunner) RevertTask(ctx context.Context, task pkg.Task, closure
 	return result
 }
 
-func (e *LocalGraphExecutor) Execute(hostContexts map[string]*pkg.HostContext, orderedGraph [][]pkg.Task, cfg *config.Config) error {
+func (e *LocalGraphExecutor) Execute(hostContexts map[string]*pkg.HostContext, orderedGraph [][]pkg.GraphNode, cfg *config.Config) error {
 	ctx := context.Background()
 	recapStats := InitializeRecapStats(hostContexts)
-	var executionHistory []map[string]chan pkg.Task // For revert functionality
+	var executionHistory []map[string]chan pkg.GraphNode // For revert functionality
 	for executionLevel, tasksInLevel := range orderedGraph {
 		select {
 		case <-ctx.Done():
@@ -149,7 +149,7 @@ func (e *LocalGraphExecutor) Execute(hostContexts map[string]*pkg.HostContext, o
 	return nil
 }
 
-func (e *LocalGraphExecutor) Revert(ctx context.Context, executedTasks []map[string]chan pkg.Task, hostContexts map[string]*pkg.HostContext, cfg *config.Config) error {
+func (e *LocalGraphExecutor) Revert(ctx context.Context, executedTasks []map[string]chan pkg.GraphNode, hostContexts map[string]*pkg.HostContext, cfg *config.Config) error {
 	recapStats := make(map[string]map[string]int)
 	for hostname := range hostContexts {
 		recapStats[hostname] = map[string]int{"ok": 0, "changed": 0, "failed": 0}
@@ -170,13 +170,19 @@ func (e *LocalGraphExecutor) Revert(ctx context.Context, executedTasks []map[str
 
 			// Drain the channel for this host and level
 			for task := range taskHistoryCh { // taskHistoryCh should be closed by processLevelResults
+				task, ok := task.(*pkg.Task)
+				if !ok {
+					// TODO: handle non-task nodes
+					common.LogWarn("Skipping non-task node in Revert", map[string]interface{}{"node": task.String()})
+					continue
+				}
 				if cfg.Logging.Format == "plain" {
-					fmt.Printf("\nREVERT TASK [%s] (%s) *****************************************\n", task.Name, hostname)
+					fmt.Printf("\nREVERT TASK [%s] (%s) *****************************************\n", task.GetName(), hostname)
 				} else {
-					common.LogInfo("Attempting to revert task", map[string]interface{}{"task": task.Name, "host": hostname, "level": executionLevel})
+					common.LogInfo("Attempting to revert task", map[string]interface{}{"task": task.GetName(), "host": hostname, "level": executionLevel})
 				}
 				logData := map[string]interface{}{
-					"host": hostname, "task": task.Name, "action": "revert",
+					"host": hostname, "task": task.GetName(), "action": "revert",
 				}
 
 				// Check if the task's module parameters implement HasRevert
@@ -193,7 +199,7 @@ func (e *LocalGraphExecutor) Revert(ctx context.Context, executedTasks []map[str
 					continue
 				}
 
-				closure := pkg.ConstructClosure(hostCtx, task, cfg)
+				closure := task.ConstructClosure(hostCtx, cfg)
 				revertResult := task.RevertModule(closure) // Calls module's Revert via Task.RevertModule
 
 				if revertResult.Error != nil {
@@ -261,7 +267,7 @@ func (e *LocalGraphExecutor) Revert(ctx context.Context, executedTasks []map[str
 
 func (e *LocalGraphExecutor) loadLevelTasks(
 	ctx context.Context,
-	tasksInLevel []pkg.Task,
+	tasksInLevel []pkg.GraphNode,
 	hostContexts map[string]*pkg.HostContext,
 	resultsCh chan pkg.TaskResult,
 	errCh chan error,
@@ -274,7 +280,12 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 	isParallelDispatch := cfg.ExecutionMode == "parallel"
 
 	for _, taskDefinition := range tasksInLevel {
-		task := taskDefinition
+		task, ok := taskDefinition.(*pkg.Task)
+		if !ok {
+			// TODO: handle non-task nodes
+			common.LogWarn("Skipping non-task node in loadLevelTasks", map[string]interface{}{"node": taskDefinition.String()})
+			continue
+		}
 
 		// Handle run_once tasks separately
 		// TODO: template the run_once condition with actual closure
@@ -290,7 +301,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				return // No hosts, so we can't proceed.
 			}
 
-			closures, err := GetTaskClosures(task, firstHostCtx, cfg)
+			closures, err := GetTaskClosures(*task, firstHostCtx, cfg)
 			if err != nil {
 				errMsg := fmt.Errorf("critical error: failed to get task closures for run_once task '%s' on host '%s': %w", task.Name, firstHostName, err)
 				common.LogError("Dispatch error for run_once task", map[string]interface{}{"error": errMsg})
@@ -324,7 +335,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 					// This implementation executes on the `firstHostCtx`'s designated runner.
 					// A more advanced version might need to resolve delegation for each item.
 
-					result := e.Runner.ExecuteTask(ctx, task, closure, cfg)
+					result := e.Runner.ExecuteTask(ctx, *task, closure, cfg)
 
 					itemResults = append(itemResults, result)
 					totalDuration += result.Duration
@@ -354,9 +365,9 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 					finalStatus = pkg.TaskStatusFailed
 				}
 
-				finalClosure := pkg.ConstructClosure(firstHostCtx, task, cfg)
+				finalClosure := task.ConstructClosure(firstHostCtx, cfg)
 				aggregatedResult := pkg.TaskResult{
-					Task:     task,
+					Task:     *task,
 					Closure:  finalClosure,
 					Error:    finalError,
 					Status:   finalStatus,
@@ -368,7 +379,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				// Propagate the aggregated facts to all hosts
 				if task.Register != "" {
 					reg := BuildRegisteredFromOutput(aggregatedResult.Output, aggregatedResult.Status == pkg.TaskStatusChanged || aggregatedResult.Changed)
-					PropagateRegisteredToAllHosts(task, reg, hostContexts, nil)
+					PropagateRegisteredToAllHosts(*task, reg, hostContexts, nil)
 				}
 
 				allResults := CreateRunOnceResultsForAllHosts(aggregatedResult, hostContexts, firstHostName)
@@ -384,7 +395,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				closure := closures[0]
 
 				if task.DelegateTo != "" {
-					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure, cfg)
+					delegatedHostContext, err := GetDelegatedHostContext(*task, hostContexts, closure, cfg)
 					if err != nil {
 						errMsg := fmt.Errorf("failed to resolve delegate_to for run_once task '%s': %w", task.Name, err)
 						common.LogError("Delegate resolution error for run_once task", map[string]interface{}{"error": errMsg})
@@ -404,13 +415,13 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 					"execution_host": closure.HostContext.Host.Name,
 				})
 
-				originalResult := e.Runner.ExecuteTask(ctx, task, closure, cfg)
+				originalResult := e.Runner.ExecuteTask(ctx, *task, closure, cfg)
 
 				// Propagate the registered variable from the single run_once execution to all hosts,
 				// mirroring the behavior implemented for looped run_once above
 				if task.Register != "" {
 					reg := BuildRegisteredFromOutput(originalResult.Output, originalResult.Status == pkg.TaskStatusChanged || originalResult.Changed)
-					PropagateRegisteredToAllHosts(task, reg, hostContexts, nil)
+					PropagateRegisteredToAllHosts(*task, reg, hostContexts, nil)
 				}
 
 				allResults := CreateRunOnceResultsForAllHosts(originalResult, hostContexts, firstHostName)
@@ -430,7 +441,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 		// Normal task execution for non-run_once tasks
 		for hostName, hostCtx := range hostContexts {
 
-			closures, err := GetTaskClosures(task, hostCtx, cfg)
+			closures, err := GetTaskClosures(*task, hostCtx, cfg)
 			if err != nil {
 				errMsg := fmt.Errorf("critical error: failed to get task closures for task '%s' on host '%s': %w, aborting level", task.Name, hostName, err)
 				common.LogError("Dispatch error in loadLevelTasks", map[string]interface{}{"error": errMsg})
@@ -444,7 +455,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 			for _, closure := range closures {
 				// Resolve delegate_to if specified
 				if task.DelegateTo != "" {
-					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure, cfg)
+					delegatedHostContext, err := GetDelegatedHostContext(*task, hostContexts, closure, cfg)
 					if err != nil {
 						errMsg := fmt.Errorf("failed to resolve delegate_to for task '%s': %w", task.Name, err)
 						common.LogError("Delegate resolution error in loadLevelTasks", map[string]interface{}{"error": errMsg})
@@ -479,7 +490,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 						case <-ctx.Done():
 							return
 						default:
-							taskResult := e.Runner.ExecuteTask(ctx, task, closure, cfg)
+							taskResult := e.Runner.ExecuteTask(ctx, *task, closure, cfg)
 
 							select {
 							case resultsCh <- taskResult:
@@ -488,7 +499,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 						}
 					}()
 				} else {
-					taskResult := e.Runner.ExecuteTask(ctx, task, closure, cfg)
+					taskResult := e.Runner.ExecuteTask(ctx, *task, closure, cfg)
 
 					select {
 					case resultsCh <- taskResult:
@@ -552,17 +563,24 @@ func (e *LocalGraphExecutor) executeHandlers(
 		})
 
 		for _, handler := range notifiedHandlers {
+			task, ok := handler.(*pkg.Task)
+			if !ok {
+				// TODO: handle non-task nodes
+				common.LogWarn("Skipping non-task node in executeHandlers", map[string]interface{}{"node": handler.String()})
+				continue
+			}
+
 			// Skip if already executed
-			if hostCtx.HandlerTracker.IsExecuted(handler.Name) {
+			if hostCtx.HandlerTracker.IsExecuted(handler.GetName()) {
 				continue
 			}
 
 			// Execute the handler
-			closure := pkg.ConstructClosure(hostCtx, handler, cfg)
-			result := e.Runner.ExecuteTask(ctx, handler, closure, cfg)
+			closure := handler.ConstructClosure(hostCtx, cfg)
+			result := e.Runner.ExecuteTask(ctx, *task, closure, cfg)
 
 			// Mark the handler as executed
-			hostCtx.HandlerTracker.MarkExecuted(handler.Name)
+			hostCtx.HandlerTracker.MarkExecuted(handler.GetName())
 
 			// Process the handler result using shared logic
 			processor := &ResultProcessor{
@@ -582,7 +600,7 @@ func (e *LocalGraphExecutor) processLevelResults(
 	resultsCh chan pkg.TaskResult,
 	errCh chan error,
 	recapStats map[string]map[string]int,
-	executionHistory []map[string]chan pkg.Task,
+	executionHistory []map[string]chan pkg.GraphNode,
 	executionLevel int,
 	cfg *config.Config,
 	numExpectedResultsOnLevel int,

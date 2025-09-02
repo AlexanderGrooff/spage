@@ -30,7 +30,7 @@ type SpageActivityInput struct {
 	CurrentHostFacts map[string]interface{}
 	SpageCoreConfig  *config.Config // Pass necessary config parts
 	TaskHistory      map[string]interface{}
-	Handlers         []pkg.Task // Handlers from the graph
+	Handlers         []pkg.GraphNode // Handlers from the graph
 }
 
 // SpageActivityResult defines the output from our generic Spage task activity.
@@ -55,7 +55,7 @@ type SpageRunOnceLoopActivityInput struct {
 	LoopItems        []interface{} // All loop items to execute
 	CurrentHostFacts map[string]interface{}
 	SpageCoreConfig  *config.Config
-	Handlers         []pkg.Task // Handlers from the graph
+	Handlers         []pkg.GraphNode // Handlers from the graph
 }
 
 // SpageRunOnceLoopActivityResult defines the output from run_once loop activity.
@@ -196,7 +196,7 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 	// Initialize handler tracker with handlers from the graph
 	hostCtx.InitializeHandlerTracker(input.Handlers)
 
-	closure := pkg.ConstructClosure(hostCtx, input.TaskDefinition, input.SpageCoreConfig) // Assumes ConstructClosure is in package pkg
+	closure := input.TaskDefinition.ConstructClosure(hostCtx, input.SpageCoreConfig)
 
 	if input.LoopItem != nil {
 		loopVarName := "item"
@@ -308,7 +308,7 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 		notifiedHandlerTasks := hostCtx.HandlerTracker.GetNotifiedHandlers()
 		result.NotifiedHandlers = make([]string, len(notifiedHandlerTasks))
 		for i, handler := range notifiedHandlerTasks {
-			result.NotifiedHandlers[i] = handler.Name
+			result.NotifiedHandlers[i] = handler.GetName()
 		}
 		logger.Debug("Activity captured handler notifications", "host", input.TargetHost.Name, "task", input.TaskDefinition.Name, "notified_handlers", result.NotifiedHandlers)
 	}
@@ -356,7 +356,7 @@ func ExecuteSpageRunOnceLoopActivity(ctx context.Context, input SpageRunOnceLoop
 
 	// Execute each loop iteration
 	for i, loopItem := range input.LoopItems {
-		closure := pkg.ConstructClosure(hostCtx, input.TaskDefinition, input.SpageCoreConfig)
+		closure := input.TaskDefinition.ConstructClosure(hostCtx, input.SpageCoreConfig)
 
 		if loopItem != nil {
 			loopVarName := "item"
@@ -439,7 +439,7 @@ func ExecuteSpageRunOnceLoopActivity(ctx context.Context, input SpageRunOnceLoop
 			notifiedHandlerTasks := hostCtx.HandlerTracker.GetNotifiedHandlers()
 			result.NotifiedHandlers = make([]string, len(notifiedHandlerTasks))
 			for j, handler := range notifiedHandlerTasks {
-				result.NotifiedHandlers[j] = handler.Name
+				result.NotifiedHandlers[j] = handler.GetName()
 			}
 		}
 
@@ -559,7 +559,7 @@ func (r *TemporalTaskRunner) ExecuteTask(execCtx workflow.Context, task pkg.Task
 	loopItem := closure.ExtraFacts["item"]
 
 	// Get handlers from the host context's handler tracker
-	var handlers []pkg.Task
+	var handlers []pkg.GraphNode
 	if closure.HostContext.HandlerTracker != nil {
 		handlers = closure.HostContext.HandlerTracker.GetAllHandlers()
 	}
@@ -667,7 +667,7 @@ func (r *TemporalTaskRunner) RevertTask(execCtx workflow.Context, task pkg.Task,
 	}
 
 	// Get handlers from the host context's handler tracker
-	var handlers []pkg.Task
+	var handlers []pkg.GraphNode
 	if closure.HostContext.HandlerTracker != nil {
 		handlers = closure.HostContext.HandlerTracker.GetAllHandlers()
 	}
@@ -795,7 +795,7 @@ func RevertSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*Sp
 	// Initialize handler tracker with handlers from the graph
 	hostCtx.InitializeHandlerTracker(input.Handlers)
 
-	closure := pkg.ConstructClosure(hostCtx, input.TaskDefinition, input.SpageCoreConfig)
+	closure := input.TaskDefinition.ConstructClosure(hostCtx, input.SpageCoreConfig)
 
 	if input.LoopItem != nil {
 		loopVarName := "item"
@@ -894,7 +894,7 @@ func RevertSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*Sp
 		notifiedHandlerTasks := hostCtx.HandlerTracker.GetNotifiedHandlers()
 		result.NotifiedHandlers = make([]string, len(notifiedHandlerTasks))
 		for i, handler := range notifiedHandlerTasks {
-			result.NotifiedHandlers[i] = handler.Name
+			result.NotifiedHandlers[i] = handler.GetName()
 		}
 		logger.Debug("Revert activity captured handler notifications", "host", input.TargetHost.Name, "task", input.TaskDefinition.Name, "notified_handlers", result.NotifiedHandlers)
 	}
@@ -919,7 +919,7 @@ func (e *TemporalGraphExecutor) executeRunOnceWithAllLoops(
 	hostContexts map[string]*pkg.HostContext,
 	workflowHostFacts map[string]map[string]interface{},
 	cfg *config.Config,
-	handlers []pkg.Task, // Add handlers parameter
+	handlers []pkg.GraphNode,
 ) []pkg.TaskResult {
 	logger := workflow.GetLogger(ctx)
 
@@ -1131,7 +1131,7 @@ func (e *TemporalGraphExecutor) executeRunOnceWithAllLoops(
 
 func (e *TemporalGraphExecutor) loadLevelTasks(
 	workflowCtx workflow.Context,
-	tasksInLevel []pkg.Task,
+	tasksInLevel []pkg.GraphNode,
 	hostContexts map[string]*pkg.HostContext,
 	resultsCh workflow.Channel,
 	errCh workflow.Channel,
@@ -1164,14 +1164,15 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 	}
 
 	for _, taskDefinition := range tasksInLevel {
-		task := taskDefinition
+		task, ok := taskDefinition.(*pkg.Task)
+		if !ok {
+			// TODO: handle non-task nodes
+			common.LogWarn("Skipping non-task node in loadLevelTasks", map[string]interface{}{"node": taskDefinition.String()})
+			continue
+		}
 
 		logger.Debug("Processing task", map[string]interface{}{
-			"task":            task.Name,
-			"has_loop":        task.Loop != nil,
-			"run_once_empty":  task.RunOnce.IsEmpty(),
-			"run_once_truthy": task.RunOnce.IsTruthy(nil),
-			"run_once_expr":   task.RunOnce.Expression,
+			"task": task,
 		})
 
 		// Handle run_once tasks separately
@@ -1188,7 +1189,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 			}
 
 			// Execute only on the first host
-			closures, err := GetTaskClosures(task, firstHostCtx, cfg)
+			closures, err := GetTaskClosures(*task, firstHostCtx, cfg)
 			if err != nil {
 				errMsg := fmt.Errorf("critical error: failed to get task closures for run_once task '%s' on host '%s': %w", task.Name, firstHostName, err)
 				common.LogError("Dispatch error for run_once task", map[string]interface{}{"error": errMsg})
@@ -1207,13 +1208,13 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 					actualDispatchedTasks++ // We'll dispatch one execution but generate results for all hosts
 					workflow.Go(workflowCtx, func(childTaskCtx workflow.Context) {
 						// Get handlers from the first host context
-						var handlers []pkg.Task
+						var handlers []pkg.GraphNode
 						if firstHostCtx.HandlerTracker != nil {
 							handlers = firstHostCtx.HandlerTracker.GetAllHandlers()
 						}
 
 						// Execute all loop iterations on the first host and collect results
-						allLoopResults := e.executeRunOnceWithAllLoops(childTaskCtx, task, closures, hostContexts, workflowHostFacts, cfg, handlers)
+						allLoopResults := e.executeRunOnceWithAllLoops(childTaskCtx, *task, closures, hostContexts, workflowHostFacts, cfg, handlers)
 
 						// Send results for all hosts
 						for _, result := range allLoopResults {
@@ -1224,13 +1225,13 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 					})
 				} else {
 					// Get handlers from the first host context
-					var handlers []pkg.Task
+					var handlers []pkg.GraphNode
 					if firstHostCtx.HandlerTracker != nil {
 						handlers = firstHostCtx.HandlerTracker.GetAllHandlers()
 					}
 
 					// Execute all loop iterations on the first host and collect results
-					allLoopResults := e.executeRunOnceWithAllLoops(workflowCtx, task, closures, hostContexts, workflowHostFacts, cfg, handlers)
+					allLoopResults := e.executeRunOnceWithAllLoops(workflowCtx, *task, closures, hostContexts, workflowHostFacts, cfg, handlers)
 
 					// Send results for all hosts
 					for _, result := range allLoopResults {
@@ -1242,7 +1243,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 				closure := closures[0]
 
 				if task.DelegateTo != "" {
-					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure, cfg)
+					delegatedHostContext, err := GetDelegatedHostContext(*task, hostContexts, closure, cfg)
 					if err != nil {
 						errMsg := fmt.Errorf("failed to resolve delegate_to for run_once task '%s': %w", task.Name, err)
 						common.LogError("Delegate resolution error for run_once task", map[string]interface{}{
@@ -1265,12 +1266,12 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 					actualDispatchedTasks++
 					workflow.Go(workflowCtx, func(childTaskCtx workflow.Context) {
 						// Execute the single run_once task
-						taskResult := e.Runner.ExecuteTask(childTaskCtx, task, closure, cfg)
+						taskResult := e.Runner.ExecuteTask(childTaskCtx, *task, closure, cfg)
 
 						// Propagate the registered variable from the single run_once execution to all hosts
 						if task.Register != "" {
 							reg := BuildRegisteredFromOutput(taskResult.Output, taskResult.Status == pkg.TaskStatusChanged || taskResult.Changed)
-							PropagateRegisteredToAllHosts(task, reg, hostContexts, workflowHostFacts)
+							PropagateRegisteredToAllHosts(*task, reg, hostContexts, workflowHostFacts)
 						}
 
 						// Create results for all hosts
@@ -1288,7 +1289,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 					})
 				} else {
 					// Execute the single run_once task
-					taskResult := e.Runner.ExecuteTask(workflowCtx, task, closure, cfg)
+					taskResult := e.Runner.ExecuteTask(workflowCtx, *task, closure, cfg)
 
 					// Propagate the registered variable from the single run_once execution to all hosts
 					if task.Register != "" && taskResult.Output != nil {
@@ -1334,7 +1335,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 
 		// Normal task execution for non-run_once tasks
 		for hostName, hostCtx := range hostContexts {
-			closures, err := GetTaskClosures(task, hostCtx, cfg)
+			closures, err := GetTaskClosures(*task, hostCtx, cfg)
 			if err != nil {
 				errMsg := fmt.Errorf("critical error: failed to get task closures for task '%s' on host '%s': %w. Aborting level", task.Name, hostName, err)
 				common.LogError("Dispatch error in loadLevelTasks", map[string]interface{}{"error": errMsg})
@@ -1346,7 +1347,7 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 				closure := individualClosure
 
 				if task.DelegateTo != "" {
-					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure, cfg)
+					delegatedHostContext, err := GetDelegatedHostContext(*task, hostContexts, closure, cfg)
 					if err != nil {
 						errMsg := fmt.Errorf("failed to resolve delegate_to for task '%s': %w", task.Name, err)
 						common.LogError("Delegate resolution error in loadLevelTasks", map[string]interface{}{"error": errMsg})
@@ -1361,13 +1362,13 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 				if isParallelDispatch {
 					actualDispatchedTasks++ // Increment the counter for actual dispatches
 					workflow.Go(workflowCtx, func(childTaskCtx workflow.Context) {
-						taskResult := e.Runner.ExecuteTask(childTaskCtx, task, closure, cfg)
+						taskResult := e.Runner.ExecuteTask(childTaskCtx, *task, closure, cfg)
 						resultsCh.SendAsync(taskResult)
 
 						completionCh.SendAsync(true)
 					})
 				} else {
-					taskResult := e.Runner.ExecuteTask(workflowCtx, task, closure, cfg)
+					taskResult := e.Runner.ExecuteTask(workflowCtx, *task, closure, cfg)
 					resultsCh.SendAsync(taskResult)
 				}
 			}
@@ -1439,7 +1440,7 @@ func (e *TemporalGraphExecutor) processLevelResults(
 
 func (e *TemporalGraphExecutor) Execute(
 	hostContexts map[string]*pkg.HostContext,
-	orderedGraph [][]pkg.Task,
+	orderedGraph [][]pkg.GraphNode,
 	cfg *config.Config,
 ) error {
 	// For Temporal, we need to manage facts in a workflow-safe map.
@@ -1594,8 +1595,15 @@ func (e *TemporalGraphExecutor) executeHandlers(
 		logger.Debug("Executing handlers for host", "host", hostname, "handler_count", len(notifiedHandlers))
 
 		for _, handler := range notifiedHandlers {
+			handler, ok := handler.(*pkg.Task)
+			if !ok {
+				// TODO: handle non-task nodes
+				common.LogWarn("Skipping non-task node in executeHandlers", map[string]interface{}{"node": handler.String()})
+				continue
+			}
+
 			// Skip if already executed
-			if hostCtx.HandlerTracker.IsExecuted(handler.Name) {
+			if hostCtx.HandlerTracker.IsExecuted(handler.GetName()) {
 				continue
 			}
 
@@ -1609,17 +1617,17 @@ func (e *TemporalGraphExecutor) executeHandlers(
 			}
 
 			// Create closure for the handler using the existing host context (which has connection info)
-			handlerClosure := pkg.ConstructClosure(hostCtx, handler, cfg)
+			handlerClosure := handler.ConstructClosure(hostCtx, cfg)
 
 			// Execute the handler using the temporal task runner
-			result := e.Runner.ExecuteTask(workflowCtx, handler, handlerClosure, cfg)
+			result := e.Runner.ExecuteTask(workflowCtx, *handler, handlerClosure, cfg)
 
 			// Mark the handler as executed
-			hostCtx.HandlerTracker.MarkExecuted(handler.Name)
+			hostCtx.HandlerTracker.MarkExecuted(handler.GetName())
 
 			// Handle temporal-specific fact registration first
 			if activityResult, ok := result.ExecutionSpecificOutput.(SpageActivityResult); ok {
-				if errFact := processActivityResultAndRegisterFacts(workflowCtx, activityResult, handler.Name, hostname, workflowHostFacts, hostContexts); errFact != nil {
+				if errFact := processActivityResultAndRegisterFacts(workflowCtx, activityResult, handler.GetName(), hostname, workflowHostFacts, hostContexts); errFact != nil {
 					logger.Error("Handler task reported an error after fact registration", "handler", handler.Name, "host", hostname, "error", errFact)
 					// Continue processing - the shared processor will handle the result display
 				}
@@ -1642,7 +1650,7 @@ func (e *TemporalGraphExecutor) executeHandlers(
 // It requires a workflow context, which must be passed in via the context.Context argument.
 func (e *TemporalGraphExecutor) Revert(
 	ctx context.Context,
-	executedTasksHistory []map[string]chan pkg.Task,
+	executedTasksHistory []map[string]chan pkg.GraphNode,
 	hostContexts map[string]*pkg.HostContext,
 	cfg *config.Config,
 ) error {
@@ -1966,7 +1974,7 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 		}
 
 		common.LogDebug("Executing workflow with graph, inventory, and config.", map[string]interface{}{
-			"graph_tasks_count": len(opts.Graph.Tasks),
+			"graph_tasks_count": len(opts.Graph.Nodes),
 			"inventory_path":    opts.InventoryPath,
 			"config_mode":       spageAppConfig.ExecutionMode,
 		})

@@ -732,10 +732,17 @@ func GetConfig() *config.Config {
 
 // applyBecomeToGraph applies become: true and become_user: root to all tasks in the graph
 func applyBecomeToGraph(graph *pkg.Graph) {
-	for i := range graph.Tasks {
-		for j := range graph.Tasks[i] {
-			graph.Tasks[i][j].Become = true
-			graph.Tasks[i][j].BecomeUser = "root"
+	for i := range graph.Nodes {
+		for j := range graph.Nodes[i] {
+			node := graph.Nodes[i][j]
+
+			task, ok := node.(*pkg.Task)
+			if ok {
+				task.Become = true
+				task.BecomeUser = "root"
+			} else {
+				common.LogWarn("Skipping non-task node in applyBecomeToGraph", map[string]interface{}{"node": node.String()})
+			}
 		}
 	}
 }
@@ -747,14 +754,14 @@ func applyTagFiltering(graph pkg.Graph, tagsConfig config.TagsConfig) (pkg.Graph
 
 	filteredGraph := pkg.Graph{
 		RequiredInputs: graph.RequiredInputs, // Copy required inputs
-		Tasks:          make([][]pkg.Task, 0),
+		Nodes:          make([][]pkg.GraphNode, 0),
 		Handlers:       graph.Handlers, // Copy handlers
 		Vars:           graph.Vars,
 		PlaybookPath:   graph.PlaybookPath, // Copy base path
 	}
 
-	for _, taskLayer := range graph.Tasks {
-		var filteredLayer []pkg.Task
+	for _, taskLayer := range graph.Nodes {
+		var filteredLayer []pkg.GraphNode
 		for _, task := range taskLayer {
 			if shouldIncludeTask(task, tagsConfig) {
 				filteredLayer = append(filteredLayer, task)
@@ -762,7 +769,7 @@ func applyTagFiltering(graph pkg.Graph, tagsConfig config.TagsConfig) (pkg.Graph
 		}
 		// Only add the layer if it has tasks
 		if len(filteredLayer) > 0 {
-			filteredGraph.Tasks = append(filteredGraph.Tasks, filteredLayer)
+			filteredGraph.Nodes = append(filteredGraph.Nodes, filteredLayer)
 		}
 	}
 
@@ -770,8 +777,8 @@ func applyTagFiltering(graph pkg.Graph, tagsConfig config.TagsConfig) (pkg.Graph
 }
 
 // shouldIncludeTask determines if a task should be included based on its tags
-func shouldIncludeTask(task pkg.Task, tagsConfig config.TagsConfig) bool {
-	taskTags := task.Tags
+func shouldIncludeTask(task pkg.GraphNode, tagsConfig config.TagsConfig) bool {
+	taskTags := task.GetTags()
 
 	// Special tag handling: "always" tag means always include (unless skipped)
 	hasAlwaysTag := contains(taskTags, "always")

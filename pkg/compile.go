@@ -349,7 +349,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"local_action",
 	}
 
-	var tasks []GraphNode
+	var nodes []GraphNode
 	var errors []error
 
 	for idx, block := range blocks {
@@ -726,7 +726,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			continue
 		}
 
-		tasks = append(tasks, task)
+		nodes = append(nodes, &task)
 	}
 
 	if len(errors) > 0 {
@@ -737,7 +737,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		return nil, fmt.Errorf("encountered errors:\n%s", strings.Join(errorMessages, "\n"))
 	}
 
-	return tasks, nil
+	return nodes, nil
 }
 
 // Helper function to convert map[string]interface{} to *sync.Map

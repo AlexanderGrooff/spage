@@ -40,8 +40,8 @@ type TaskRunner interface {
 
 // GraphExecutor defines the interface for running a Spage graph.
 type GraphExecutor interface {
-	Execute(hostContexts map[string]*HostContext, orderedGraph [][]Task, cfg *config.Config) error
-	Revert(ctx context.Context, executedTasks []map[string]chan Task, hostContexts map[string]*HostContext, cfg *config.Config) error
+	Execute(hostContexts map[string]*HostContext, orderedGraph [][]GraphNode, cfg *config.Config) error
+	Revert(ctx context.Context, executedTasks []map[string]chan GraphNode, hostContexts map[string]*HostContext, cfg *config.Config) error
 }
 
 func ChangeCWDToPlaybookDir(playbookPath string) (string, error) {
@@ -156,7 +156,7 @@ func GetHostContexts(inventory *Inventory, graph *Graph, cfg *config.Config) (ma
 	return contexts, nil
 }
 
-func GetOrderedGraph(cfg *config.Config, graph *Graph) ([][]Task, error) {
+func GetOrderedGraph(cfg *config.Config, graph *Graph) ([][]GraphNode, error) {
 	switch cfg.ExecutionMode {
 	case "parallel":
 		return graph.ParallelTasks(), nil
