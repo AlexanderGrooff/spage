@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -11,6 +12,22 @@ type TaskCollection struct {
 	Id    int         `yaml:"id" json:"id"`
 	Name  string      `yaml:"name" json:"name"`
 	Tasks []GraphNode `yaml:"tasks" json:"tasks"`
+}
+
+func (t *TaskCollection) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Id    int         `json:"id"`
+		Name  string      `json:"name"`
+		Tasks []GraphNode `json:"tasks"`
+	}{
+		Id:    t.Id,
+		Name:  t.Name,
+		Tasks: t.Tasks,
+	})
+}
+
+func (t *TaskCollection) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, t)
 }
 
 func (t *TaskCollection) GetId() int {

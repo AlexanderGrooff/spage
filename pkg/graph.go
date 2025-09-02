@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -38,6 +39,7 @@ type GraphNode interface {
 	ConstructClosure(c *HostContext, cfg *config.Config) *Closure
 	ExecuteModule(closure *Closure) TaskResult
 	RevertModule(closure *Closure) TaskResult
+	json.Marshaler
 
 	// Getters
 	GetId() int
@@ -53,6 +55,161 @@ type Graph struct {
 	Handlers       []GraphNode
 	Vars           map[string]interface{}
 	PlaybookPath   string
+}
+
+// graphNodeDTO is a tagged union for serializing GraphNode values.
+type graphNodeDTO struct {
+	Kind       string           `json:"kind"` // "task" | "collection"
+	Task       *Task            `json:"task,omitempty"`
+	Collection *taskCollectionD `json:"collection,omitempty"`
+}
+
+// taskCollectionD is a serializable form of TaskCollection that avoids interface fields.
+type taskCollectionD struct {
+	Id    int            `json:"id"`
+	Name  string         `json:"name"`
+	Tasks []graphNodeDTO `json:"tasks"`
+}
+
+// graphJSON is the on-the-wire representation of Graph for JSON.
+type graphJSON struct {
+	RequiredInputs []string               `json:"required_inputs"`
+	Nodes          [][]graphNodeDTO       `json:"nodes"`
+	Handlers       []graphNodeDTO         `json:"handlers"`
+	Vars           map[string]interface{} `json:"vars"`
+	PlaybookPath   string                 `json:"playbook_path"`
+}
+
+// MarshalJSON implements custom JSON marshaling for Graph to handle GraphNode interfaces.
+func (g Graph) MarshalJSON() ([]byte, error) {
+	var toDTO func(GraphNode) (graphNodeDTO, error)
+	toDTO = func(n GraphNode) (graphNodeDTO, error) {
+		if t, ok := n.(*Task); ok {
+			taskCopy := *t
+			return graphNodeDTO{Kind: "task", Task: &taskCopy}, nil
+		}
+		if c, ok := n.(*TaskCollection); ok {
+			var children []graphNodeDTO
+			if len(c.Tasks) > 0 {
+				children = make([]graphNodeDTO, 0, len(c.Tasks))
+				for _, child := range c.Tasks {
+					dto, err := toDTO(child)
+					if err != nil {
+						return graphNodeDTO{}, err
+					}
+					children = append(children, dto)
+				}
+			}
+			return graphNodeDTO{Kind: "collection", Collection: &taskCollectionD{Id: c.Id, Name: c.Name, Tasks: children}}, nil
+		}
+		return graphNodeDTO{}, fmt.Errorf("unsupported GraphNode type %T for JSON marshal", n)
+	}
+
+	enc := graphJSON{
+		RequiredInputs: append([]string(nil), g.RequiredInputs...),
+		Vars:           g.Vars,
+		PlaybookPath:   g.PlaybookPath,
+	}
+
+	if len(g.Nodes) > 0 {
+		enc.Nodes = make([][]graphNodeDTO, len(g.Nodes))
+		for i, lvl := range g.Nodes {
+			row := make([]graphNodeDTO, 0, len(lvl))
+			for _, n := range lvl {
+				dto, err := toDTO(n)
+				if err != nil {
+					return nil, err
+				}
+				row = append(row, dto)
+			}
+			enc.Nodes[i] = row
+		}
+	}
+
+	if len(g.Handlers) > 0 {
+		enc.Handlers = make([]graphNodeDTO, 0, len(g.Handlers))
+		for _, h := range g.Handlers {
+			dto, err := toDTO(h)
+			if err != nil {
+				return nil, err
+			}
+			enc.Handlers = append(enc.Handlers, dto)
+		}
+	}
+	return json.Marshal(enc)
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling for Graph to handle GraphNode interfaces.
+func (g *Graph) UnmarshalJSON(data []byte) error {
+	var dec graphJSON
+	if err := json.Unmarshal(data, &dec); err != nil {
+		return err
+	}
+
+	var fromDTO func(graphNodeDTO) (GraphNode, error)
+	fromDTO = func(dto graphNodeDTO) (GraphNode, error) {
+		switch dto.Kind {
+		case "task":
+			if dto.Task == nil {
+				return nil, fmt.Errorf("task dto missing task field")
+			}
+			taskCopy := *dto.Task
+			return &taskCopy, nil
+		case "collection":
+			if dto.Collection == nil {
+				return nil, fmt.Errorf("collection dto missing collection field")
+			}
+			tc := &TaskCollection{Id: dto.Collection.Id, Name: dto.Collection.Name}
+			if len(dto.Collection.Tasks) > 0 {
+				tc.Tasks = make([]GraphNode, 0, len(dto.Collection.Tasks))
+				for _, child := range dto.Collection.Tasks {
+					gn, err := fromDTO(child)
+					if err != nil {
+						return nil, err
+					}
+					tc.Tasks = append(tc.Tasks, gn)
+				}
+			}
+			return tc, nil
+		default:
+			return nil, fmt.Errorf("unknown GraphNode kind %q", dto.Kind)
+		}
+	}
+
+	g.RequiredInputs = append([]string(nil), dec.RequiredInputs...)
+	g.Vars = dec.Vars
+	g.PlaybookPath = dec.PlaybookPath
+
+	if len(dec.Nodes) > 0 {
+		g.Nodes = make([][]GraphNode, len(dec.Nodes))
+		for i, lvl := range dec.Nodes {
+			row := make([]GraphNode, 0, len(lvl))
+			for _, dto := range lvl {
+				gn, err := fromDTO(dto)
+				if err != nil {
+					return err
+				}
+				row = append(row, gn)
+			}
+			g.Nodes[i] = row
+		}
+	} else {
+		g.Nodes = nil
+	}
+
+	if len(dec.Handlers) > 0 {
+		g.Handlers = make([]GraphNode, 0, len(dec.Handlers))
+		for _, dto := range dec.Handlers {
+			gn, err := fromDTO(dto)
+			if err != nil {
+				return err
+			}
+			g.Handlers = append(g.Handlers, gn)
+		}
+	} else {
+		g.Handlers = nil
+	}
+	return nil
 }
 
 func (g Graph) String() string {

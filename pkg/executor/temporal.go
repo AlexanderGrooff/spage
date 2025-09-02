@@ -30,7 +30,7 @@ type SpageActivityInput struct {
 	CurrentHostFacts map[string]interface{}
 	SpageCoreConfig  *config.Config // Pass necessary config parts
 	TaskHistory      map[string]interface{}
-	Handlers         []pkg.GraphNode // Handlers from the graph
+	Handlers         []GraphNodeDTO // Handlers from the graph (DTO for serialization)
 }
 
 // SpageActivityResult defines the output from our generic Spage task activity.
@@ -48,88 +48,57 @@ type SpageActivityResult struct {
 	NotifiedHandlers  []string // Handler names that were notified during this activity
 }
 
-// SpageRunOnceLoopActivityInput defines the input for run_once tasks with loops.
-type SpageRunOnceLoopActivityInput struct {
-	TaskDefinition   pkg.Task
-	TargetHost       pkg.Host
-	LoopItems        []interface{} // All loop items to execute
-	CurrentHostFacts map[string]interface{}
-	SpageCoreConfig  *config.Config
-	Handlers         []pkg.GraphNode // Handlers from the graph
+// GraphNodeDTO provides a serializable wrapper for pkg.GraphNode (Task or TaskCollection)
+type GraphNodeDTO struct {
+	Kind       string             `json:"kind"` // "task" | "collection"
+	Task       *pkg.Task          `json:"task,omitempty"`
+	Collection *TaskCollectionDTO `json:"collection,omitempty"`
 }
 
-// SpageRunOnceLoopActivityResult defines the output from run_once loop activity.
-type SpageRunOnceLoopActivityResult struct {
-	HostName          string
-	TaskName          string
-	LoopResults       []SpageActivityResult // Results for each loop iteration
-	HostFactsSnapshot map[string]interface{}
+// TaskCollectionDTO serializes TaskCollection
+type TaskCollectionDTO struct {
+	Id    int            `json:"id"`
+	Name  string         `json:"name"`
+	Tasks []GraphNodeDTO `json:"tasks"`
 }
 
-// TemporalResultChannel implements ResultChannel for Temporal workflow channels
-type TemporalResultChannel struct {
-	ctx workflow.Context
-	ch  workflow.ReceiveChannel
+func toGraphNodeDTO(n pkg.GraphNode) GraphNodeDTO {
+	if t, ok := n.(*pkg.Task); ok {
+		taskCopy := *t
+		return GraphNodeDTO{Kind: "task", Task: &taskCopy}
+	}
+	if c, ok := n.(*pkg.TaskCollection); ok {
+		var children []GraphNodeDTO
+		for _, child := range c.Tasks {
+			children = append(children, toGraphNodeDTO(child))
+		}
+		return GraphNodeDTO{Kind: "collection", Collection: &TaskCollectionDTO{Id: c.Id, Name: c.Name, Tasks: children}}
+	}
+	return GraphNodeDTO{Kind: "unknown"}
 }
 
-func NewTemporalResultChannel(ctx workflow.Context, ch workflow.ReceiveChannel) *TemporalResultChannel {
-	return &TemporalResultChannel{ctx: ctx, ch: ch}
-}
-
-func (c *TemporalResultChannel) ReceiveResult() (pkg.TaskResult, bool, error) {
-	var result pkg.TaskResult
-	more := c.ch.Receive(c.ctx, &result)
-	return result, more, nil
-}
-
-func (c *TemporalResultChannel) IsClosed() bool {
-	// For Temporal channels, we handle this differently in the selector pattern
-	return false
-}
-
-// TemporalErrorChannel implements ErrorChannel for Temporal workflow channels
-type TemporalErrorChannel struct {
-	ctx workflow.Context
-	ch  workflow.ReceiveChannel
-}
-
-func NewTemporalErrorChannel(ctx workflow.Context, ch workflow.ReceiveChannel) *TemporalErrorChannel {
-	return &TemporalErrorChannel{ctx: ctx, ch: ch}
-}
-
-func (c *TemporalErrorChannel) ReceiveError() (error, bool, error) {
-	var err error
-	more := c.ch.Receive(c.ctx, &err)
-	return err, more, nil
-}
-
-func (c *TemporalErrorChannel) IsClosed() bool {
-	return false
-}
-
-// TemporalLogger implements Logger for Temporal workflow logging
-type TemporalLogger struct {
-	logger log.Logger
-}
-
-func NewTemporalLogger(ctx workflow.Context) *TemporalLogger {
-	return &TemporalLogger{logger: workflow.GetLogger(ctx)}
-}
-
-func (l *TemporalLogger) Error(msg string, args ...interface{}) {
-	l.logger.Error(msg, args...)
-}
-
-func (l *TemporalLogger) Warn(msg string, args ...interface{}) {
-	l.logger.Warn(msg, args...)
-}
-
-func (l *TemporalLogger) Info(msg string, args ...interface{}) {
-	l.logger.Info(msg, args...)
-}
-
-func (l *TemporalLogger) Debug(msg string, args ...interface{}) {
-	l.logger.Debug(msg, args...)
+func fromGraphNodeDTO(dto GraphNodeDTO) pkg.GraphNode {
+	switch dto.Kind {
+	case "task":
+		if dto.Task == nil {
+			return nil
+		}
+		taskCopy := *dto.Task
+		return &taskCopy
+	case "collection":
+		if dto.Collection == nil {
+			return nil
+		}
+		tc := &pkg.TaskCollection{Id: dto.Collection.Id, Name: dto.Collection.Name}
+		for _, child := range dto.Collection.Tasks {
+			if gn := fromGraphNodeDTO(child); gn != nil {
+				tc.Tasks = append(tc.Tasks, gn)
+			}
+		}
+		return tc
+	default:
+		return nil
+	}
 }
 
 // FormattedGenericOutput preserves the formatted string output from modules
@@ -193,8 +162,18 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 	}
 	// The direct merge of input.TargetHost.Vars is removed as GetInitialFactsForHost now handles this layering.
 
-	// Initialize handler tracker with handlers from the graph
-	hostCtx.InitializeHandlerTracker(input.Handlers)
+	// Initialize handler tracker with handlers from the graph (convert DTOs)
+	if len(input.Handlers) > 0 {
+		nodes := make([]pkg.GraphNode, 0, len(input.Handlers))
+		for _, dto := range input.Handlers {
+			if gn := fromGraphNodeDTO(dto); gn != nil {
+				nodes = append(nodes, gn)
+			}
+		}
+		hostCtx.InitializeHandlerTracker(nodes)
+	} else {
+		hostCtx.InitializeHandlerTracker(nil)
+	}
 
 	closure := input.TaskDefinition.ConstructClosure(hostCtx, input.SpageCoreConfig)
 
@@ -316,221 +295,88 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 	return result, nil
 }
 
-// ExecuteSpageRunOnceLoopActivity executes a run_once task with all its loop iterations
-// within a single activity to maintain Temporal determinism
-func ExecuteSpageRunOnceLoopActivity(ctx context.Context, input SpageRunOnceLoopActivityInput) (*SpageRunOnceLoopActivityResult, error) {
-	logger := activity.GetLogger(ctx)
-
-	activity.RecordHeartbeat(ctx, fmt.Sprintf("Starting run_once loop task %s on host %s with %d iterations", input.TaskDefinition.Name, input.TargetHost.Name, len(input.LoopItems)))
-
-	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost, input.SpageCoreConfig)
-	if err != nil {
-		logger.Error("Failed to initialize host context for run_once loop", "host", input.TargetHost.Name, "task", input.TaskDefinition.Name, "error", err)
-		return &SpageRunOnceLoopActivityResult{
-			HostName: input.TargetHost.Name,
-			TaskName: input.TaskDefinition.Name,
-			LoopResults: []SpageActivityResult{{
-				HostName: input.TargetHost.Name,
-				TaskName: input.TaskDefinition.Name,
-				Error:    fmt.Sprintf("failed to initialize host context for run_once loop task %s: %v", input.TaskDefinition.Name, err),
-			}},
-		}, nil
-	}
-	defer func() {
-		if closeErr := hostCtx.Close(); closeErr != nil {
-			logger.Warn("Failed to close host context for run_once loop", "host", input.TargetHost.Name, "error", closeErr)
-		}
-	}()
-
-	// Load facts from workflow
-	if input.CurrentHostFacts != nil {
-		for k, v := range input.CurrentHostFacts {
-			hostCtx.Facts.Store(k, v)
-		}
-	}
-
-	// Initialize handler tracker with handlers from the graph
-	hostCtx.InitializeHandlerTracker(input.Handlers)
-
-	var loopResults []SpageActivityResult
-
-	// Execute each loop iteration
-	for i, loopItem := range input.LoopItems {
-		closure := input.TaskDefinition.ConstructClosure(hostCtx, input.SpageCoreConfig)
-
-		if loopItem != nil {
-			loopVarName := "item"
-			closure.ExtraFacts[loopVarName] = loopItem
-		}
-
-		taskResult := input.TaskDefinition.ExecuteModule(closure)
-		activity.RecordHeartbeat(ctx, fmt.Sprintf("Finished loop iteration %d for task %s on host %s", i+1, input.TaskDefinition.Name, input.TargetHost.Name))
-
-		result := SpageActivityResult{
-			HostName:       input.TargetHost.Name,
-			TaskName:       input.TaskDefinition.Name,
-			RegisteredVars: make(map[string]interface{}),
-		}
-
-		var ignoredError *pkg.IgnoredTaskError
-		if errors.As(taskResult.Error, &ignoredError) {
-			result.Ignored = true
-			originalErr := ignoredError.Unwrap()
-			result.Error = originalErr.Error()
-			logger.Warn("Loop iteration failed but error was ignored", "task", input.TaskDefinition.Name, "iteration", i, "originalError", originalErr)
-			failureMap := map[string]interface{}{
-				"failed":  true,
-				"changed": false,
-				"msg":     originalErr.Error(),
-				"ignored": true,
-			}
-			if taskResult.Output != nil {
-				if factProvider, ok := taskResult.Output.(pkg.FactProvider); ok {
-					outputFacts := factProvider.AsFacts()
-					for k, v := range outputFacts {
-						failureMap[k] = v
-					}
-				}
-			}
-			if input.TaskDefinition.Register != "" {
-				result.RegisteredVars[input.TaskDefinition.Register] = failureMap
-			}
-		} else if taskResult.Error != nil {
-			result.Error = taskResult.Error.Error()
-			logger.Error("Loop iteration execution failed", "task", input.TaskDefinition.Name, "iteration", i, "error", taskResult.Error)
-			failureMap := map[string]interface{}{
-				"failed":  true,
-				"changed": false,
-				"msg":     taskResult.Error.Error(),
-			}
-			if taskResult.Output != nil {
-				if factProvider, ok := taskResult.Output.(pkg.FactProvider); ok {
-					outputFacts := factProvider.AsFacts()
-					for k, v := range outputFacts {
-						failureMap[k] = v
-					}
-				}
-			}
-			if input.TaskDefinition.Register != "" {
-				result.RegisteredVars[input.TaskDefinition.Register] = failureMap
-			}
-		} else {
-			if taskResult.Output != nil {
-				result.Output = taskResult.Output.String()
-				result.Changed = taskResult.Output.Changed()
-				if converted, ok := pkg.ConvertOutputToFactsMap(taskResult.Output).(map[string]interface{}); ok {
-					result.ModuleOutputMap = converted
-				}
-			} else {
-				result.Skipped = true
-				if input.TaskDefinition.Register != "" {
-					result.RegisteredVars[input.TaskDefinition.Register] = map[string]interface{}{
-						"failed":  false,
-						"changed": false,
-						"skipped": true,
-						"ignored": false,
-					}
-				}
-			}
-		}
-
-		// Capture handler notifications for this loop iteration
-		if hostCtx.HandlerTracker != nil {
-			notifiedHandlerTasks := hostCtx.HandlerTracker.GetNotifiedHandlers()
-			result.NotifiedHandlers = make([]string, len(notifiedHandlerTasks))
-			for j, handler := range notifiedHandlerTasks {
-				result.NotifiedHandlers[j] = handler.GetName()
-			}
-		}
-
-		loopResults = append(loopResults, result)
-	}
-
-	// Capture all facts from the activity's HostContext after all loop iterations
-	hostFactsSnapshot := make(map[string]interface{})
-
-	// Create a map of task-level variable names to exclude from persistence
-	taskLevelVars := make(map[string]bool)
-	if input.TaskDefinition.Vars != nil {
-		if varsMap, ok := input.TaskDefinition.Vars.(map[string]interface{}); ok {
-			for varName := range varsMap {
-				taskLevelVars[varName] = true
-			}
-		}
-	}
-
-	hostCtx.Facts.Range(func(key, value interface{}) bool {
-		if kStr, ok := key.(string); ok {
-			// Only capture facts that are NOT task-level variables
-			if !taskLevelVars[kStr] {
-				hostFactsSnapshot[kStr] = value
-			}
-		}
-		return true
-	})
-
-	return &SpageRunOnceLoopActivityResult{
-		HostName:          input.TargetHost.Name,
-		TaskName:          input.TaskDefinition.Name,
-		LoopResults:       loopResults,
-		HostFactsSnapshot: hostFactsSnapshot,
-	}, nil
+// SpageRunOnceLoopActivityInput defines the input for run_once tasks with loops.
+type SpageRunOnceLoopActivityInput struct {
+	TaskDefinition   pkg.Task
+	TargetHost       pkg.Host
+	LoopItems        []interface{} // All loop items to execute
+	CurrentHostFacts map[string]interface{}
+	SpageCoreConfig  *config.Config
+	Handlers         []GraphNodeDTO // Handlers from the graph (DTO)
 }
 
-// processActivityResultAndRegisterFacts handles the common logic for processing an activity's result,
-// logging outcomes, and registering any variables into hostFacts.
-// It returns an error if the task definitively failed and was not ignored.
-func processActivityResultAndRegisterFacts(
-	ctx workflow.Context,
-	activityResult SpageActivityResult,
-	taskName string,
-	hostName string,
-	hostFacts map[string]map[string]interface{},
-	hostContexts map[string]*pkg.HostContext, // Add host contexts parameter
-) error {
-	// Reduce concurrent logging to avoid deadlocks - only log and return error, don't do both
-	if activityResult.Error != "" && !activityResult.Ignored {
-		// Return error without logging to avoid concurrent access to logger mutex
-		return fmt.Errorf("task '%s' on host '%s' failed: %s", taskName, hostName, activityResult.Error)
-	}
+// SpageRunOnceLoopActivityResult defines the output from run_once loop activity.
+type SpageRunOnceLoopActivityResult struct {
+	HostName          string
+	TaskName          string
+	LoopResults       []SpageActivityResult // Results for each loop iteration
+	HostFactsSnapshot map[string]interface{}
+}
 
-	// Get logger only when needed for non-error cases to reduce concurrent access
-	logger := workflow.GetLogger(ctx)
+// TemporalResultChannel implements ResultChannel for Temporal workflow channels
+type TemporalResultChannel struct {
+	ctx workflow.Context
+	ch  workflow.ReceiveChannel
+}
 
-	// Ensure host entry exists in the workflow's main hostFacts map
-	if _, ok := hostFacts[activityResult.HostName]; !ok {
-		// Only log for missing host facts since this is less likely to cause concurrent access
-		logger.Warn("Host facts map not found for host, creating new one.", "host", activityResult.HostName)
-		hostFacts[activityResult.HostName] = make(map[string]interface{})
-	}
+func NewTemporalResultChannel(ctx workflow.Context, ch workflow.ReceiveChannel) *TemporalResultChannel {
+	return &TemporalResultChannel{ctx: ctx, ch: ch}
+}
 
-	// 1. Merge the full fact snapshot from the activity first.
-	// This applies changes made directly by modules like set_fact.
-	if activityResult.HostFactsSnapshot != nil {
-		for key, value := range activityResult.HostFactsSnapshot {
-			hostFacts[activityResult.HostName][key] = value
-		}
-	}
+func (c *TemporalResultChannel) ReceiveResult() (pkg.TaskResult, bool, error) {
+	var result pkg.TaskResult
+	more := c.ch.Receive(c.ctx, &result)
+	return result, more, nil
+}
 
-	// 2. Merge registered variables from activityResult.RegisteredVars.
-	// This handles the 'register:' keyword and will overwrite snapshot values for the registered key.
-	if len(activityResult.RegisteredVars) > 0 {
-		for key, value := range activityResult.RegisteredVars {
-			hostFacts[activityResult.HostName][key] = value
-		}
-	}
+func (c *TemporalResultChannel) IsClosed() bool {
+	// For Temporal channels, we handle this differently in the selector pattern
+	return false
+}
 
-	// 3. Apply handler notifications from activity back to workflow context
-	if len(activityResult.NotifiedHandlers) > 0 {
-		if hostCtx, exists := hostContexts[activityResult.HostName]; exists && hostCtx.HandlerTracker != nil {
-			logger.Debug("Applying handler notifications from activity to workflow context", "host", activityResult.HostName, "task", taskName, "notified_handlers", activityResult.NotifiedHandlers)
-			for _, handlerName := range activityResult.NotifiedHandlers {
-				hostCtx.HandlerTracker.NotifyHandler(handlerName)
-			}
-		}
-	}
+// TemporalErrorChannel implements ErrorChannel for Temporal workflow channels
+type TemporalErrorChannel struct {
+	ctx workflow.Context
+	ch  workflow.ReceiveChannel
+}
 
-	return nil
+func NewTemporalErrorChannel(ctx workflow.Context, ch workflow.ReceiveChannel) *TemporalErrorChannel {
+	return &TemporalErrorChannel{ctx: ctx, ch: ch}
+}
+
+func (c *TemporalErrorChannel) ReceiveError() (error, bool, error) {
+	var err error
+	more := c.ch.Receive(c.ctx, &err)
+	return err, more, nil
+}
+
+func (c *TemporalErrorChannel) IsClosed() bool {
+	return false
+}
+
+// TemporalLogger implements Logger for Temporal workflow logging
+type TemporalLogger struct {
+	logger log.Logger
+}
+
+func NewTemporalLogger(ctx workflow.Context) *TemporalLogger {
+	return &TemporalLogger{logger: workflow.GetLogger(ctx)}
+}
+
+func (l *TemporalLogger) Error(msg string, args ...interface{}) {
+	l.logger.Error(msg, args...)
+}
+
+func (l *TemporalLogger) Warn(msg string, args ...interface{}) {
+	l.logger.Warn(msg, args...)
+}
+
+func (l *TemporalLogger) Info(msg string, args ...interface{}) {
+	l.logger.Info(msg, args...)
+}
+
+func (l *TemporalLogger) Debug(msg string, args ...interface{}) {
+	l.logger.Debug(msg, args...)
 }
 
 // TemporalTaskRunner implements the TaskRunner interface for Temporal activity execution.
@@ -558,10 +404,12 @@ func (r *TemporalTaskRunner) ExecuteTask(execCtx workflow.Context, task pkg.Task
 	currentHostFacts := closure.GetFacts() // Facts from the closure, prepared by SpageTemporalWorkflow
 	loopItem := closure.ExtraFacts["item"]
 
-	// Get handlers from the host context's handler tracker
-	var handlers []pkg.GraphNode
+	// Get handlers from the host context's handler tracker and convert to DTOs
+	var handlers []GraphNodeDTO
 	if closure.HostContext.HandlerTracker != nil {
-		handlers = closure.HostContext.HandlerTracker.GetAllHandlers()
+		for _, h := range closure.HostContext.HandlerTracker.GetAllHandlers() {
+			handlers = append(handlers, toGraphNodeDTO(h))
+		}
 	}
 
 	activityInput := SpageActivityInput{
@@ -666,10 +514,12 @@ func (r *TemporalTaskRunner) RevertTask(execCtx workflow.Context, task pkg.Task,
 		})
 	}
 
-	// Get handlers from the host context's handler tracker
-	var handlers []pkg.GraphNode
+	// Get handlers from the host context's handler tracker and convert to DTOs
+	var handlers []GraphNodeDTO
 	if closure.HostContext.HandlerTracker != nil {
-		handlers = closure.HostContext.HandlerTracker.GetAllHandlers()
+		for _, h := range closure.HostContext.HandlerTracker.GetAllHandlers() {
+			handlers = append(handlers, toGraphNodeDTO(h))
+		}
 	}
 
 	activityInput := SpageActivityInput{
@@ -792,8 +642,18 @@ func RevertSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*Sp
 		}
 	}
 
-	// Initialize handler tracker with handlers from the graph
-	hostCtx.InitializeHandlerTracker(input.Handlers)
+	// Initialize handler tracker with handlers from the graph (convert DTOs)
+	if len(input.Handlers) > 0 {
+		nodes := make([]pkg.GraphNode, 0, len(input.Handlers))
+		for _, dto := range input.Handlers {
+			if gn := fromGraphNodeDTO(dto); gn != nil {
+				nodes = append(nodes, gn)
+			}
+		}
+		hostCtx.InitializeHandlerTracker(nodes)
+	} else {
+		hostCtx.InitializeHandlerTracker(nil)
+	}
 
 	closure := input.TaskDefinition.ConstructClosure(hostCtx, input.SpageCoreConfig)
 
@@ -919,7 +779,7 @@ func (e *TemporalGraphExecutor) executeRunOnceWithAllLoops(
 	hostContexts map[string]*pkg.HostContext,
 	workflowHostFacts map[string]map[string]interface{},
 	cfg *config.Config,
-	handlers []pkg.GraphNode,
+	handlers []GraphNodeDTO,
 ) []pkg.TaskResult {
 	logger := workflow.GetLogger(ctx)
 
@@ -1208,9 +1068,11 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 					actualDispatchedTasks++ // We'll dispatch one execution but generate results for all hosts
 					workflow.Go(workflowCtx, func(childTaskCtx workflow.Context) {
 						// Get handlers from the first host context
-						var handlers []pkg.GraphNode
+						var handlers []GraphNodeDTO
 						if firstHostCtx.HandlerTracker != nil {
-							handlers = firstHostCtx.HandlerTracker.GetAllHandlers()
+							for _, h := range firstHostCtx.HandlerTracker.GetAllHandlers() {
+								handlers = append(handlers, toGraphNodeDTO(h))
+							}
 						}
 
 						// Execute all loop iterations on the first host and collect results
@@ -1225,9 +1087,11 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 					})
 				} else {
 					// Get handlers from the first host context
-					var handlers []pkg.GraphNode
+					var handlers []GraphNodeDTO
 					if firstHostCtx.HandlerTracker != nil {
-						handlers = firstHostCtx.HandlerTracker.GetAllHandlers()
+						for _, h := range firstHostCtx.HandlerTracker.GetAllHandlers() {
+							handlers = append(handlers, toGraphNodeDTO(h))
+						}
 					}
 
 					// Execute all loop iterations on the first host and collect results
@@ -2003,5 +1867,218 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 		myWorker.Stop()
 		common.LogInfo("Worker stopped.", map[string]interface{}{"task_queue": taskQueue})
 	}
+	return nil
+}
+
+func ExecuteSpageRunOnceLoopActivity(ctx context.Context, input SpageRunOnceLoopActivityInput) (*SpageRunOnceLoopActivityResult, error) {
+	logger := activity.GetLogger(ctx)
+
+	activity.RecordHeartbeat(ctx, fmt.Sprintf("Starting run_once loop task %s on host %s with %d iterations", input.TaskDefinition.Name, input.TargetHost.Name, len(input.LoopItems)))
+
+	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost, input.SpageCoreConfig)
+	if err != nil {
+		logger.Error("Failed to initialize host context for run_once loop", "host", input.TargetHost.Name, "task", input.TaskDefinition.Name, "error", err)
+		return &SpageRunOnceLoopActivityResult{
+			HostName: input.TargetHost.Name,
+			TaskName: input.TaskDefinition.Name,
+			LoopResults: []SpageActivityResult{{
+				HostName: input.TargetHost.Name,
+				TaskName: input.TaskDefinition.Name,
+				Error:    fmt.Sprintf("failed to initialize host context for run_once loop task %s: %v", input.TaskDefinition.Name, err),
+			}},
+		}, nil
+	}
+	defer func() {
+		if closeErr := hostCtx.Close(); closeErr != nil {
+			logger.Warn("Failed to close host context for run_once loop", "host", input.TargetHost.Name, "error", closeErr)
+		}
+	}()
+
+	// Load facts from workflow
+	if input.CurrentHostFacts != nil {
+		for k, v := range input.CurrentHostFacts {
+			hostCtx.Facts.Store(k, v)
+		}
+	}
+
+	// Initialize handler tracker with handlers from the graph (convert DTOs)
+	if len(input.Handlers) > 0 {
+		nodes := make([]pkg.GraphNode, 0, len(input.Handlers))
+		for _, dto := range input.Handlers {
+			if gn := fromGraphNodeDTO(dto); gn != nil {
+				nodes = append(nodes, gn)
+			}
+		}
+		hostCtx.InitializeHandlerTracker(nodes)
+	} else {
+		hostCtx.InitializeHandlerTracker(nil)
+	}
+
+	var loopResults []SpageActivityResult
+
+	// Execute each loop iteration
+	for i, loopItem := range input.LoopItems {
+		closure := input.TaskDefinition.ConstructClosure(hostCtx, input.SpageCoreConfig)
+
+		if loopItem != nil {
+			loopVarName := "item"
+			closure.ExtraFacts[loopVarName] = loopItem
+		}
+
+		taskResult := input.TaskDefinition.ExecuteModule(closure)
+		activity.RecordHeartbeat(ctx, fmt.Sprintf("Finished loop iteration %d for task %s on host %s", i+1, input.TaskDefinition.Name, input.TargetHost.Name))
+
+		result := SpageActivityResult{
+			HostName:       input.TargetHost.Name,
+			TaskName:       input.TaskDefinition.Name,
+			RegisteredVars: make(map[string]interface{}),
+		}
+
+		var ignoredError *pkg.IgnoredTaskError
+		if errors.As(taskResult.Error, &ignoredError) {
+			result.Ignored = true
+			originalErr := ignoredError.Unwrap()
+			result.Error = originalErr.Error()
+			logger.Warn("Loop iteration failed but error was ignored", "task", input.TaskDefinition.Name, "iteration", i, "originalError", originalErr)
+			failureMap := map[string]interface{}{
+				"failed":  true,
+				"changed": false,
+				"msg":     originalErr.Error(),
+				"ignored": true,
+			}
+			if taskResult.Output != nil {
+				if factProvider, ok := taskResult.Output.(pkg.FactProvider); ok {
+					outputFacts := factProvider.AsFacts()
+					for k, v := range outputFacts {
+						failureMap[k] = v
+					}
+				}
+			}
+			if input.TaskDefinition.Register != "" {
+				result.RegisteredVars[input.TaskDefinition.Register] = failureMap
+			}
+		} else if taskResult.Error != nil {
+			result.Error = taskResult.Error.Error()
+			logger.Error("Loop iteration execution failed", "task", input.TaskDefinition.Name, "iteration", i, "error", taskResult.Error)
+			failureMap := map[string]interface{}{
+				"failed":  true,
+				"changed": false,
+				"msg":     taskResult.Error.Error(),
+			}
+			if taskResult.Output != nil {
+				if factProvider, ok := taskResult.Output.(pkg.FactProvider); ok {
+					outputFacts := factProvider.AsFacts()
+					for k, v := range outputFacts {
+						failureMap[k] = v
+					}
+				}
+			}
+			if input.TaskDefinition.Register != "" {
+				result.RegisteredVars[input.TaskDefinition.Register] = failureMap
+			}
+		} else {
+			if taskResult.Output != nil {
+				result.Output = taskResult.Output.String()
+				result.Changed = taskResult.Output.Changed()
+				if converted, ok := pkg.ConvertOutputToFactsMap(taskResult.Output).(map[string]interface{}); ok {
+					result.ModuleOutputMap = converted
+				}
+			} else {
+				result.Skipped = true
+				if input.TaskDefinition.Register != "" {
+					result.RegisteredVars[input.TaskDefinition.Register] = map[string]interface{}{
+						"failed":  false,
+						"changed": false,
+						"skipped": true,
+						"ignored": false,
+					}
+				}
+			}
+		}
+
+		// Capture handler notifications for this loop iteration
+		if hostCtx.HandlerTracker != nil {
+			notifiedHandlerTasks := hostCtx.HandlerTracker.GetNotifiedHandlers()
+			result.NotifiedHandlers = make([]string, len(notifiedHandlerTasks))
+			for j, handler := range notifiedHandlerTasks {
+				result.NotifiedHandlers[j] = handler.GetName()
+			}
+		}
+
+		loopResults = append(loopResults, result)
+	}
+
+	// Capture all facts from the activity's HostContext after all loop iterations
+	hostFactsSnapshot := make(map[string]interface{})
+
+	// Create a map of task-level variable names to exclude from persistence
+	taskLevelVars := make(map[string]bool)
+	if input.TaskDefinition.Vars != nil {
+		if varsMap, ok := input.TaskDefinition.Vars.(map[string]interface{}); ok {
+			for varName := range varsMap {
+				taskLevelVars[varName] = true
+			}
+		}
+	}
+
+	hostCtx.Facts.Range(func(key, value interface{}) bool {
+		if kStr, ok := key.(string); ok {
+			// Only capture facts that are NOT task-level variables
+			if !taskLevelVars[kStr] {
+				hostFactsSnapshot[kStr] = value
+			}
+		}
+		return true
+	})
+
+	return &SpageRunOnceLoopActivityResult{
+		HostName:          input.TargetHost.Name,
+		TaskName:          input.TaskDefinition.Name,
+		LoopResults:       loopResults,
+		HostFactsSnapshot: hostFactsSnapshot,
+	}, nil
+}
+
+func processActivityResultAndRegisterFacts(
+	ctx workflow.Context,
+	activityResult SpageActivityResult,
+	taskName string,
+	hostName string,
+	hostFacts map[string]map[string]interface{},
+	hostContexts map[string]*pkg.HostContext,
+) error {
+	// Reduce concurrent logging to avoid deadlocks - only log and return error, don't do both
+	if activityResult.Error != "" && !activityResult.Ignored {
+		return fmt.Errorf("task '%s' on host '%s' failed: %s", taskName, hostName, activityResult.Error)
+	}
+
+	logger := workflow.GetLogger(ctx)
+
+	if _, ok := hostFacts[activityResult.HostName]; !ok {
+		logger.Warn("Host facts map not found for host, creating new one.", "host", activityResult.HostName)
+		hostFacts[activityResult.HostName] = make(map[string]interface{})
+	}
+
+	if activityResult.HostFactsSnapshot != nil {
+		for key, value := range activityResult.HostFactsSnapshot {
+			hostFacts[activityResult.HostName][key] = value
+		}
+	}
+
+	if len(activityResult.RegisteredVars) > 0 {
+		for key, value := range activityResult.RegisteredVars {
+			hostFacts[activityResult.HostName][key] = value
+		}
+	}
+
+	if len(activityResult.NotifiedHandlers) > 0 {
+		if hostCtx, exists := hostContexts[activityResult.HostName]; exists && hostCtx.HandlerTracker != nil {
+			logger.Debug("Applying handler notifications from activity to workflow context", "host", activityResult.HostName, "task", taskName, "notified_handlers", activityResult.NotifiedHandlers)
+			for _, handlerName := range activityResult.NotifiedHandlers {
+				hostCtx.HandlerTracker.NotifyHandler(handlerName)
+			}
+		}
+	}
+
 	return nil
 }
