@@ -1,19 +1,11 @@
 package runtime
 
 import (
-	"bytes"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
 	"strings"
-	"time"
 
-	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/config"
-	desopssshpool "github.com/desops/sshpool"
-	"github.com/google/shlex"
-	"golang.org/x/crypto/ssh"
 )
 
 // CommandResult represents the result of a command execution
@@ -23,6 +15,16 @@ type CommandResult struct {
 	Stdout   string
 	Stderr   string
 	Error    error
+}
+
+func NewCommandResult(command string, exitCode int, stdout string, stderr string, error error) *CommandResult {
+	return &CommandResult{
+		Command:  command,
+		ExitCode: exitCode,
+		Stdout:   stdout,
+		Stderr:   stderr,
+		Error:    error,
+	}
 }
 
 // CommandOptions holds configuration for command execution
@@ -152,53 +154,6 @@ func buildCommand(command string, opts *CommandOptions) string {
 	return fmt.Sprintf("sudo -u %s %s", opts.Username, opts.BecomeFlags)
 }
 
-// executeLocalCommand executes a command locally
-func executeLocalCommand(command string, opts *CommandOptions) (int, string, string, error) {
-	if command == "" {
-		return 0, "", "", nil
-	}
-
-	cmdToRun := buildCommand(command, opts)
-	var stdout, stderr bytes.Buffer
-	var cmd *exec.Cmd
-
-	splitCmd, err := shlex.Split(cmdToRun)
-	if err != nil {
-		return -1, "", "", fmt.Errorf("failed to split command %s: %v", command, err)
-	}
-	prog := splitCmd[0]
-	args := splitCmd[1:]
-	absProg, err := exec.LookPath(prog)
-	if err != nil {
-		return -1, "", "", fmt.Errorf("failed to find %s in $PATH: %v", prog, err)
-	}
-	cmd = exec.Command(absProg, args...)
-
-	common.DebugOutput("Running command: %s", cmd.String())
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
-	rc := 0
-	if err != nil {
-		// Try to get the exit code
-		if exitError, ok := err.(*exec.ExitError); ok {
-			rc = exitError.ExitCode()
-		} else {
-			rc = -1 // Indicate a non-exit error (e.g., command not found)
-		}
-		// Clean sudo prompts from output before returning error
-		cleanedStdout := cleanSudoPrompts(stdout.String())
-		cleanedStderr := cleanSudoPrompts(stderr.String())
-		return rc, cleanedStdout, cleanedStderr, fmt.Errorf("failed to execute command %q: %v", cmd.String(), err)
-	}
-
-	// Clean sudo prompts from output before returning
-	cleanedStdout := cleanSudoPrompts(stdout.String())
-	cleanedStderr := cleanSudoPrompts(stderr.String())
-	return rc, cleanedStdout, cleanedStderr, nil
-}
-
 // hostWriter adds a host prefix to output for interactive commands
 type hostWriter struct {
 	writer     io.Writer
@@ -212,31 +167,6 @@ func (hw *hostWriter) Write(p []byte) (n int, err error) {
 	}
 	// Then write the actual data
 	return hw.writer.Write(p)
-}
-
-// commandExecutor handles the execution of commands with different modes
-type commandExecutor struct {
-	session *desopssshpool.Session
-	host    string
-}
-
-// newCommandExecutor creates a new command executor
-func newCommandExecutor(session *desopssshpool.Session, host string) *commandExecutor {
-	return &commandExecutor{
-		session: session,
-		host:    host,
-	}
-}
-
-// setupPTY configures a pseudo-terminal for interactive sessions
-func (ce *commandExecutor) setupPTY() error {
-	modes := ssh.TerminalModes{
-		ssh.ECHO:          0,     // enable echoing
-		ssh.TTY_OP_ISPEED: 14400, // input speed = 14.4kbaud
-		ssh.TTY_OP_OSPEED: 14400, // output speed = 14.4kbaud
-	}
-
-	return ce.session.RequestPty("xterm", 40, 80, modes)
 }
 
 // cleanSudoPrompts removes sudo password prompts from the output
@@ -259,157 +189,6 @@ func cleanSudoPrompts(output string) string {
 	return strings.Join(cleanedLines, "\n")
 }
 
-// executeCommand runs a command and returns the result
-func (ce *commandExecutor) executeCommand(cmdToRun string, interactive bool) (int, string, string, error) {
-	var stdout, stderr bytes.Buffer
-	var err error
-	var rc int
-
-	if interactive {
-		// For interactive commands, stream stdout and stderr in real-time
-		// Add host prefix to distinguish remote output
-		hostPrefix := "" // fmt.Sprintf("[%s] ", ce.host)
-		ce.session.Stdout = io.MultiWriter(&stdout, &hostWriter{os.Stdout, hostPrefix})
-		ce.session.Stderr = io.MultiWriter(&stderr, &hostWriter{os.Stderr, hostPrefix})
-
-		// Set up stdin to stream from user's console
-		ce.session.Stdin = os.Stdin
-	} else {
-		// For non-interactive commands, buffer everything
-		ce.session.Stdout = &stdout
-		ce.session.Stderr = &stderr
-	}
-
-	if interactive {
-		// Start the command for interactive execution
-		if err = ce.session.Start(cmdToRun); err != nil {
-			return -1, "", "", fmt.Errorf("failed to start interactive command on host %s: %w", ce.host, err)
-		}
-
-		// Wait for the command to complete with a timeout
-		done := make(chan error, 1)
-		go func() {
-			done <- ce.session.Wait()
-		}()
-
-		// Wait for completion or timeout
-		select {
-		case err = <-done:
-			rc = ce.getExitCode(err)
-		case <-time.After(10 * time.Minute): // 10 minute timeout
-			closeErr := ce.session.Close()
-			if closeErr != nil {
-				common.DebugOutput("Error closing session: %v", closeErr)
-			}
-			return -1, stdout.String(), stderr.String(), fmt.Errorf("interactive command timed out on host %s", ce.host)
-		}
-	} else {
-		// Run the command directly for non-interactive execution
-		err = ce.session.Run(cmdToRun)
-		rc = ce.getExitCode(err)
-	}
-
-	// Clean sudo prompts from stdout before returning
-	cleanedStdout := cleanSudoPrompts(stdout.String())
-	cleanedStderr := cleanSudoPrompts(stderr.String())
-
-	return rc, cleanedStdout, cleanedStderr, err
-}
-
-// getExitCode extracts the exit code from an error
-func (ce *commandExecutor) getExitCode(err error) int {
-	if err == nil {
-		return 0
-	}
-	if exitError, ok := err.(*ssh.ExitError); ok {
-		return exitError.ExitStatus()
-	}
-	return -1
-}
-
-// executeRemoteCommand executes a command on a remote host
-func executeRemoteCommand(pool *desopssshpool.Pool, host, command string, opts *CommandOptions, cfg *config.Config) (int, string, string, error) {
-	// If interactive mode is enabled and username is provided, use interactive execution
-	if cfg != nil && cfg.PrivilegeEscalation.UseInteractive && opts.UseSudo {
-		return executeInteractiveRemoteCommand(pool, host, command, opts, cfg)
-	}
-
-	// Get a session from the pool
-	session, err := pool.Get(host)
-	if err != nil {
-		return -1, "", "", fmt.Errorf("failed to get SSH session from pool for host %s: %w", host, err)
-	}
-	defer session.Put() // Important: return session to pool
-
-	// Create command executor
-	executor := newCommandExecutor(session, host)
-
-	// Build the command
-	cmdToRun := buildCommand(command, opts)
-	common.DebugOutput("Running remote command on %s: %s", host, cmdToRun)
-
-	// Execute the command
-	rc, stdout, stderr, err := executor.executeCommand(cmdToRun, false)
-
-	// Check for authentication and sudo password errors
-	if err != nil {
-		if authErr := checkAuthenticationError(err, stderr, host); authErr != nil {
-			return rc, stdout, stderr, authErr
-		}
-		if sudoErr := checkSudoPasswordError(stderr, host); sudoErr != nil {
-			return rc, stdout, stderr, sudoErr
-		}
-		// Include more context in the error message
-		return rc, stdout, stderr, fmt.Errorf("failed to run remote command '%s' (original: '%s') on host %s: %w, stderr: %s", cmdToRun, command, host, err, stderr)
-	}
-
-	return rc, stdout, stderr, nil
-}
-
-// executeInteractiveRemoteCommand executes an interactive command on a remote host
-func executeInteractiveRemoteCommand(pool *desopssshpool.Pool, host, command string, opts *CommandOptions, cfg *config.Config) (int, string, string, error) {
-	// Get a session from the pool
-	session, err := pool.Get(host)
-	if err != nil {
-		return -1, "", "", fmt.Errorf("failed to get SSH session from pool for host %s: %w", host, err)
-	}
-	defer session.Put() // Important: return session to pool
-
-	// Create command executor
-	executor := newCommandExecutor(session, host)
-
-	// Setup PTY for interactive session
-	if err := executor.setupPTY(); err != nil {
-		return -1, "", "", fmt.Errorf("failed to request PTY for host %s: %w", host, err)
-	}
-
-	// Build the command
-	cmdToRun := buildCommand(command, opts)
-	common.DebugOutput("Running interactive remote command on %s: %s", host, cmdToRun)
-
-	// Execute the command
-	rc, stdout, stderr, err := executor.executeCommand(cmdToRun, true)
-	return rc, stdout, stderr, err
-}
-
-// checkAuthenticationError checks if the error is due to SSH authentication failure
-func checkAuthenticationError(execErr error, stderrOutput, host string) error {
-	if execErr == nil {
-		return nil
-	}
-
-	// Check for common SSH authentication error patterns
-	errorStr := execErr.Error()
-	if strings.Contains(errorStr, "ssh: handshake failed") ||
-		strings.Contains(errorStr, "ssh: unable to authenticate") ||
-		strings.Contains(errorStr, "permission denied") ||
-		strings.Contains(errorStr, "authentication failed") {
-		return fmt.Errorf("SSH authentication failed for host %s. Consider: 1) Checking SSH key setup, 2) Verifying SSH agent is running, 3) Using interactive password authentication, or 4) Checking host connectivity: %w", host, execErr)
-	}
-
-	return nil
-}
-
 // checkSudoPasswordError checks if the error is due to sudo asking for password
 func checkSudoPasswordError(stderrOutput, host string) error {
 	if strings.Contains(stderrOutput, "[sudo] password") ||
@@ -418,26 +197,4 @@ func checkSudoPasswordError(stderrOutput, host string) error {
 		return fmt.Errorf("sudo requires password input but SSH session is non-interactive on host %s. Consider: 1) Setting up passwordless sudo, 2) Using SSH key authentication, or 3) Running without username parameter", host)
 	}
 	return nil
-}
-
-func RunLocalCommandWithShell(command, username string, useShell bool, cfg *config.Config) (int, string, string, error) {
-	opts := NewCommandOptions(cfg)
-	if username != "" {
-		opts.WithUsername(username)
-	}
-	if useShell {
-		opts.WithShell()
-	}
-	return executeLocalCommand(command, opts)
-}
-
-func RunRemoteCommandWithShell(pool *desopssshpool.Pool, host, command, username string, cfg *config.Config, useShell bool) (int, string, string, error) {
-	opts := NewCommandOptions(cfg)
-	if username != "" {
-		opts.WithUsername(username)
-	}
-	if useShell {
-		opts.WithShell()
-	}
-	return executeRemoteCommand(pool, host, command, opts, cfg)
 }

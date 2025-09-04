@@ -28,14 +28,14 @@ type authMethodCache struct {
 type Manager struct {
 	pools map[string]*desopssshpool.Pool
 	mu    sync.RWMutex
-	cfg   *config.Config
+	cfg   *config.SSHConfig
 	// Cache for SSH authentication methods to avoid repeated server detection
 	authMethodCache map[string]*authMethodCache
 	authCacheMu     sync.RWMutex
 }
 
 // NewManager creates a new SSH pool manager
-func NewManager(cfg *config.Config) *Manager {
+func NewManager(cfg *config.SSHConfig) *Manager {
 	return &Manager{
 		pools:           make(map[string]*desopssshpool.Pool),
 		cfg:             cfg,
@@ -44,7 +44,7 @@ func NewManager(cfg *config.Config) *Manager {
 }
 
 // GetPool returns or creates an SSH pool for the given host
-func (m *Manager) GetPool(host string, hostVars map[string]interface{}) (*desopssshpool.Pool, error) {
+func (m *Manager) GetPool(host string) (*desopssshpool.Pool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -53,7 +53,7 @@ func (m *Manager) GetPool(host string, hostVars map[string]interface{}) (*desops
 	}
 
 	// Create new pool for this host
-	pool, err := m.createPool(host, hostVars)
+	pool, err := m.createPool(host)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SSH pool for host %s: %w", host, err)
 	}
@@ -63,9 +63,9 @@ func (m *Manager) GetPool(host string, hostVars map[string]interface{}) (*desops
 }
 
 // createPool creates a new SSH pool for a specific host
-func (m *Manager) createPool(host string, hostVars map[string]interface{}) (*desopssshpool.Pool, error) {
+func (m *Manager) createPool(host string) (*desopssshpool.Pool, error) {
 	// Try to create SSH client config with existing methods first
-	sshConfig, err := m.createSSHConfig(host, hostVars)
+	sshConfig, err := m.createSSHConfig(host)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SSH config for host %s: %w", host, err)
 	}
@@ -80,18 +80,18 @@ func (m *Manager) createPool(host string, hostVars map[string]interface{}) (*des
 
 	// Handle jump host configuration by modifying the target host address
 	var pool *desopssshpool.Pool
-	if m.cfg != nil && m.cfg.SSH.JumpHost != "" && m.cfg.SSH.JumpHost != "none" {
+	if m.cfg != nil && m.cfg.JumpHost != "" && m.cfg.JumpHost != "none" {
 		common.LogInfo("Configuring SSH connection through jump host", map[string]interface{}{
 			"host":      host,
-			"jump_host": m.cfg.SSH.JumpHost,
-			"jump_user": m.cfg.SSH.JumpUser,
-			"jump_port": m.cfg.SSH.JumpPort,
+			"jump_host": m.cfg.JumpHost,
+			"jump_user": m.cfg.JumpUser,
+			"jump_port": m.cfg.JumpPort,
 		})
 
 		// Create pool with jump host dialer
 		pool = m.createPoolWithJumpHost(host, sshConfig, poolConfig)
 	} else {
-		if m.cfg != nil && m.cfg.SSH.JumpHost == "none" {
+		if m.cfg != nil && m.cfg.JumpHost == "none" {
 			common.LogInfo("Jump host explicitly disabled with 'none'", map[string]interface{}{
 				"host": host,
 			})
@@ -111,18 +111,18 @@ func (m *Manager) createPool(host string, hostVars map[string]interface{}) (*des
 // Note: This is a placeholder implementation. Full jump host support would require
 // either extending the sshpool library or implementing custom connection management.
 func (m *Manager) createPoolWithJumpHost(targetHost string, targetConfig *ssh.ClientConfig, poolConfig *desopssshpool.PoolConfig) *desopssshpool.Pool {
-	jumpUser := m.cfg.SSH.JumpUser
+	jumpUser := m.cfg.JumpUser
 	if jumpUser == "" {
 		jumpUser = targetConfig.User
 	}
 
-	jumpPort := m.cfg.SSH.JumpPort
+	jumpPort := m.cfg.JumpPort
 	if jumpPort == 0 {
 		jumpPort = 22
 	}
 
 	common.LogInfo("Jump host configuration detected but not fully implemented yet", map[string]interface{}{
-		"jump_host":   m.cfg.SSH.JumpHost,
+		"jump_host":   m.cfg.JumpHost,
 		"jump_user":   jumpUser,
 		"jump_port":   jumpPort,
 		"target_host": targetHost,
@@ -135,14 +135,14 @@ func (m *Manager) createPoolWithJumpHost(targetHost string, targetConfig *ssh.Cl
 }
 
 // createSSHConfig creates SSH client configuration for a host using the new generic configuration
-func (m *Manager) createSSHConfig(host string, hostVars map[string]interface{}) (*ssh.ClientConfig, error) {
+func (m *Manager) createSSHConfig(host string) (*ssh.ClientConfig, error) {
 	currentUser, err := user.Current()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current user for SSH connection to %s: %w", host, err)
 	}
 
 	// Build authentication methods based on configuration
-	authMethods, err := m.buildAuthMethods(host, hostVars, currentUser.Username)
+	authMethods, err := m.buildAuthMethods(host, currentUser.Username)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build auth methods for host %s: %w", host, err)
 	}
@@ -162,7 +162,7 @@ func (m *Manager) createSSHConfig(host string, hostVars map[string]interface{}) 
 	}
 
 	// Optionally check what authentication methods the server supports (skip when jump_host == "none")
-	if m.cfg == nil || m.cfg.SSH.JumpHost != "none" {
+	if m.cfg == nil || m.cfg.JumpHost != "none" {
 		supportedMethods, err := m.getServerAuthMethods(host, currentUser.Username)
 		if err != nil {
 			common.LogWarn("Failed to detect server authentication methods", map[string]interface{}{
@@ -184,12 +184,12 @@ func (m *Manager) createSSHConfig(host string, hostVars map[string]interface{}) 
 }
 
 // buildAuthMethods creates authentication methods based on configuration
-func (m *Manager) buildAuthMethods(host string, hostVars map[string]interface{}, username string) ([]ssh.AuthMethod, error) {
+func (m *Manager) buildAuthMethods(host string, username string) ([]ssh.AuthMethod, error) {
 	var authMethods []ssh.AuthMethod
 
 	// Skip server method detection if jump_host is "none" to avoid interference
 	var supportedMethods []string
-	if m.cfg != nil && m.cfg.SSH.JumpHost == "none" {
+	if m.cfg != nil && m.cfg.JumpHost == "none" {
 		common.LogDebug("Jump host disabled with 'none', skipping server auth method detection to allow normal SSH flow", map[string]interface{}{
 			"host": host,
 		})
@@ -228,8 +228,8 @@ func (m *Manager) buildAuthMethods(host string, hostVars map[string]interface{},
 
 	// Get authentication method order from config or use defaults
 	var methods []string
-	if m.cfg != nil && len(m.cfg.SSH.Auth.Methods) > 0 {
-		methods = m.cfg.SSH.Auth.Methods
+	if m.cfg != nil && len(m.cfg.Auth.Methods) > 0 {
+		methods = m.cfg.Auth.Methods
 	} else {
 		methods = []string{"publickey", "password"}
 	}
@@ -248,7 +248,7 @@ func (m *Manager) buildAuthMethods(host string, hostVars map[string]interface{},
 
 		switch method {
 		case "publickey":
-			if pubkeyMethods := m.buildPublicKeyAuth(host, hostVars); len(pubkeyMethods) > 0 {
+			if pubkeyMethods := m.buildPublicKeyAuth(host); len(pubkeyMethods) > 0 {
 				authMethods = append(authMethods, pubkeyMethods...)
 			}
 		case "password":
@@ -265,11 +265,11 @@ func (m *Manager) buildAuthMethods(host string, hostVars map[string]interface{},
 			}
 		case "keyboard-interactive":
 			// Allow keyboard-interactive when enabled in config
-			if m.cfg == nil || m.cfg.SSH.Auth.KeyboardAuth {
+			if m.cfg == nil || m.cfg.Auth.KeyboardAuth {
 				authMethods = append(authMethods, m.buildKeyboardInteractiveAuth(host))
 			}
 		case "none":
-			if m.cfg != nil && m.cfg.SSH.Auth.NoneAuth {
+			if m.cfg != nil && m.cfg.Auth.NoneAuth {
 				authMethods = append(authMethods, ssh.Password("")) // "none" auth with empty password
 			}
 		}
@@ -278,7 +278,7 @@ func (m *Manager) buildAuthMethods(host string, hostVars map[string]interface{},
 	// Fallback if no methods are configured
 	if len(authMethods) == 0 {
 		common.LogWarn("No authentication methods configured, using defaults", map[string]interface{}{"host": host})
-		if pubkeyMethods := m.buildPublicKeyAuth(host, hostVars); len(pubkeyMethods) > 0 {
+		if pubkeyMethods := m.buildPublicKeyAuth(host); len(pubkeyMethods) > 0 {
 			authMethods = append(authMethods, pubkeyMethods...)
 		}
 		if m.isPasswordAuthEnabled() {
@@ -297,23 +297,23 @@ func (m *Manager) buildAuthMethods(host string, hostVars map[string]interface{},
 }
 
 // buildPublicKeyAuth builds public key authentication methods
-func (m *Manager) buildPublicKeyAuth(host string, hostVars map[string]interface{}) []ssh.AuthMethod {
+func (m *Manager) buildPublicKeyAuth(host string) []ssh.AuthMethod {
 	var authMethods []ssh.AuthMethod
 
 	// Check for ansible_ssh_private_key_file in host variables
-	if hostVars != nil {
-		if privateKeyPath, exists := hostVars["ansible_ssh_private_key_file"]; exists {
-			if keyPath, ok := privateKeyPath.(string); ok && keyPath != "" {
-				if method := m.loadPrivateKeyFile(keyPath, host); method != nil {
-					authMethods = append(authMethods, method)
-				}
+	// Split delimited string into slice
+	privateKeyPaths := strings.Split(m.cfg.PrivateKeyFile, ":")
+	for _, privateKeyPath := range privateKeyPaths {
+		if privateKeyPath != "" {
+			if method := m.loadPrivateKeyFile(privateKeyPath, host); method != nil {
+				authMethods = append(authMethods, method)
 			}
 		}
 	}
 
 	// Load specific public key files from config
-	if m.cfg != nil && len(m.cfg.SSH.Auth.PublicKeys) > 0 {
-		for _, keyPath := range m.cfg.SSH.Auth.PublicKeys {
+	if m.cfg != nil && len(m.cfg.Auth.PublicKeys) > 0 {
+		for _, keyPath := range m.cfg.Auth.PublicKeys {
 			if method := m.loadPrivateKeyFile(keyPath, host); method != nil {
 				authMethods = append(authMethods, method)
 			}
@@ -321,7 +321,7 @@ func (m *Manager) buildPublicKeyAuth(host string, hostVars map[string]interface{
 	}
 
 	// Add SSH agent if available (unless identities_only is set)
-	if m.cfg == nil || !m.cfg.SSH.Auth.IdentitiesOnly {
+	if m.cfg == nil || !m.cfg.Auth.IdentitiesOnly {
 		if agentMethod := m.buildSSHAgentAuth(host); agentMethod != nil {
 			authMethods = append(authMethods, agentMethod)
 		}
@@ -427,7 +427,7 @@ func (m *Manager) isPasswordAuthEnabled() bool {
 	if m.cfg == nil {
 		return true // Default behavior for backwards compatibility
 	}
-	return m.cfg.SSH.Auth.PasswordAuth
+	return m.cfg.Auth.PasswordAuth
 }
 
 // buildHostKeyCallback creates the appropriate host key callback
@@ -586,8 +586,8 @@ func (m *Manager) CloseHost(host string) {
 
 // getConfiguredAuthMethods returns the list of configured authentication methods
 func (m *Manager) getConfiguredAuthMethods() []string {
-	if m.cfg != nil && len(m.cfg.SSH.Auth.Methods) > 0 {
-		return m.cfg.SSH.Auth.Methods
+	if m.cfg != nil && len(m.cfg.Auth.Methods) > 0 {
+		return m.cfg.Auth.Methods
 	}
 	return []string{"publickey", "password"}
 }

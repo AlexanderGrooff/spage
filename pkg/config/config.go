@@ -11,18 +11,17 @@ import (
 
 // Config holds all configuration settings
 type Config struct {
-	Logging         LoggingConfig          `mapstructure:"logging"`
-	ExecutionMode   string                 `mapstructure:"execution_mode"`
-	Executor        string                 `mapstructure:"executor"` // "local" or "temporal"
-	Temporal        TemporalConfig         `mapstructure:"temporal"`
-	API             APIConfig              `mapstructure:"api"`
-	Daemon          DaemonConfig           `mapstructure:"daemon"`
-	Revert          bool                   `mapstructure:"revert"`
-	Tags            TagsConfig             `mapstructure:"tags"`
-	Facts           map[string]interface{} `mapstructure:"facts"`
-	HostKeyChecking bool                   `mapstructure:"host_key_checking"`
-	RolesPath       string                 `mapstructure:"roles_path"` // Colon-delimited paths to search for roles
-	Inventory       string                 `mapstructure:"inventory"`  // Colon-delimited paths to search for inventory files
+	Logging       LoggingConfig          `mapstructure:"logging"`
+	ExecutionMode string                 `mapstructure:"execution_mode"`
+	Executor      string                 `mapstructure:"executor"` // "local" or "temporal"
+	Temporal      TemporalConfig         `mapstructure:"temporal"`
+	API           APIConfig              `mapstructure:"api"`
+	Daemon        DaemonConfig           `mapstructure:"daemon"`
+	Revert        bool                   `mapstructure:"revert"`
+	Tags          TagsConfig             `mapstructure:"tags"`
+	Facts         map[string]interface{} `mapstructure:"facts"`
+	RolesPath     string                 `mapstructure:"roles_path"` // Colon-delimited paths to search for roles
+	Inventory     string                 `mapstructure:"inventory"`  // Colon-delimited paths to search for inventory files
 	// Inventory plugins configuration (Ansible-like behaviour)
 	// Colon-delimited paths to search for inventory plugins (e.g. "./plugins/inventory:/usr/share/ansible/plugins/inventory")
 	InventoryPlugins string `mapstructure:"inventory_plugins"`
@@ -86,9 +85,11 @@ type PrivilegeEscalationConfig struct {
 
 // SSHConfig holds SSH-related configuration
 type SSHConfig struct {
-	JumpHost string `mapstructure:"jump_host"` // SSH jump host (ProxyJump equivalent), use "none" to disable
-	JumpUser string `mapstructure:"jump_user"` // Username for jump host
-	JumpPort int    `mapstructure:"jump_port"` // Port for jump host (default 22)
+	HostKeyChecking bool   `mapstructure:"host_key_checking"` // Enable host key checking
+	JumpHost        string `mapstructure:"jump_host"`         // SSH jump host (ProxyJump equivalent), use "none" to disable
+	JumpUser        string `mapstructure:"jump_user"`         // Username for jump host
+	JumpPort        int    `mapstructure:"jump_port"`         // Port for jump host (default 22)
+	PrivateKeyFile  string `mapstructure:"private_key_file"`  // Path to private key file, colon-delimited paths to multiple private key files
 
 	// Authentication configuration
 	Auth SSHAuthConfig `mapstructure:"auth"`
@@ -296,9 +297,6 @@ func setDefaults(v *viper.Viper) {
 	// Facts default
 	v.SetDefault("facts", map[string]interface{}{})
 
-	// HostKeyChecking default
-	v.SetDefault("host_key_checking", true)
-
 	// RolesPath default
 	v.SetDefault("roles_path", "") // Default to empty, SDK will use default roles
 
@@ -314,16 +312,17 @@ func setDefaults(v *viper.Viper) {
 
 	// SSH defaults
 	v.SetDefault("ssh.use_password_fallback", false) // Default to disabled for security
-	v.SetDefault("ssh.jump_host", "")                // Default to no jump host
-	v.SetDefault("ssh.jump_user", "")                // Default to empty (use same user as main connection)
-	v.SetDefault("ssh.jump_port", 22)                // Default SSH port
+	v.SetDefault("ssh.host_key_checking", true)
+	v.SetDefault("ssh.jump_host", "") // Default to no jump host
+	v.SetDefault("ssh.jump_user", "") // Default to empty (use same user as main connection)
+	v.SetDefault("ssh.jump_port", 22) // Default SSH port
+	v.SetDefault("ssh.private_key_file", "~/.ssh/id_ed25519:~/.ssh/id_rsa")
 
 	// SSH Authentication defaults
 	v.SetDefault("ssh.auth.methods", []string{"publickey", "password"})
 	v.SetDefault("ssh.auth.public_keys", []string{})
 	v.SetDefault("ssh.auth.password", true)
 	v.SetDefault("ssh.auth.keyboard", false)
-	v.SetDefault("ssh.auth.gssapi", false)
 	v.SetDefault("ssh.auth.none", false)
 	v.SetDefault("ssh.auth.preferred", "publickey")
 	v.SetDefault("ssh.auth.identities_only", false)

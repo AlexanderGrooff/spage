@@ -411,9 +411,7 @@ func getFirstRemoteHost(inventory *pkg.Inventory) *pkg.Host {
 func createHostContextForTesting(t *testing.T, host *pkg.Host) *pkg.HostContext {
 	t.Helper()
 	// Create a minimal config for testing
-	cfg := &config.Config{
-		HostKeyChecking: false, // Disable for testing
-	}
+	cfg := &config.Config{}
 
 	hostContext, err := pkg.InitializeHostContext(host, cfg)
 	require.NoError(t, err, "Failed to initialize host context for testing on host: %s", host.Host)
