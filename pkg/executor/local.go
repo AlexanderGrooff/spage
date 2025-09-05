@@ -30,65 +30,56 @@ func NewLocalGraphExecutor(runner pkg.TaskRunner) *LocalGraphExecutor {
 // RunTask executes a task locally.
 // It directly calls task.ExecuteModule and returns its result.
 // The TaskResult from ExecuteModule is expected to be populated by handleResult (called within ExecuteModule).
-func (r *LocalTaskRunner) ExecuteTask(ctx context.Context, task pkg.Task, closure *pkg.Closure, cfg *config.Config) pkg.TaskResult {
+func (r *LocalTaskRunner) ExecuteTask(ctx context.Context, task pkg.GraphNode, closure *pkg.Closure, cfg *config.Config) chan pkg.TaskResult {
 	// Check for context cancellation before execution if the task execution itself is long
 	// and doesn't frequently check context. However, task.ExecuteModule should ideally handle this.
 	select {
 	case <-ctx.Done():
 		common.LogWarn("Context cancelled before local task execution", map[string]interface{}{
-			"task": task.Name, "host": closure.HostContext.Host.Name, "error": ctx.Err(),
+			"task": task.Params().Name, "host": closure.HostContext.Host.Name, "error": ctx.Err(),
 		})
-		return pkg.TaskResult{
+		ch := make(chan pkg.TaskResult)
+		ch <- pkg.TaskResult{
 			Task:     task,
 			Closure:  closure,
-			Error:    fmt.Errorf("task %s on host %s cancelled before local execution: %w", task.Name, closure.HostContext.Host.Name, ctx.Err()),
+			Error:    fmt.Errorf("task %s on host %s cancelled before local execution: %w", task.Params().Name, closure.HostContext.Host.Name, ctx.Err()),
 			Status:   pkg.TaskStatusFailed, // Or a dedicated "cancelled" status
 			Failed:   true,
 			Duration: 0, // Task didn't run
 		}
+		return ch
 	default:
 	}
 
-	result := task.ExecuteModule(closure)
-
-	// Ensure Task and Closure are set in the result, as ExecuteModule might not always do this
-	// (though it should, via the TaskResult it initializes).
-	result.Task = task
-	result.Closure = closure
-
-	return result
+	return task.ExecuteModule(closure)
 }
 
-func (r *LocalTaskRunner) RevertTask(ctx context.Context, task pkg.Task, closure *pkg.Closure, cfg *config.Config) pkg.TaskResult {
+func (r *LocalTaskRunner) RevertTask(ctx context.Context, task pkg.GraphNode, closure *pkg.Closure, cfg *config.Config) chan pkg.TaskResult {
 	// Check for context cancellation before execution if the task execution itself is long
 	// and doesn't frequently check context. However, task.ExecuteModule should ideally handle this.
 	select {
 	case <-ctx.Done():
 		common.LogWarn("Context cancelled before local task execution", map[string]interface{}{
-			"task": task.Name, "host": closure.HostContext.Host.Name, "error": ctx.Err(),
+			"task": task.Params().Name, "host": closure.HostContext.Host.Name, "error": ctx.Err(),
 		})
-		return pkg.TaskResult{
+		ch := make(chan pkg.TaskResult)
+		ch <- pkg.TaskResult{
 			Task:     task,
 			Closure:  closure,
-			Error:    fmt.Errorf("task %s on host %s cancelled before local execution: %w", task.Name, closure.HostContext.Host.Name, ctx.Err()),
+			Error:    fmt.Errorf("task %s on host %s cancelled before local execution: %w", task.Params().Name, closure.HostContext.Host.Name, ctx.Err()),
 			Status:   pkg.TaskStatusFailed, // Or a dedicated "cancelled" status
 			Failed:   true,
 			Duration: 0, // Task didn't run
 		}
+		return ch
 	default:
 	}
 
-	result := task.RevertModule(closure)
-
-	// Ensure Task and Closure are set in the result, as ExecuteModule might not always do this
-	// (though it should, via the TaskResult it initializes).
-	result.Task = task
-	result.Closure = closure
-
-	return result
+	return task.RevertModule(closure)
 }
 
 func (e *LocalGraphExecutor) Execute(hostContexts map[string]*pkg.HostContext, orderedGraph [][]pkg.GraphNode, cfg *config.Config) error {
+	common.LogDebug("Executing local graph", map[string]interface{}{})
 	ctx := context.Background()
 	recapStats := InitializeRecapStats(hostContexts)
 	var executionHistory []map[string]chan pkg.GraphNode // For revert functionality
@@ -108,7 +99,9 @@ func (e *LocalGraphExecutor) Execute(hostContexts map[string]*pkg.HostContext, o
 		resultsCh := make(chan pkg.TaskResult, numExpectedResultsOnLevel)
 		errCh := make(chan error, 1) // For fatal errors from the task loading goroutine
 
-		go e.loadLevelTasks(ctx, tasksInLevel, hostContexts, resultsCh, errCh, cfg, executionLevel)
+		var wg sync.WaitGroup
+		go e.loadLevelTasks(ctx, &wg, tasksInLevel, hostContexts, resultsCh, errCh, cfg, executionLevel)
+		wg.Wait()
 
 		levelErrored, errProcessingResults := e.processLevelResults(
 			ctx, resultsCh, errCh,
@@ -169,11 +162,16 @@ func (e *LocalGraphExecutor) Revert(ctx context.Context, executedTasks []map[str
 			}
 
 			// Drain the channel for this host and level
-			for task := range taskHistoryCh { // taskHistoryCh should be closed by processLevelResults
-				task, ok := task.(*pkg.Task)
+			for taskNode := range taskHistoryCh { // taskHistoryCh should be closed by processLevelResults
+				task, ok := taskNode.(*pkg.Task)
 				if !ok {
-					// TODO: handle non-task nodes
-					common.LogWarn("Skipping non-task node in Revert", map[string]interface{}{"node": task.String()})
+					// Handle meta tasks (like blocks) - they don't need revert
+					if _, isMetaTask := taskNode.(*pkg.MetaTask); isMetaTask {
+						common.LogDebug("Skipping meta task in Revert (no revert needed)", map[string]interface{}{"node": taskNode.String()})
+						continue
+					}
+					// TODO: handle other non-task nodes
+					common.LogWarn("Skipping non-task node in Revert", map[string]interface{}{"node": taskNode.String()})
 					continue
 				}
 				if cfg.Logging.Format == "plain" {
@@ -186,7 +184,7 @@ func (e *LocalGraphExecutor) Revert(ctx context.Context, executedTasks []map[str
 				}
 
 				// Check if the task's module parameters implement HasRevert
-				if P, ok := task.Params.Actual.(interface{ HasRevert() bool }); !ok || !P.HasRevert() {
+				if P, ok := task.Params().Params.Actual.(interface{ HasRevert() bool }); !ok || !P.HasRevert() {
 					logData["status"] = "ok"
 					logData["changed"] = false
 					logData["message"] = "No revert defined for module or params"
@@ -200,7 +198,8 @@ func (e *LocalGraphExecutor) Revert(ctx context.Context, executedTasks []map[str
 				}
 
 				closure := task.ConstructClosure(hostCtx, cfg)
-				revertResult := task.RevertModule(closure) // Calls module's Revert via Task.RevertModule
+				revertCh := task.RevertModule(closure) // Calls module's Revert via Task.RevertModule
+				revertResult := <-revertCh
 
 				if revertResult.Error != nil {
 					logData["status"] = "failed"
@@ -265,8 +264,163 @@ func (e *LocalGraphExecutor) Revert(ctx context.Context, executedTasks []map[str
 	return nil
 }
 
+func (e *LocalGraphExecutor) loadTaskForHost(
+	task pkg.GraphNode, hostContext *pkg.HostContext, hostContexts map[string]*pkg.HostContext,
+	cfg *config.Config, errCh chan error, ctx context.Context, wg *sync.WaitGroup,
+	resultsCh chan pkg.TaskResult) chan pkg.TaskResult {
+	isParallelDispatch := cfg.ExecutionMode == "parallel"
+	closures, err := GetTaskClosures(task, hostContext, cfg)
+	if err != nil {
+		errMsg := fmt.Errorf("critical error: failed to get task closures for task '%s' on host '%s': %w, aborting level", task.Params().Name, hostContext.Host.Name, err)
+		common.LogError("Dispatch error in loadLevelTasks", map[string]interface{}{"error": errMsg})
+		select {
+		case errCh <- errMsg:
+		case <-ctx.Done():
+		}
+		return make(chan pkg.TaskResult)
+	}
+
+	if len(closures) == 0 {
+		return make(chan pkg.TaskResult)
+	}
+
+	for _, closure := range closures {
+		// Resolve delegate_to if specified
+		if task.Params().DelegateTo != "" {
+			delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure, cfg)
+			if err != nil {
+				errMsg := fmt.Errorf("failed to resolve delegate_to for task '%s': %w", task.Params().Name, err)
+				common.LogError("Delegate resolution error in loadLevelTasks", map[string]interface{}{"error": errMsg})
+				select {
+				case errCh <- errMsg:
+				case <-ctx.Done():
+				}
+				return make(chan pkg.TaskResult)
+			}
+			if delegatedHostContext != nil {
+				// Update the closure to use the delegated host context
+				closure.HostContext = delegatedHostContext
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			common.LogWarn("Context cancelled, stopping task dispatch for level.", map[string]interface{}{"task": task.Params().Name, "host": hostContext.Host.Name})
+			select {
+			case errCh <- fmt.Errorf("dispatch loop cancelled for task '%s' on host '%s': %w", task.Params().Name, hostContext.Host.Name, ctx.Err()):
+			default:
+			}
+			return make(chan pkg.TaskResult)
+		default:
+		}
+
+		if isParallelDispatch {
+			// In parallel mode, we need to return a channel that the caller can read from
+			// We'll create a local channel and start a goroutine to forward results
+			localCh := make(chan pkg.TaskResult, 1)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer close(localCh)
+				common.LogDebug("Starting task execution in parallel mode", map[string]interface{}{
+					"task": task.Params().Name,
+					"host": closure.HostContext.Host.Name,
+				})
+				select {
+				case <-ctx.Done():
+					common.LogDebug("Context cancelled before task execution", map[string]interface{}{
+						"task": task.Params().Name,
+						"host": closure.HostContext.Host.Name,
+					})
+					return
+				default:
+					taskResultCh := e.Runner.ExecuteTask(ctx, task, closure, cfg)
+					common.LogDebug("Task execution started, waiting for results", map[string]interface{}{
+						"task": task.Params().Name,
+						"host": closure.HostContext.Host.Name,
+					})
+
+					// Check if this is a meta task that might produce multiple results
+					if _, isMetaTask := task.(*pkg.MetaTask); isMetaTask {
+						// Consume all results from meta task
+						for result := range taskResultCh {
+							common.LogDebug("Received meta task result", map[string]interface{}{
+								"task":   task.Params().Name,
+								"host":   closure.HostContext.Host.Name,
+								"status": result.Status,
+							})
+							select {
+							case localCh <- result:
+								common.LogDebug("Meta task result sent to local channel", map[string]interface{}{
+									"task": task.Params().Name,
+									"host": closure.HostContext.Host.Name,
+								})
+							case <-ctx.Done():
+								return
+							}
+						}
+					} else {
+						// Regular task - consume only one result
+						common.LogDebug("Waiting for regular task result", map[string]interface{}{
+							"task": task.Params().Name,
+							"host": closure.HostContext.Host.Name,
+						})
+						select {
+						case result := <-taskResultCh:
+							common.LogDebug("Received regular task result", map[string]interface{}{
+								"task":   task.Params().Name,
+								"host":   closure.HostContext.Host.Name,
+								"status": result.Status,
+							})
+							select {
+							case localCh <- result:
+								common.LogDebug("Regular task result sent to local channel", map[string]interface{}{
+									"task": task.Params().Name,
+									"host": closure.HostContext.Host.Name,
+								})
+							case <-ctx.Done():
+								return
+							}
+						case <-ctx.Done():
+							common.LogDebug("Context cancelled while waiting for task result", map[string]interface{}{
+								"task": task.Params().Name,
+								"host": closure.HostContext.Host.Name,
+							})
+							return
+						}
+					}
+				}
+			}()
+			return localCh
+		} else {
+			taskResultCh := e.Runner.ExecuteTask(ctx, task, closure, cfg)
+
+			// Check if this is a meta task that might produce multiple results
+			if _, isMetaTask := task.(*pkg.MetaTask); isMetaTask {
+				// Consume all results from meta task
+				for result := range taskResultCh {
+					select {
+					case resultsCh <- result:
+					case <-ctx.Done():
+						return resultsCh
+					}
+				}
+			} else {
+				// Regular task - consume only one result
+				select {
+				case resultsCh <- <-taskResultCh:
+				case <-ctx.Done():
+					return resultsCh
+				}
+			}
+		}
+	}
+	return resultsCh
+}
+
 func (e *LocalGraphExecutor) loadLevelTasks(
 	ctx context.Context,
+	wg *sync.WaitGroup,
 	tasksInLevel []pkg.GraphNode,
 	hostContexts map[string]*pkg.HostContext,
 	resultsCh chan pkg.TaskResult,
@@ -276,23 +430,16 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 ) {
 	defer close(resultsCh)
 
-	var wg sync.WaitGroup
-	isParallelDispatch := cfg.ExecutionMode == "parallel"
-
 	for _, taskDefinition := range tasksInLevel {
-		task, ok := taskDefinition.(*pkg.Task)
-		if !ok {
-			// TODO: handle non-task nodes
-			common.LogWarn("Skipping non-task node in loadLevelTasks", map[string]interface{}{"node": taskDefinition.String()})
-			continue
-		}
+		task := taskDefinition
 
 		// Handle run_once tasks separately
 		// TODO: template the run_once condition with actual closure
-		if !task.RunOnce.IsEmpty() && task.RunOnce.IsTruthy(nil) {
+		// TODO: use loadTaskForHost for run_once tasks
+		if !task.Params().RunOnce.IsEmpty() && task.Params().RunOnce.IsTruthy(nil) {
 			firstHostCtx, firstHostName := GetFirstAvailableHost(hostContexts)
 			if firstHostCtx == nil {
-				errMsg := fmt.Errorf("no hosts available for run_once task '%s'", task.Name)
+				errMsg := fmt.Errorf("no hosts available for run_once task '%s'", task.Params().Name)
 				common.LogError("No hosts available for run_once task", map[string]interface{}{"error": errMsg})
 				select {
 				case errCh <- errMsg:
@@ -301,9 +448,9 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				return // No hosts, so we can't proceed.
 			}
 
-			closures, err := GetTaskClosures(*task, firstHostCtx, cfg)
+			closures, err := GetTaskClosures(task, firstHostCtx, cfg)
 			if err != nil {
-				errMsg := fmt.Errorf("critical error: failed to get task closures for run_once task '%s' on host '%s': %w", task.Name, firstHostName, err)
+				errMsg := fmt.Errorf("critical error: failed to get task closures for run_once task '%s' on host '%s': %w", task.Params().Name, firstHostName, err)
 				common.LogError("Dispatch error for run_once task", map[string]interface{}{"error": errMsg})
 				select {
 				case errCh <- errMsg:
@@ -325,7 +472,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				var totalDuration time.Duration
 
 				common.LogInfo("Executing run_once task with loop", map[string]interface{}{
-					"task":           task.Name,
+					"task":           task.Params().Name,
 					"execution_host": firstHostName,
 					"item_count":     len(closures),
 				})
@@ -335,9 +482,43 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 					// This implementation executes on the `firstHostCtx`'s designated runner.
 					// A more advanced version might need to resolve delegation for each item.
 
-					result := e.Runner.ExecuteTask(ctx, *task, closure, cfg)
+					// Handle meta tasks vs regular tasks differently
+					resultCh := e.Runner.ExecuteTask(ctx, task, closure, cfg)
 
-					itemResults = append(itemResults, result)
+					var result pkg.TaskResult
+					if _, isMetaTask := task.(*pkg.MetaTask); isMetaTask {
+						// Meta task might produce multiple results - collect them all
+						var results []pkg.TaskResult
+						for res := range resultCh {
+							results = append(results, res)
+						}
+						// For run_once, we'll use the first result as the primary result
+						// TODO: Consider how to handle multiple results from meta tasks in run_once scenarios
+						if len(results) > 0 {
+							result = results[0]
+							itemResults = append(itemResults, result)
+							// Send additional results to the main channel
+							for i := 1; i < len(results); i++ {
+								select {
+								case resultsCh <- results[i]:
+								case <-ctx.Done():
+									return
+								}
+							}
+						} else {
+							// Create a default result if no results
+							result = pkg.TaskResult{
+								Task:    task,
+								Closure: closure,
+								Status:  pkg.TaskStatusSkipped,
+							}
+							itemResults = append(itemResults, result)
+						}
+					} else {
+						// Regular task - single result
+						result = <-resultCh
+						itemResults = append(itemResults, result)
+					}
 					totalDuration += result.Duration
 					if result.Status == pkg.TaskStatusChanged {
 						changed = true
@@ -367,7 +548,7 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 
 				finalClosure := task.ConstructClosure(firstHostCtx, cfg)
 				aggregatedResult := pkg.TaskResult{
-					Task:     *task,
+					Task:     task,
 					Closure:  finalClosure,
 					Error:    finalError,
 					Status:   finalStatus,
@@ -377,9 +558,9 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				}
 
 				// Propagate the aggregated facts to all hosts
-				if task.Register != "" {
+				if task.Params().Register != "" {
 					reg := BuildRegisteredFromOutput(aggregatedResult.Output, aggregatedResult.Status == pkg.TaskStatusChanged || aggregatedResult.Changed)
-					PropagateRegisteredToAllHosts(*task, reg, hostContexts, nil)
+					PropagateRegisteredToAllHosts(task, reg, hostContexts, nil)
 				}
 
 				allResults := CreateRunOnceResultsForAllHosts(aggregatedResult, hostContexts, firstHostName)
@@ -394,10 +575,10 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				// Single run_once (no loop or loop with one item)
 				closure := closures[0]
 
-				if task.DelegateTo != "" {
-					delegatedHostContext, err := GetDelegatedHostContext(*task, hostContexts, closure, cfg)
+				if task.Params().DelegateTo != "" {
+					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure, cfg)
 					if err != nil {
-						errMsg := fmt.Errorf("failed to resolve delegate_to for run_once task '%s': %w", task.Name, err)
+						errMsg := fmt.Errorf("failed to resolve delegate_to for run_once task '%s': %w", task.Params().Name, err)
 						common.LogError("Delegate resolution error for run_once task", map[string]interface{}{"error": errMsg})
 						select {
 						case errCh <- errMsg:
@@ -411,17 +592,49 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				}
 
 				common.LogInfo("Executing run_once task", map[string]interface{}{
-					"task":           task.Name,
+					"task":           task.Params().Name,
 					"execution_host": closure.HostContext.Host.Name,
 				})
 
-				originalResult := e.Runner.ExecuteTask(ctx, *task, closure, cfg)
+				// Handle meta tasks vs regular tasks differently
+				originalResultCh := e.Runner.ExecuteTask(ctx, task, closure, cfg)
+
+				var originalResult pkg.TaskResult
+				if _, isMetaTask := task.(*pkg.MetaTask); isMetaTask {
+					// Meta task might produce multiple results - collect them all
+					var results []pkg.TaskResult
+					for result := range originalResultCh {
+						results = append(results, result)
+					}
+					// For run_once, we'll use the first result as the primary result
+					if len(results) > 0 {
+						originalResult = results[0]
+						// Send additional results to the main channel
+						for i := 1; i < len(results); i++ {
+							select {
+							case resultsCh <- results[i]:
+							case <-ctx.Done():
+								return
+							}
+						}
+					} else {
+						// No results - create a default result
+						originalResult = pkg.TaskResult{
+							Task:    task,
+							Closure: closure,
+							Status:  pkg.TaskStatusSkipped,
+						}
+					}
+				} else {
+					// Regular task - single result
+					originalResult = <-originalResultCh
+				}
 
 				// Propagate the registered variable from the single run_once execution to all hosts,
 				// mirroring the behavior implemented for looped run_once above
-				if task.Register != "" {
+				if task.Params().Register != "" {
 					reg := BuildRegisteredFromOutput(originalResult.Output, originalResult.Status == pkg.TaskStatusChanged || originalResult.Changed)
-					PropagateRegisteredToAllHosts(*task, reg, hostContexts, nil)
+					PropagateRegisteredToAllHosts(task, reg, hostContexts, nil)
 				}
 
 				allResults := CreateRunOnceResultsForAllHosts(originalResult, hostContexts, firstHostName)
@@ -439,80 +652,57 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 		}
 
 		// Normal task execution for non-run_once tasks
-		for hostName, hostCtx := range hostContexts {
+		for _, hostCtx := range hostContexts {
+			// Check if this is a meta task (like block)
+			if _, isMetaTask := task.(*pkg.MetaTask); isMetaTask {
+				// Handle meta tasks synchronously to avoid race conditions
+				taskResultCh := e.loadTaskForHost(task, hostCtx, hostContexts, cfg, errCh, ctx, wg, resultsCh)
 
-			closures, err := GetTaskClosures(*task, hostCtx, cfg)
-			if err != nil {
-				errMsg := fmt.Errorf("critical error: failed to get task closures for task '%s' on host '%s': %w, aborting level", task.Name, hostName, err)
-				common.LogError("Dispatch error in loadLevelTasks", map[string]interface{}{"error": errMsg})
-				select {
-				case errCh <- errMsg:
-				case <-ctx.Done():
-				}
-				return
-			}
-
-			for _, closure := range closures {
-				// Resolve delegate_to if specified
-				if task.DelegateTo != "" {
-					delegatedHostContext, err := GetDelegatedHostContext(*task, hostContexts, closure, cfg)
-					if err != nil {
-						errMsg := fmt.Errorf("failed to resolve delegate_to for task '%s': %w", task.Name, err)
-						common.LogError("Delegate resolution error in loadLevelTasks", map[string]interface{}{"error": errMsg})
-						select {
-						case errCh <- errMsg:
-						case <-ctx.Done():
-						}
-						return
-					}
-					if delegatedHostContext != nil {
-						// Update the closure to use the delegated host context
-						closure.HostContext = delegatedHostContext
-					}
-				}
-
-				select {
-				case <-ctx.Done():
-					common.LogWarn("Context cancelled, stopping task dispatch for level.", map[string]interface{}{"task": task.Name, "host": hostName})
+				// Collect all results from the meta task synchronously
+				for result := range taskResultCh {
 					select {
-					case errCh <- fmt.Errorf("dispatch loop cancelled for task '%s' on host '%s': %w", task.Name, hostName, ctx.Err()):
-					default:
-					}
-					return
-				default:
-				}
-
-				if isParallelDispatch {
-					wg.Add(1)
-					go func() {
-						defer wg.Done()
-						select {
-						case <-ctx.Done():
-							return
-						default:
-							taskResult := e.Runner.ExecuteTask(ctx, *task, closure, cfg)
-
-							select {
-							case resultsCh <- taskResult:
-							case <-ctx.Done():
-							}
-						}
-					}()
-				} else {
-					taskResult := e.Runner.ExecuteTask(ctx, *task, closure, cfg)
-
-					select {
-					case resultsCh <- taskResult:
+					case resultsCh <- result:
 					case <-ctx.Done():
 						return
 					}
 				}
+			} else {
+				// Regular tasks can use the async forwarding approach
+				taskResultCh := e.loadTaskForHost(task, hostCtx, hostContexts, cfg, errCh, ctx, wg, resultsCh)
+
+				// Forward results from the task channel to the level results channel
+				go func() {
+					common.LogDebug("Starting result forwarding goroutine", map[string]interface{}{
+						"task": task.Params().Name,
+						"host": hostCtx.Host.Name,
+					})
+					for result := range taskResultCh {
+						common.LogDebug("Forwarding result", map[string]interface{}{
+							"task":   task.Params().Name,
+							"host":   hostCtx.Host.Name,
+							"status": result.Status,
+						})
+						select {
+						case resultsCh <- result:
+							common.LogDebug("Result forwarded successfully", map[string]interface{}{
+								"task": task.Params().Name,
+								"host": hostCtx.Host.Name,
+							})
+						case <-ctx.Done():
+							common.LogDebug("Context cancelled, stopping result forwarding", map[string]interface{}{
+								"task": task.Params().Name,
+								"host": hostCtx.Host.Name,
+							})
+							return
+						}
+					}
+					common.LogDebug("Result forwarding goroutine finished", map[string]interface{}{
+						"task": task.Params().Name,
+						"host": hostCtx.Host.Name,
+					})
+				}()
 			}
 		}
-	}
-
-	if isParallelDispatch {
-		wg.Wait()
 	}
 }
 
@@ -571,16 +761,18 @@ func (e *LocalGraphExecutor) executeHandlers(
 			}
 
 			// Skip if already executed
-			if hostCtx.HandlerTracker.IsExecuted(handler.GetName()) {
+			if hostCtx.HandlerTracker.IsExecuted(handler.Params().Name) {
 				continue
 			}
 
 			// Execute the handler
 			closure := handler.ConstructClosure(hostCtx, cfg)
-			result := e.Runner.ExecuteTask(ctx, *task, closure, cfg)
+			// TODO: this assumes a single result
+			resultCh := e.Runner.ExecuteTask(ctx, task, closure, cfg)
+			result := <-resultCh
 
 			// Mark the handler as executed
-			hostCtx.HandlerTracker.MarkExecuted(handler.GetName())
+			hostCtx.HandlerTracker.MarkExecuted(handler.Params().Name)
 
 			// Process the handler result using shared logic
 			processor := &ResultProcessor{
@@ -621,6 +813,7 @@ func (e *LocalGraphExecutor) processLevelResults(
 	ctxResultsCh := NewContextAwareResultChannel(ctx, resultsChAdapter)
 	ctxErrCh := NewContextAwareErrorChannel(ctx, errChAdapter)
 
+	common.LogDebug("Processing level results", map[string]interface{}{"execution_level": executionLevel, "num_expected_results": numExpectedResultsOnLevel})
 	levelHardErrored, _, err := SharedProcessLevelResults(
 		ctxResultsCh,
 		ctxErrCh,

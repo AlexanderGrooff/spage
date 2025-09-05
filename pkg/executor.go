@@ -34,8 +34,8 @@ func (g GenericOutput) String() string {
 // This allows the core execution logic to be generic, while the actual
 // task dispatch (local, Temporal activity, etc.) can be specific.
 type TaskRunner interface {
-	ExecuteTask(ctx context.Context, task Task, closure *Closure, cfg *config.Config) TaskResult
-	RevertTask(ctx context.Context, task Task, closure *Closure, cfg *config.Config) TaskResult
+	ExecuteTask(ctx context.Context, task GraphNode, closure *Closure, cfg *config.Config) chan TaskResult
+	RevertTask(ctx context.Context, task GraphNode, closure *Closure, cfg *config.Config) chan TaskResult
 }
 
 // GraphExecutor defines the interface for running a Spage graph.

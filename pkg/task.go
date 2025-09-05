@@ -16,7 +16,6 @@ import (
 	// Remove pongo2 import if no longer needed directly here
 	// "github.com/flosch/pongo2"
 	"github.com/AlexanderGrooff/spage/pkg/daemon"
-	"gopkg.in/yaml.v3"
 )
 
 type TaskStatus string
@@ -37,7 +36,7 @@ type TaskResult struct {
 	Output   ModuleOutput
 	Error    error // This can now be nil, a normal error, or an IgnoredTaskError
 	Closure  *Closure
-	Task     Task
+	Task     GraphNode
 	Duration time.Duration
 	Status   TaskStatus
 	Failed   bool
@@ -72,7 +71,7 @@ type FactProvider interface {
 	AsFacts() map[string]interface{}
 }
 
-type Task struct {
+type TaskParams struct {
 	Id           int                 `yaml:"id" json:"id"`
 	Name         string              `yaml:"name" json:"name"`
 	Module       string              `yaml:"module" json:"module"`
@@ -93,6 +92,8 @@ type Task struct {
 	NoLog        JinjaExpression     `yaml:"no_log,omitempty" json:"no_log,omitempty"`
 	Tags         []string            `yaml:"tags,omitempty" json:"tags,omitempty"`
 	Vars         interface{}         `yaml:"vars,omitempty" json:"vars,omitempty"`
+	Rescue       []GraphNode         `yaml:"rescue,omitempty" json:"rescue,omitempty"`
+	Always       []GraphNode         `yaml:"always,omitempty" json:"always,omitempty"`
 
 	Until   JinjaExpression `yaml:"until,omitempty" json:"until,omitempty"`
 	Retries int             `yaml:"retries,omitempty" json:"retries,omitempty"`
@@ -108,84 +109,24 @@ type Task struct {
 	RolePath string `yaml:"_role_path,omitempty" json:"_role_path,omitempty"`
 }
 
-// UnmarshalJSON implements the json.Unmarshaler interface for Task.
-func (t *Task) UnmarshalJSON(data []byte) error {
-	type Alias Task // Use type alias to avoid recursion during unmarshaling
-	aux := &struct {
-		Params json.RawMessage `json:"params"`
-		*Alias
-	}{
-		Alias: (*Alias)(t),
-	}
-
-	if err := json.Unmarshal(data, &aux); err != nil {
-		return fmt.Errorf("failed to unmarshal task aux struct: %w", err)
-	}
-
-	// If Module or Params are not present, or params is null, no further processing for Params.Actual
-	if t.Module == "" || len(aux.Params) == 0 || string(aux.Params) == "null" {
-		t.Params.Actual = nil // Ensure Actual is nil if no params or module
-		return nil
-	}
-
-	mod, ok := GetModule(t.Module)
-	if !ok {
-		return fmt.Errorf("module %s not found during task JSON unmarshaling", t.Module)
-	}
-
-	inputType := mod.InputType()
-	// Create a new instance of the specific module input type (e.g., *ShellInput)
-	// inputVal will be a pointer to the zero value of the input type.
-	inputValPtr := reflect.New(inputType)
-
-	// Unmarshal the raw JSON params into this specific input type instance (pointer)
-	if err := json.Unmarshal(aux.Params, inputValPtr.Interface()); err != nil {
-		return fmt.Errorf("failed to unmarshal params for module %s: %w", t.Module, err)
-	}
-
-	// inputValPtr is the pointer (e.g., *ShellInput). Get the value it points to.
-	elemValue := inputValPtr.Elem()
-
-	// Check if the VALUE type implements the interface.
-	actualParamProvider, ok := elemValue.Interface().(ConcreteModuleInputProvider)
-	if ok {
-		// If the value type implements it, store the value.
-		t.Params.Actual = actualParamProvider
-	} else {
-		// Check if the POINTER type implements the interface (less common case for modules).
-		actualParamProvider, ok = inputValPtr.Interface().(ConcreteModuleInputProvider)
-		if ok {
-			// If the pointer type implements it, store the pointer.
-			t.Params.Actual = actualParamProvider
-		} else {
-			// Neither value nor pointer implements the interface - should not happen for registered modules.
-			return fmt.Errorf("module %s params type %T (or its pointer) does not implement ConcreteModuleInputProvider", t.Module, elemValue.Interface())
-		}
-	}
-
-	return nil
-}
-
-// MarshalJSON implements the json.Marshaler interface for Task.
-// This ensures that the Params field is marshaled correctly by handling the Actual field.
-func (t Task) MarshalJSON() ([]byte, error) {
+func (tp *TaskParams) MarshalJSON() ([]byte, error) {
 	// Use a type alias to avoid recursion when marshaling other fields.
-	type Alias Task
+	type Alias TaskParams
 	// Create an auxiliary struct to handle standard fields and the special Params field.
 	aux := &struct {
 		*Alias
 		Params json.RawMessage `json:"params,omitempty"` // Use RawMessage to hold pre-marshaled params
 	}{
-		Alias: (*Alias)(&t),
+		Alias: (*Alias)(tp),
 	}
 
 	// Marshal the actual parameters stored in t.Params.Actual.
 	var paramsBytes []byte
 	var err error
-	if t.Params.Actual != nil {
-		paramsBytes, err = json.Marshal(t.Params.Actual)
+	if tp.Params.Actual != nil {
+		paramsBytes, err = json.Marshal(tp.Params.Actual)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal Task.Params.Actual for module %s: %w", t.Module, err)
+			return nil, fmt.Errorf("failed to marshal Task.Params.Actual for module %s: %w", tp.Module, err)
 		}
 	} else {
 		// If Actual is nil, represent params as JSON null or an empty object.
@@ -198,168 +139,149 @@ func (t Task) MarshalJSON() ([]byte, error) {
 	return json.Marshal(aux)
 }
 
-// UnmarshalYAML implements the yaml.Unmarshaler interface for Task.
-func (t *Task) UnmarshalYAML(node *yaml.Node) error {
-	type Alias Task // Use type alias to avoid recursion
-	// Create an auxiliary struct to capture all fields except Params initially,
-	// and capture Params as a raw yaml.Node.
-	auxTask := &struct {
+func (tp *TaskParams) UnmarshalJSON(data []byte) error {
+	type Alias TaskParams // Use type alias to avoid recursion during unmarshaling
+	aux := &struct {
+		Params json.RawMessage `json:"params"`
 		*Alias
-		ParamsNode yaml.Node `yaml:"params"` // Capture 'params' field as a yaml.Node
 	}{
-		Alias: (*Alias)(t),
+		Alias: (*Alias)(tp),
 	}
 
-	// Decode into auxTask might fail if 'params' is complex, so we continue with the alternative approach
-	_ = node.Decode(&auxTask) // Ignore error as we use the alternative approach below
-
-	// Attempt to unmarshal everything into the Alias first
-	if err := node.Decode((*Alias)(t)); err != nil {
-		return fmt.Errorf("failed to unmarshal task alias: %w", err)
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return fmt.Errorf("failed to unmarshal task aux struct: %w", err)
 	}
 
-	// Now, specifically extract the params node for custom processing.
-	// We need to find the 'params' key in the YAML mapping node.
-	var paramsSubNode *yaml.Node
-	if node.Kind == yaml.MappingNode {
-		for i := 0; i < len(node.Content); i += 2 {
-			if node.Content[i].Value == "params" {
-				paramsSubNode = node.Content[i+1]
-				break
-			}
-		}
-	}
-
-	if t.Module == "" || paramsSubNode == nil || paramsSubNode.Tag == "!!null" {
-		t.Params.Actual = nil // No module or no params, so Actual is nil
+	// If Module or Params are not present, or params is null, no further processing for Params.Actual
+	if tp.Module == "" || len(aux.Params) == 0 || string(aux.Params) == "null" {
+		tp.Params.Actual = nil // Ensure Actual is nil if no params or module
 		return nil
 	}
 
-	mod, ok := GetModule(t.Module)
+	mod, ok := GetModule(tp.Module)
 	if !ok {
-		return fmt.Errorf("module %s not found during task YAML unmarshaling", t.Module)
+		return fmt.Errorf("module %s not found during task JSON unmarshaling", tp.Module)
 	}
 
-	inputType := mod.InputType() // e.g., reflect.TypeOf(ShellInput{})
-	// Create a new instance of the specific module input type (e.g., a pointer to ShellInput)
-	inputVal := reflect.New(inputType).Interface() // This is *ShellInput
+	inputType := mod.InputType()
+	// Create a new instance of the specific module input type (e.g., *ShellInput)
+	// inputVal will be a pointer to the zero value of the input type.
+	inputValPtr := reflect.New(inputType)
 
-	// Decode the paramsSubNode into the specific input type instance.
-	// This allows types like ShellInput to use their own UnmarshalYAML if they have one.
-	if err := paramsSubNode.Decode(inputVal); err != nil {
-		return fmt.Errorf("failed to decode params for module %s from YAML node: %w", t.Module, err)
+	// Unmarshal the raw JSON params into this specific input type instance (pointer)
+	if err := json.Unmarshal(aux.Params, inputValPtr.Interface()); err != nil {
+		return fmt.Errorf("failed to unmarshal params for module %s: %w", tp.Module, err)
 	}
 
-	// inputVal is now a pointer to the populated struct (e.g., *ShellInput).
-	// We need to ensure it implements ConcreteModuleInputProvider.
-	actualParamProvider, ok := inputVal.(ConcreteModuleInputProvider)
-	if !ok {
-		// If the pointer type doesn't implement, check if the value type does.
-		// This can happen if methods are defined on T, not *T.
-		// However, for unmarshaling into, we usually pass a pointer.
-		// And methods like ToCode might be on the value type for ShellInput.
-		// Let's assume methods are on value type as per ShellInput.ToCode() etc.
-		// reflect.New(inputType) gives *Type. Interface() is *Type.
-		// If ConcreteModuleInputProvider is implemented by Type, then actualParamProvider is reflect.ValueOf(inputVal).Elem().Interface().(ConcreteModuleInputProvider)
+	// inputValPtr is the pointer (e.g., *ShellInput). Get the value it points to.
+	elemValue := inputValPtr.Elem()
 
-		val := reflect.ValueOf(inputVal)
-		if val.Kind() == reflect.Ptr {
-			actualParamProvider, ok = val.Elem().Interface().(ConcreteModuleInputProvider)
+	// Check if the VALUE type implements the interface.
+	actualParamProvider, ok := elemValue.Interface().(ConcreteModuleInputProvider)
+	if ok {
+		// If the value type implements it, store the value.
+		tp.Params.Actual = actualParamProvider
+	} else {
+		// Check if the POINTER type implements the interface (less common case for modules).
+		actualParamProvider, ok = inputValPtr.Interface().(ConcreteModuleInputProvider)
+		if ok {
+			// If the pointer type implements it, store the pointer.
+			tp.Params.Actual = actualParamProvider
+		} else {
+			// Neither value nor pointer implements the interface - should not happen for registered modules.
+			return fmt.Errorf("module %s params type %T (or its pointer) does not implement ConcreteModuleInputProvider", tp.Module, elemValue.Interface())
 		}
-		if !ok {
-			return fmt.Errorf("failed to assert module %s params type %T to ConcreteModuleInputProvider after YAML decode", t.Module, inputVal)
-		}
 	}
-	t.Params.Actual = actualParamProvider
+
 	return nil
 }
 
-func (t Task) ToCode() string {
+func (tp *TaskParams) ToCode() string {
 	var sb strings.Builder
 	// Get the code representation of the actual parameters
 	actualParamsCode := "nil" // Default to nil if Actual is not populated
-	if t.Params.Actual != nil {
-		actualParamsCode = t.Params.Actual.ToCode()
+	if tp.Params.Actual != nil {
+		actualParamsCode = tp.Params.Actual.ToCode()
 	}
 
 	// Construct the Task literal, wrapping the actual params code in pkg.ModuleInput
-	sb.WriteString(fmt.Sprintf("pkg.Task{Id: %d, Name: %q, Module: %q, Register: %q, Params: pkg.ModuleInput{Actual: %s}",
-		t.Id,
-		t.Name,
-		t.Module,
-		t.Register,
+	sb.WriteString(fmt.Sprintf("&pkg.TaskParams{Id: %d, Name: %q, Module: %q, Register: %q, Params: pkg.ModuleInput{Actual: %s}",
+		tp.Id,
+		tp.Name,
+		tp.Module,
+		tp.Register,
 		actualParamsCode, // Use the generated code for the Actual field
 	))
 
-	if len(t.When) > 0 {
-		sb.WriteString(fmt.Sprintf(", When: %s", t.When.ToCode()))
+	if len(tp.When) > 0 {
+		sb.WriteString(fmt.Sprintf(", When: %s", tp.When.ToCode()))
 	}
-	if t.Become {
-		sb.WriteString(fmt.Sprintf(", Become: %t", t.Become))
+	if tp.Become {
+		sb.WriteString(fmt.Sprintf(", Become: %t", tp.Become))
 	}
-	if t.BecomeUser != "" {
-		sb.WriteString(fmt.Sprintf(", BecomeUser: %q", t.BecomeUser))
+	if tp.BecomeUser != "" {
+		sb.WriteString(fmt.Sprintf(", BecomeUser: %q", tp.BecomeUser))
 	}
 
-	if t.IgnoreErrors.Expression != "" {
-		sb.WriteString(fmt.Sprintf(", IgnoreErrors: %s", t.IgnoreErrors.ToCode()))
+	if tp.IgnoreErrors.Expression != "" {
+		sb.WriteString(fmt.Sprintf(", IgnoreErrors: %s", tp.IgnoreErrors.ToCode()))
 	}
-	if t.CheckMode != nil {
+	if tp.CheckMode != nil {
 		// Create a pointer to a boolean for the generated code
-		sb.WriteString(fmt.Sprintf(", CheckMode: func() *bool { b := %t; return &b }()", *t.CheckMode))
+		sb.WriteString(fmt.Sprintf(", CheckMode: func() *bool { b := %t; return &b }()", *tp.CheckMode))
 	}
-	if t.Diff != nil {
-		sb.WriteString(fmt.Sprintf(", Diff: func() *bool { b := %t; return &b }()", *t.Diff))
+	if tp.Diff != nil {
+		sb.WriteString(fmt.Sprintf(", Diff: func() *bool { b := %t; return &b }()", *tp.Diff))
 	}
-	if t.FailedWhen != nil {
-		sb.WriteString(fmt.Sprintf(", FailedWhen: %s", t.FailedWhen.ToCode()))
+	if tp.FailedWhen != nil {
+		sb.WriteString(fmt.Sprintf(", FailedWhen: %s", tp.FailedWhen.ToCode()))
 	}
-	if t.ChangedWhen != nil {
-		sb.WriteString(fmt.Sprintf(", ChangedWhen: %s", t.ChangedWhen.ToCode()))
+	if tp.ChangedWhen != nil {
+		sb.WriteString(fmt.Sprintf(", ChangedWhen: %s", tp.ChangedWhen.ToCode()))
 	}
-	if t.DelegateTo != "" {
-		sb.WriteString(fmt.Sprintf(", DelegateTo: %q", t.DelegateTo))
+	if tp.DelegateTo != "" {
+		sb.WriteString(fmt.Sprintf(", DelegateTo: %q", tp.DelegateTo))
 	}
-	if t.RunOnce.Expression != "" {
-		sb.WriteString(fmt.Sprintf(", RunOnce: %s", t.RunOnce.ToCode()))
+	if tp.RunOnce.Expression != "" {
+		sb.WriteString(fmt.Sprintf(", RunOnce: %s", tp.RunOnce.ToCode()))
 	}
-	if t.IsHandler {
-		sb.WriteString(fmt.Sprintf(", IsHandler: %t", t.IsHandler))
+	if tp.IsHandler {
+		sb.WriteString(fmt.Sprintf(", IsHandler: %t", tp.IsHandler))
 	}
-	if t.Vars != nil {
-		sb.WriteString(fmt.Sprintf(", Vars: %#v", t.Vars))
+	if tp.Vars != nil {
+		sb.WriteString(fmt.Sprintf(", Vars: %#v", tp.Vars))
 	}
-	if t.Until.Expression != "" {
-		sb.WriteString(fmt.Sprintf(", Until: %s", t.Until.ToCode()))
+	if tp.Until.Expression != "" {
+		sb.WriteString(fmt.Sprintf(", Until: %s", tp.Until.ToCode()))
 	}
-	if t.Retries > 0 {
-		sb.WriteString(fmt.Sprintf(", Retries: %d", t.Retries))
+	if tp.Retries > 0 {
+		sb.WriteString(fmt.Sprintf(", Retries: %d", tp.Retries))
 	}
-	if t.Delay > 0 {
-		sb.WriteString(fmt.Sprintf(", Delay: %d", t.Delay))
+	if tp.Delay > 0 {
+		sb.WriteString(fmt.Sprintf(", Delay: %d", tp.Delay))
 	}
-	if len(t.Tags) > 0 {
+	if len(tp.Tags) > 0 {
 		sb.WriteString(", Tags: []string{")
-		for i, tag := range t.Tags {
+		for i, tag := range tp.Tags {
 			sb.WriteString(fmt.Sprintf("%q", tag))
-			if i < len(t.Tags)-1 {
+			if i < len(tp.Tags)-1 {
 				sb.WriteString(", ")
 			}
 		}
 		sb.WriteString("}")
 	}
-	if len(t.Notify) > 0 {
+	if len(tp.Notify) > 0 {
 		sb.WriteString(", Notify: []string{")
-		for i, handler := range t.Notify {
+		for i, handler := range tp.Notify {
 			sb.WriteString(fmt.Sprintf("%q", handler))
-			if i < len(t.Notify)-1 {
+			if i < len(tp.Notify)-1 {
 				sb.WriteString(", ")
 			}
 		}
 		sb.WriteString("}")
 	}
 	// Handle Loop field in ToCode: generate code for string or slice.
-	switch v := t.Loop.(type) {
+	switch v := tp.Loop.(type) {
 	case string:
 		if v != "" {
 			sb.WriteString(fmt.Sprintf(", Loop: %q", v))
@@ -377,15 +299,42 @@ func (t Task) ToCode() string {
 		}
 		// Add cases for other expected list types if necessary (e.g., []string)
 	}
-	if t.RolePath != "" {
-		sb.WriteString(fmt.Sprintf(", RolePath: %q", t.RolePath))
+	if tp.RolePath != "" {
+		sb.WriteString(fmt.Sprintf(", RolePath: %q", tp.RolePath))
 	}
-	if t.RoleName != "" {
-		sb.WriteString(fmt.Sprintf(", RoleName: %q", t.RoleName))
+	if tp.RoleName != "" {
+		sb.WriteString(fmt.Sprintf(", RoleName: %q", tp.RoleName))
 	}
 
-	sb.WriteString("},\n") // Removed the trailing newline here as it's added later if needed
+	sb.WriteString("}")
 	return sb.String()
+}
+
+type Task struct {
+	*TaskParams
+}
+
+func (t Task) Params() *TaskParams {
+	return t.TaskParams
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface for Task.
+func (t *Task) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &t.TaskParams)
+}
+
+// MarshalJSON implements the json.Marshaler interface for Task.
+// This ensures that the Params field is marshaled correctly by handling the Actual field.
+func (t Task) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		*TaskParams
+	}{
+		TaskParams: t.TaskParams,
+	})
+}
+
+func (t Task) ToCode() string {
+	return fmt.Sprintf("&pkg.Task{TaskParams: %s}", t.TaskParams.ToCode())
 }
 
 func (t Task) String() string {
@@ -414,7 +363,7 @@ func (t Task) GetTags() []string {
 }
 
 func (t Task) GetVariableUsage() ([]string, error) {
-	varsUsage, err := GetVariableUsageFromModule(t.Params.Actual)
+	varsUsage, err := GetVariableUsageFromModule(t.TaskParams.Params.Actual)
 	if err != nil {
 		return nil, fmt.Errorf("error getting variable usage from module: %w", err)
 	}
@@ -558,7 +507,8 @@ func (t Task) ShouldExecute(closure *Closure) (bool, error) {
 	return true, nil
 }
 
-func (t Task) ExecuteModule(closure *Closure) TaskResult {
+func (t Task) ExecuteModule(closure *Closure) chan TaskResult {
+	ch := make(chan TaskResult, 1)
 	var daemonClient *daemon.Client
 	if client, ok := closure.Config.GetDaemonReporting().(*daemon.Client); ok {
 		daemonClient = client
@@ -571,7 +521,8 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	if err != nil {
 		res := TaskResult{Task: t, Closure: closure, Status: TaskStatusFailed, Error: err}
 		_ = ReportTaskCompletion(daemonClient, t, res, closure.HostContext.Host.Name, -1)
-		return res
+		ch <- res
+		return ch
 	}
 	if !shouldExecute {
 		common.LogDebug("Skipping execution of task due to 'when' condition", map[string]interface{}{
@@ -579,7 +530,8 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 			"host": closure.HostContext.Host.Name,
 		})
 		_ = ReportTaskSkipped(daemonClient, t.Id, t.Name, closure.HostContext.Host.Name, 0)
-		return TaskResult{Task: t, Closure: closure, Status: TaskStatusSkipped}
+		ch <- TaskResult{Task: t, Closure: closure, Status: TaskStatusSkipped}
+		return ch
 	}
 
 	// Determine check mode for this task execution
@@ -631,7 +583,8 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	if t.Until.Expression == "" {
 		res := t.executeOnce(taskClosure)
 		_ = ReportTaskCompletion(daemonClient, t, res, closure.HostContext.Host.Name, -1)
-		return res
+		ch <- res
+		return ch
 	}
 
 	// 'until' is defined, so we enter the retry loop.
@@ -695,7 +648,8 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 			lastResult.Duration = time.Since(startTime) // Update total duration
 
 			_ = ReportTaskCompletion(daemonClient, t, lastResult, closure.HostContext.Host.Name, -1)
-			return lastResult
+			ch <- lastResult
+			return ch
 		}
 
 		// Condition not met, if we have more retries, wait and try again.
@@ -724,7 +678,8 @@ func (t Task) ExecuteModule(closure *Closure) TaskResult {
 	lastResult.Duration = time.Since(startTime)
 
 	_ = ReportTaskCompletion(daemonClient, t, lastResult, closure.HostContext.Host.Name, -1)
-	return lastResult
+	ch <- lastResult
+	return ch
 }
 
 // executeOnce performs a single execution of the task's module.
@@ -758,51 +713,57 @@ func (t Task) executeOnce(closure *Closure) TaskResult {
 	}
 
 	// Evaluate jinja2 in the module input fields
-	if t.Params.Actual != nil {
-		templatedActualProvider, templateErr := TemplateModuleInputFields(t.Params.Actual, closure)
+	if t.TaskParams.Params.Actual != nil {
+		templatedActualProvider, templateErr := TemplateModuleInputFields(t.TaskParams.Params.Actual, closure)
 		if templateErr != nil {
 			r.Error = fmt.Errorf("failed to template module input fields for task %s (module %s): %w", t.Name, t.Module, templateErr)
 			return r
 		}
-		t.Params.Actual = templatedActualProvider // This could be nil if original was nil and TemplateModuleInputFields returns nil
+		t.TaskParams.Params.Actual = templatedActualProvider // This could be nil if original was nil and TemplateModuleInputFields returns nil
 	}
 
-	r.Output, r.Error = module.Execute(t.Params.Actual, closure, t.BecomeUser)
+	r.Output, r.Error = module.Execute(t.TaskParams.Params.Actual, closure, t.BecomeUser)
 	duration := time.Since(startTime)
 	r.Duration = duration
 
-	return HandleResult(&r, t, closure)
+	res := HandleResult(&r, t, closure)
+	return res
 }
 
-func (t Task) RevertModule(closure *Closure) TaskResult {
+func (t Task) RevertModule(closure *Closure) chan TaskResult {
+	ch := make(chan TaskResult, 1)
 	startTime := time.Now()
 	r := TaskResult{Task: t, Closure: closure, Status: TaskStatusSkipped}
 
 	shouldExecute, err := t.ShouldExecute(closure)
 	if err != nil {
-		return TaskResult{Task: t, Closure: closure, Status: TaskStatusFailed, Error: err}
+		ch <- TaskResult{Task: t, Closure: closure, Status: TaskStatusFailed, Error: err}
+		return ch
 	}
 	if !shouldExecute {
 		common.LogDebug("Skipping revert of task", map[string]interface{}{
 			"task": t.Name,
 			"host": closure.HostContext.Host.Name,
 		})
-		return r
+		ch <- r
+		return ch
 	}
 
 	// Check if the task's parameters define a revert action.
-	if t.Params.Actual == nil || !t.Params.Actual.HasRevert() {
+	if t.TaskParams.Params.Actual == nil || !t.TaskParams.Params.Actual.HasRevert() {
 		common.LogDebug("Task has no revert action defined, skipping revert.", map[string]interface{}{
 			"task": t.Name,
 			"host": closure.HostContext.Host.Name,
 		})
-		return r
+		ch <- r
+		return ch
 	}
 
 	module, ok := GetModule(t.Module)
 	if !ok {
 		r.Error = fmt.Errorf("module %s not found", t.Module)
-		return r
+		ch <- r
+		return ch
 	}
 
 	// Load previous output from history using sync.Map.Load
@@ -832,18 +793,20 @@ func (t Task) RevertModule(closure *Closure) TaskResult {
 		if !assertOk {
 			r.Error = fmt.Errorf("failed to assert previous history type (%T) to ModuleOutput for task %s", previousOutputRaw, t.Name)
 			r.Duration = time.Since(startTime)
-			return r
+			ch <- r
+			return ch
 		}
 	}
 
 	// Evaluate jinja2 in the module input fields
-	if t.Params.Actual != nil {
-		templatedActualProvider, templateErr := TemplateModuleInputFields(t.Params.Actual, closure)
+	if t.TaskParams.Params.Actual != nil {
+		templatedActualProvider, templateErr := TemplateModuleInputFields(t.TaskParams.Params.Actual, closure)
 		if templateErr != nil {
 			r.Error = fmt.Errorf("failed to template module input fields for task %s (module %s): %w", t.Name, t.Module, templateErr)
-			return r
+			ch <- r
+			return ch
 		}
-		t.Params.Actual = templatedActualProvider // This could be nil if original was nil and TemplateModuleInputFields returns nil
+		t.TaskParams.Params.Actual = templatedActualProvider // This could be nil if original was nil and TemplateModuleInputFields returns nil
 	}
 
 	// Convert GenericMapOutput back to the expected concrete type if needed
@@ -851,16 +814,19 @@ func (t Task) RevertModule(closure *Closure) TaskResult {
 	if err != nil {
 		r.Error = fmt.Errorf("failed to convert previous output for revert: %w", err)
 		r.Duration = time.Since(startTime)
-		return r
+		ch <- r
+		return ch
 	}
 
 	// Pass t.Params.Actual to module.Revert
 	// Similar nil check considerations as in ExecuteModule for t.Params.Actual
-	r.Output, r.Error = module.Revert(t.Params.Actual, closure, convertedPreviousOutput, t.BecomeUser) // Pass potentially nil previousOutput
+	r.Output, r.Error = module.Revert(t.TaskParams.Params.Actual, closure, convertedPreviousOutput, t.BecomeUser) // Pass potentially nil previousOutput
 	duration := time.Since(startTime)
 	r.Duration = duration
 
-	return HandleResult(&r, t, closure)
+	res := HandleResult(&r, t, closure)
+	ch <- res
+	return ch
 }
 
 // formatConditionsForError returns a string representation of conditions for error messages
@@ -884,6 +850,9 @@ func formatConditionsForError(conditions interface{}) string {
 }
 
 func HandleResult(r *TaskResult, t Task, c *Closure) TaskResult {
+	r.Task = t
+	r.Closure = c
+
 	if r.Error != nil {
 		r.Status = TaskStatusFailed
 		r.Failed = true

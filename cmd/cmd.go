@@ -778,7 +778,7 @@ func applyTagFiltering(graph pkg.Graph, tagsConfig config.TagsConfig) (pkg.Graph
 
 // shouldIncludeTask determines if a task should be included based on its tags
 func shouldIncludeTask(task pkg.GraphNode, tagsConfig config.TagsConfig) bool {
-	taskTags := task.GetTags()
+	taskTags := task.Params().Tags
 
 	// Special tag handling: "always" tag means always include (unless skipped)
 	hasAlwaysTag := contains(taskTags, "always")

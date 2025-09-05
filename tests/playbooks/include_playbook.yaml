@@ -1,9 +1,11 @@
-- name: Initial Task in Main Playbook
-  shell:
-    execute: echo "Main playbook start" > /tmp/spage/include_test_main_start.txt
+---
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Initial Task in Main Playbook
+      shell: echo "Main playbook start" > /tmp/spage/include_test_main_start.txt
 
-- include: included_playbook.yaml
+    - include_tasks: included_playbook.yaml
 
-- name: Final Task in Main Playbook
-  shell:
-    execute: echo "Main playbook end" > /tmp/spage/include_test_main_end.txt
+    - name: Final Task in Main Playbook
+      shell: echo "Main playbook end" > /tmp/spage/include_test_main_end.txt

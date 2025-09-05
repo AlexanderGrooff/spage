@@ -27,9 +27,9 @@ func NewHandlerTracker(hostName string, handlers []GraphNode) *HandlerTracker {
 
 	// Index handlers by name
 	for _, handler := range handlers {
-		ht.handlers[handler.GetName()] = handler
+		ht.handlers[handler.Params().Name] = handler
 		common.LogDebug("Added handler to tracker", map[string]interface{}{
-			"handler": handler.GetName(),
+			"handler": handler.Params().Name,
 			"host":    hostName,
 		})
 	}

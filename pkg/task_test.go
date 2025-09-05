@@ -59,11 +59,13 @@ module: shell
 func TestRunOnceToCode(t *testing.T) {
 	// Test that run_once field is included in generated code
 	task := Task{
-		Id:       1,
-		Name:     "test task",
-		Module:   "shell",
-		RunOnce:  JinjaExpression{Expression: "true"},
-		Register: "test_result",
+		TaskParams: &TaskParams{
+			Id:       1,
+			Name:     "test task",
+			Module:   "shell",
+			RunOnce:  JinjaExpression{Expression: "true"},
+			Register: "test_result",
+		},
 	}
 
 	code := task.ToCode()
@@ -77,11 +79,13 @@ func TestRunOnceToCode(t *testing.T) {
 func TestRunOnceToCodeEmpty(t *testing.T) {
 	// Test that run_once field is not included when false
 	task := Task{
-		Id:       1,
-		Name:     "test task",
-		Module:   "shell",
-		RunOnce:  JinjaExpression{Expression: ""},
-		Register: "test_result",
+		TaskParams: &TaskParams{
+			Id:       1,
+			Name:     "test task",
+			Module:   "shell",
+			RunOnce:  JinjaExpression{Expression: ""},
+			Register: "test_result",
+		},
 	}
 
 	code := task.ToCode()

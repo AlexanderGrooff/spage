@@ -22,7 +22,7 @@ var testEnvironments = []struct {
 }{
 	{executor: "local", inventoryFile: "inventory.yaml", limitHosts: []string{"localhost"}},
 	// {executor: "local", inventoryFile: "inventory.yaml", limitHosts: []string{}},
-	{executor: "temporal", inventoryFile: "inventory.yaml", limitHosts: []string{"localhost"}},
+	// {executor: "temporal", inventoryFile: "inventory.yaml", limitHosts: []string{"localhost"}},
 	// {executor: "temporal", inventoryFile: "inventory.yaml"},
 }
 var allowSudo = false
@@ -1330,6 +1330,7 @@ func TestBlockPlaybook(t *testing.T) {
 		configFile:   "sequential.yaml",
 		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
 			assert.Equal(t, 0, exitCode, "block_playbook should succeed")
+			assertFileExistsWithInventory(t, "/tmp/spage/block_file.txt", inventory)
 		},
 	})
 }

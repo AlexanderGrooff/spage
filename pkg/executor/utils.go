@@ -30,7 +30,20 @@ func CalculateExpectedResults(
 	for _, node := range nodesInLevel {
 		task, ok := node.(*pkg.Task)
 		if !ok {
-			// Not a task so it won't produce any results
+			// Handle MetaTask (including block modules)
+			if metaTask, isMeta := node.(*pkg.MetaTask); isMeta {
+				// For block modules, count as one execution per host
+				if metaTask.Module == "block" {
+					for range hostContexts {
+						numExpectedResultsOnLevel += 1
+					}
+				} else {
+					// For other meta tasks, count as one execution per host
+					for range hostContexts {
+						numExpectedResultsOnLevel += 1
+					}
+				}
+			}
 			continue
 		}
 
@@ -109,15 +122,15 @@ func GetFirstAvailableHost(hostContexts map[string]*pkg.HostContext) (*pkg.HostC
 }
 
 // GetTaskClosures generates one or more Closures for a task, handling loops.
-func GetTaskClosures(task pkg.Task, c *pkg.HostContext, cfg *config.Config) ([]*pkg.Closure, error) {
-	if task.Loop == nil {
+func GetTaskClosures(task pkg.GraphNode, c *pkg.HostContext, cfg *config.Config) ([]*pkg.Closure, error) {
+	if task.Params().Loop == nil {
 		closure := task.ConstructClosure(c, cfg)
 		return []*pkg.Closure{closure}, nil
 	}
 
 	loopItems, err := ParseLoop(task, c, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse loop for task '%s' on host '%s': %w", task.Name, c.Host.Name, err)
+		return nil, fmt.Errorf("failed to parse loop for task '%s' on host '%s': %w", task.Params().Name, c.Host.Name, err)
 	}
 
 	var closures []*pkg.Closure
@@ -132,11 +145,11 @@ func GetTaskClosures(task pkg.Task, c *pkg.HostContext, cfg *config.Config) ([]*
 }
 
 // ParseLoop parses the loop directive of a task, evaluating expressions and returning items to iterate over.
-func ParseLoop(task pkg.Task, c *pkg.HostContext, cfg *config.Config) ([]interface{}, error) {
+func ParseLoop(task pkg.GraphNode, c *pkg.HostContext, cfg *config.Config) ([]interface{}, error) {
 	var loopItems []interface{}
 	closure := task.ConstructClosure(c, cfg)
 
-	switch loopValue := task.Loop.(type) {
+	switch loopValue := task.Params().Loop.(type) {
 	case string:
 		trimmedLoopStr := strings.TrimSpace(loopValue)
 		// Check if it looks like a simple variable template {{ var }}
@@ -161,7 +174,7 @@ func ParseLoop(task pkg.Task, c *pkg.HostContext, cfg *config.Config) ([]interfa
 		if loopItems == nil {
 			evalLoopStr, err := pkg.TemplateString(loopValue, closure)
 			if err != nil {
-				return nil, fmt.Errorf("failed to template loop string '%s' for task '%s': %w", loopValue, task.Name, err)
+				return nil, fmt.Errorf("failed to template loop string '%s' for task '%s': %w", loopValue, task.Params().Name, err)
 			}
 			loopItems = []interface{}{}
 			if evalLoopStr != "" { // Avoid creating [""] for empty strings
@@ -175,17 +188,17 @@ func ParseLoop(task pkg.Task, c *pkg.HostContext, cfg *config.Config) ([]interfa
 		loopItems = loopValue
 
 	default:
-		return nil, fmt.Errorf("unsupported loop type '%T' for task '%s'", task.Loop, task.Name)
+		return nil, fmt.Errorf("unsupported loop type '%T' for task '%s'", task.Params().Loop, task.Params().Name)
 	}
 	return loopItems, nil
 }
 
-func GetDelegatedHostContext(task pkg.Task, hostContexts map[string]*pkg.HostContext, closure *pkg.Closure, cfg *config.Config) (*pkg.HostContext, error) {
-	if task.DelegateTo != "" {
+func GetDelegatedHostContext(task pkg.GraphNode, hostContexts map[string]*pkg.HostContext, closure *pkg.Closure, cfg *config.Config) (*pkg.HostContext, error) {
+	if task.Params().DelegateTo != "" {
 		// Template the delegate_to value in case it contains Jinja variables
-		delegateTo, err := pkg.TemplateString(task.DelegateTo, closure)
+		delegateTo, err := pkg.TemplateString(task.Params().DelegateTo, closure)
 		if err != nil {
-			return nil, fmt.Errorf("failed to template delegate_to '%s': %w", task.DelegateTo, err)
+			return nil, fmt.Errorf("failed to template delegate_to '%s': %w", task.Params().DelegateTo, err)
 		}
 
 		// First try to find the host in the existing hostContexts
@@ -501,7 +514,7 @@ func (rp *ResultProcessor) processResult(
 ) bool {
 	if result.Closure == nil || result.Closure.HostContext == nil || result.Closure.HostContext.Host == nil {
 		rp.Logger.Error("Received TaskResult with nil Closure/HostContext/Host",
-			"level", rp.ExecutionLevel, "result_task_name", result.Task.Name, "task_type", taskType)
+			"level", rp.ExecutionLevel, "result_task_name", result.Task.Params().Name, "task_type", taskType)
 		return stopOnError
 	}
 
@@ -517,27 +530,27 @@ func (rp *ResultProcessor) processResult(
 	if executionHistoryLevel != nil {
 		if hostChan, ok := executionHistoryLevel[hostname]; ok {
 			select {
-			case hostChan <- &task:
+			case hostChan <- task:
 			default:
 				rp.Logger.Warn("Failed to record task in history channel (full or closed)",
-					"task", task.Name, "host", hostname)
+					"task", task.Params().Name, "host", hostname)
 			}
 		}
 	}
 
 	// Store task output in history
 	if result.Closure.HostContext.History != nil {
-		result.Closure.HostContext.History.Store(task.Name, result.Output)
+		result.Closure.HostContext.History.Store(task.Params().Name, result.Output)
 	}
 
 	// Print task header for plain format
 	if rp.Config.Logging.Format == "plain" {
-		fmt.Printf("\n%s [%s] (%s) ****************************************************\n", taskType, task.Name, hostname)
+		fmt.Printf("\n%s [%s] (%s) ****************************************************\n", taskType, task.Params().Name, hostname)
 	}
 
 	logData := map[string]interface{}{
 		"host":      hostname,
-		"task":      task.Name,
+		"task":      task.Params().Name,
 		"task_type": taskType,
 		"duration":  result.Duration.String(),
 		"status":    result.Status.String(),
@@ -682,7 +695,7 @@ func SharedProcessLevelResults(
 		if onResult != nil {
 			if err := onResult(result); err != nil {
 				logger.Error("Task processing reported an error after fact registration",
-					"task", result.Task.Name, "host", result.Closure.HostContext.Host.Name, "error", err)
+					"task", result.Task.Params().Name, "host", result.Closure.HostContext.Host.Name, "error", err)
 				levelHardErrored = true
 			}
 		}
@@ -695,7 +708,7 @@ func SharedProcessLevelResults(
 			// This ensures that revert operations can be triggered for all hosts
 			if cfg.ExecutionMode == "sequential" && levelHardErrored {
 				logger.Warn("Sequential mode: task hard-failed, but continuing to collect results from other hosts for proper revert execution.",
-					"task", result.Task.Name, "host", result.Closure.HostContext.Host.Name, "level", executionLevel)
+					"task", result.Task.Params().Name, "host", result.Closure.HostContext.Host.Name, "level", executionLevel)
 				// Don't break here - continue collecting results from other hosts
 			}
 		}
@@ -744,29 +757,29 @@ func BuildRegisteredFromOutput(output pkg.ModuleOutput, changed bool) interface{
 // PropagateRegisteredToAllHosts stores the provided registered value into all host contexts,
 // and also mirrors it into the workflow-wide facts map if provided (Temporal executor path).
 func PropagateRegisteredToAllHosts(
-	task pkg.Task,
+	task pkg.GraphNode,
 	registeredValue interface{},
 	hostContexts map[string]*pkg.HostContext,
 	workflowHostFacts map[string]map[string]interface{},
 ) {
-	if task.Register == "" || registeredValue == nil {
+	if task.Params().Register == "" || registeredValue == nil {
 		return
 	}
 
 	common.LogDebug("Propagating run_once facts to all hosts", map[string]interface{}{
-		"task":     task.Name,
-		"variable": task.Register,
+		"task":     task.Params().Name,
+		"variable": task.Params().Register,
 	})
 
 	for hostName, hc := range hostContexts {
 		if hc != nil && hc.Facts != nil {
-			hc.Facts.Store(task.Register, registeredValue)
+			hc.Facts.Store(task.Params().Register, registeredValue)
 		}
 		if workflowHostFacts != nil {
 			if _, ok := workflowHostFacts[hostName]; !ok {
 				workflowHostFacts[hostName] = make(map[string]interface{})
 			}
-			workflowHostFacts[hostName][task.Register] = registeredValue
+			workflowHostFacts[hostName][task.Params().Register] = registeredValue
 		}
 	}
 }

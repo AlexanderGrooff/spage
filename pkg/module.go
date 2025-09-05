@@ -99,12 +99,23 @@ func (r RevertableChange[T]) DiffOutput() (string, error) {
 	return GenerateUnifiedDiff("", before, after)
 }
 
-type Module interface {
+type BaseModule interface {
 	InputType() reflect.Type
 	OutputType() reflect.Type
+	ParameterAliases() map[string]string
+}
+
+type Module interface {
+	BaseModule
 	Execute(params ConcreteModuleInputProvider, c *Closure, runAs string) (ModuleOutput, error)
 	Revert(params ConcreteModuleInputProvider, c *Closure, previous ModuleOutput, runAs string) (ModuleOutput, error)
 	ParameterAliases() map[string]string
+}
+
+type MetaModule interface {
+	BaseModule
+	EvaluateExecute(task *MetaTask, c *Closure) chan TaskResult
+	EvaluateRevert(task *MetaTask, c *Closure) chan TaskResult
 }
 
 // ModuleDocProvider is an optional interface that a Module can implement to
@@ -131,6 +142,7 @@ type ParameterDocsProvider interface {
 }
 
 var registeredModules = make(map[string]Module)
+var registeredMetaModules = make(map[string]MetaModule)
 
 // RegisterModule allows modules to register themselves by name.
 func RegisterModule(name string, module Module) {
@@ -140,18 +152,35 @@ func RegisterModule(name string, module Module) {
 	registeredModules[name] = module
 }
 
+// RegisterModule allows modules to register themselves by name.
+func RegisterMetaModule(name string, module MetaModule) {
+	if _, exists := registeredMetaModules[name]; exists {
+		panic(fmt.Sprintf("Module %s already registered", name))
+	}
+	registeredMetaModules[name] = module
+}
+
 // GetModule retrieves a registered module by name.
 func GetModule(name string) (Module, bool) {
 	module, ok := registeredModules[name]
 	return module, ok
 }
 
+// GetMetaModule retrieves a registered meta module by name.
+func GetMetaModule(name string) (MetaModule, bool) {
+	module, ok := registeredMetaModules[name]
+	return module, ok
+}
+
 // ListRegisteredModules returns a copy of the registered modules map.
 // This function is useful for tooling like documentation generators that
 // need to introspect available modules without mutating the registry.
-func ListRegisteredModules() map[string]Module {
-	out := make(map[string]Module, len(registeredModules))
+func ListRegisteredModules() map[string]BaseModule {
+	out := make(map[string]BaseModule, len(registeredModules)+len(registeredMetaModules))
 	for k, v := range registeredModules {
+		out[k] = v
+	}
+	for k, v := range registeredMetaModules {
 		out[k] = v
 	}
 	return out

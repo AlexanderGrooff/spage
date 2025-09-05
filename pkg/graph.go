@@ -3,6 +3,7 @@ package pkg
 import (
 	"encoding/json"
 	"fmt"
+	"go/format"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -31,22 +32,23 @@ var AllowedFacts = map[string]struct{}{
 	"ansible_distribution_major_version": {},
 }
 
+type HasParams interface {
+	Params() *TaskParams
+}
+
 // GraphNode represents either a list of tasks or a nested graph
 type GraphNode interface {
 	String() string
 	ToCode() string
 	GetVariableUsage() ([]string, error)
 	ConstructClosure(c *HostContext, cfg *config.Config) *Closure
-	ExecuteModule(closure *Closure) TaskResult
-	RevertModule(closure *Closure) TaskResult
+	ExecuteModule(closure *Closure) chan TaskResult
+	RevertModule(closure *Closure) chan TaskResult
+	ShouldExecute(closure *Closure) (bool, error)
 	json.Marshaler
 
-	// Getters
-	GetId() int
-	SetId(id int)
-	GetName() string
-	GetIsHandler() bool
-	GetTags() []string
+	// Interface marker to point to params
+	HasParams
 }
 
 type Graph struct {
@@ -88,11 +90,11 @@ func (g Graph) MarshalJSON() ([]byte, error) {
 			taskCopy := *t
 			return graphNodeDTO{Kind: "task", Task: &taskCopy}, nil
 		}
-		if c, ok := n.(*TaskCollection); ok {
+		if c, ok := n.(*MetaTask); ok {
 			var children []graphNodeDTO
-			if len(c.Tasks) > 0 {
-				children = make([]graphNodeDTO, 0, len(c.Tasks))
-				for _, child := range c.Tasks {
+			if len(c.Children) > 0 {
+				children = make([]graphNodeDTO, 0, len(c.Children))
+				for _, child := range c.Children {
 					dto, err := toDTO(child)
 					if err != nil {
 						return graphNodeDTO{}, err
@@ -159,15 +161,15 @@ func (g *Graph) UnmarshalJSON(data []byte) error {
 			if dto.Collection == nil {
 				return nil, fmt.Errorf("collection dto missing collection field")
 			}
-			tc := &TaskCollection{Id: dto.Collection.Id, Name: dto.Collection.Name}
+			tc := &MetaTask{TaskParams: &TaskParams{Id: dto.Collection.Id, Name: dto.Collection.Name}}
 			if len(dto.Collection.Tasks) > 0 {
-				tc.Tasks = make([]GraphNode, 0, len(dto.Collection.Tasks))
+				tc.Children = make([]GraphNode, 0, len(dto.Collection.Tasks))
 				for _, child := range dto.Collection.Tasks {
 					gn, err := fromDTO(child)
 					if err != nil {
 						return nil, err
 					}
-					tc.Tasks = append(tc.Tasks, gn)
+					tc.Children = append(tc.Children, gn)
 				}
 			}
 			return tc, nil
@@ -249,20 +251,20 @@ func (g Graph) ToCode() string {
 		fmt.Fprintf(&f, "%s  %q: %#v,\n", Indent(2), k, v)
 	}
 	fmt.Fprintf(&f, "%s},\n", Indent(1))
-	fmt.Fprintf(&f, "%sTasks: [][]pkg.Task{\n", Indent(1))
+	fmt.Fprintf(&f, "%sNodes: [][]pkg.GraphNode{\n", Indent(1))
 
 	for _, node := range g.Nodes {
-		fmt.Fprintf(&f, "%s  []pkg.Task{\n", Indent(2))
+		fmt.Fprintf(&f, "%s  []pkg.GraphNode{\n", Indent(2))
 		for _, task := range node {
-			fmt.Fprintf(&f, "%s    %s", Indent(3), task.ToCode())
+			fmt.Fprintf(&f, "%s    %s,\n", Indent(3), task.ToCode())
 		}
 		fmt.Fprintf(&f, "%s  },\n", Indent(2))
 	}
 
 	fmt.Fprintf(&f, "%s},\n", Indent(1))
-	fmt.Fprintf(&f, "%sHandlers: []pkg.Task{\n", Indent(1))
+	fmt.Fprintf(&f, "%sHandlers: []pkg.GraphNode{\n", Indent(1))
 	for _, handler := range g.Handlers {
-		fmt.Fprintf(&f, "%s  %s", Indent(2), handler.ToCode())
+		fmt.Fprintf(&f, "%s  %s,\n", Indent(2), handler.ToCode())
 	}
 	fmt.Fprintf(&f, "%s},\n", Indent(1))
 	fmt.Fprintln(&f, "}")
@@ -326,7 +328,13 @@ import (
 }
 `)
 
-	_, err = f.WriteString(content.String())
+	// Run go fmt on the generated code
+	formattedProgram, err := format.Source([]byte(content.String()))
+	if err != nil {
+		common.LogError("error formatting program", map[string]interface{}{"error": err.Error()})
+		formattedProgram = []byte(content.String())
+	}
+	_, err = f.Write(formattedProgram)
 	if err != nil {
 		return fmt.Errorf("error writing to file %s: %v", path, err)
 	}
@@ -339,8 +347,8 @@ func (g Graph) SequentialTasks() [][]GraphNode {
 	maxId := -1
 	for _, nodes := range g.Nodes {
 		for _, node := range nodes {
-			if node.GetId() > maxId {
-				maxId = node.GetId()
+			if node.Params().Id > maxId {
+				maxId = node.Params().Id
 			}
 		}
 	}
@@ -348,7 +356,7 @@ func (g Graph) SequentialTasks() [][]GraphNode {
 	sortedTasks := make([][]GraphNode, maxId+1)
 	for _, nodes := range g.Nodes {
 		for _, node := range nodes {
-			sortedTasks[node.GetId()] = []GraphNode{node}
+			sortedTasks[node.Params().Id] = []GraphNode{node}
 		}
 	}
 	return sortedTasks
@@ -490,13 +498,30 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 	recStack := map[string]bool{}
 
 	// 1. Flatten nodes and record original order index
-	flattenedTasks := nodes
+	var flattenNodes func([]GraphNode) []GraphNode
+	flattenNodes = func(in []GraphNode) []GraphNode {
+		var out []GraphNode
+		for _, n := range in {
+			switch t := n.(type) {
+			case *Task:
+				out = append(out, t)
+			case *MetaTask:
+				common.DebugOutput(fmt.Sprintf("Flattening task collection %q", t.Name))
+				// out = append(out, flattenNodes(t.Tasks)...)
+				out = append(out, t)
+			default:
+				// ignore unknown node types
+			}
+		}
+		return out
+	}
+	flattenedTasks := flattenNodes(nodes)
 
 	// 1.5. Separate handlers from regular tasks
 	var regularTasks []GraphNode
 	var handlers []GraphNode
 	for _, task := range flattenedTasks {
-		if task.GetIsHandler() {
+		if task.Params().IsHandler {
 			handlers = append(handlers, task)
 		} else {
 			regularTasks = append(regularTasks, task)
@@ -508,14 +533,14 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 
 	// Process only regular tasks for the main execution flow
 	for i, task := range regularTasks {
-		if _, exists := lastTaskNameMapping[task.GetName()]; exists {
+		if _, exists := lastTaskNameMapping[task.Params().Name]; exists {
 			// Handle potential duplicate task names if necessary, though Ansible usually requires unique names within a play
-			common.LogWarn("Duplicate task name found during flattening", map[string]interface{}{"name": task.GetName(), "index": i})
+			common.LogWarn("Duplicate task name found during flattening", map[string]interface{}{"name": task.Params().Name, "index": i})
 			// For now, we'll overwrite, assuming later tasks with the same name take precedence or are errors
 		}
-		taskIdMapping[task.GetId()] = task
-		lastTaskNameMapping[task.GetName()] = task
-		originalIndexMap[task.GetName()] = i
+		taskIdMapping[task.Params().Id] = task
+		lastTaskNameMapping[task.Params().Name] = task
+		originalIndexMap[task.Params().Name] = i
 	}
 
 	// 2. Build dependencies based on flattened tasks
@@ -528,7 +553,7 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 
 		common.DebugOutput("Processing node TaskNode %q %q: %+v", t.Name, t.Module, t.Params)
 		// Check if n.Params.Actual is nil, as n.Params is a struct and cannot be nil itself.
-		if t.Params.Actual == nil {
+		if t.Params().Params.Actual == nil {
 			common.DebugOutput("Task %q has no actual params, skipping dependency analysis for params", t.Name)
 			// Continue processing other dependencies like before/after
 		} else {
@@ -579,8 +604,8 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 
 		// Check if the module's parameters inherently provide variables (like set_fact)
 		// Ensure n.Params.Actual is not nil before accessing its methods.
-		if t.Params.Actual != nil {
-			providedVars := t.Params.Actual.ProvidesVariables()
+		if t.Params().Params.Actual != nil {
+			providedVars := t.Params().Params.Actual.ProvidesVariables()
 			for _, providedVar := range providedVars {
 				// TODO: Consider case sensitivity/normalization if needed (Ansible usually lowercases)
 				variableProvidedBy[providedVar] = t.Name
@@ -673,7 +698,7 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 	sort.Ints(allTaskIds)
 	for _, taskId := range allTaskIds {
 		task := taskIdMapping[taskId]
-		if _, processed := executedOnStep[task.GetId()]; !processed {
+		if _, processed := executedOnStep[task.Params().Id]; !processed {
 			executedOnStep = ResolveExecutionLevel(task, lastTaskNameMapping, dependsOn, executedOnStep)
 		}
 	}
@@ -754,15 +779,17 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 		}
 
 		setupTask := Task{
-			Id:       0,
-			Name:     "gather facts",
-			Module:   "setup",
-			Register: "ansible_facts",
-			Params: ModuleInput{
-				Actual: setupInputProvider,
+			TaskParams: &TaskParams{
+				Id:       0,
+				Name:     "gather facts",
+				Module:   "setup",
+				Register: "ansible_facts",
+				Params: ModuleInput{
+					Actual: setupInputProvider,
+				},
+				BecomeUser: "",
+				When:       JinjaExpressionList{},
 			},
-			BecomeUser: "",
-			When:       JinjaExpressionList{},
 		}
 		g.Nodes[0] = []GraphNode{&setupTask}
 
@@ -778,7 +805,7 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 		task := taskIdMapping[taskId]
 		// Increment task ID by 1 if we have a setup task
 		if hasSetupTask {
-			task.SetId(task.GetId() + 1)
+			task.Params().Id = task.Params().Id + 1
 		}
 		g.Nodes[executionLevel] = append(g.Nodes[executionLevel], task)
 	}
@@ -789,7 +816,7 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 			taskA := g.Nodes[i][a]
 			taskB := g.Nodes[i][b]
 			// Compare based on the original flattened index
-			return originalIndexMap[taskA.GetName()] < originalIndexMap[taskB.GetName()]
+			return originalIndexMap[taskA.Params().Name] < originalIndexMap[taskB.Params().Name]
 		})
 	}
 
@@ -797,14 +824,14 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 }
 
 func ResolveExecutionLevel(task GraphNode, taskNameMapping map[string]GraphNode, dependsOn map[string][]string, executedOnStep map[int]int) map[int]int {
-	if len(dependsOn[task.GetName()]) == 0 {
-		executedOnStep[task.GetId()] = 0
+	if len(dependsOn[task.Params().Name]) == 0 {
+		executedOnStep[task.Params().Id] = 0
 		return executedOnStep
 	}
-	for _, parentTaskName := range dependsOn[task.GetName()] {
+	for _, parentTaskName := range dependsOn[task.Params().Name] {
 		parentTask := taskNameMapping[parentTaskName]
 		executedOnStep = ResolveExecutionLevel(parentTask, taskNameMapping, dependsOn, executedOnStep)
-		executedOnStep[task.GetId()] = max(executedOnStep[task.GetId()], executedOnStep[parentTask.GetId()]+1)
+		executedOnStep[task.Params().Id] = max(executedOnStep[task.Params().Id], executedOnStep[parentTask.Params().Id]+1)
 	}
 	return executedOnStep
 }

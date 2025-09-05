@@ -315,6 +315,81 @@ func parseKeyValuePairs(input string) (map[string]string, error) {
 	return result, nil
 }
 
+func parseNestedNodes(rawBlock interface{}, parentParams *TaskParams) ([]GraphNode, []error) {
+	var errors []error
+	var childTaskMaps []map[string]interface{}
+	switch v := rawBlock.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if m, ok := item.(map[string]interface{}); ok {
+				childTaskMaps = append(childTaskMaps, m)
+			} else {
+				errors = append(errors, fmt.Errorf("invalid item type (%T) in 'block', expected map[string]interface{}", item))
+			}
+		}
+	case []map[string]interface{}:
+		childTaskMaps = v
+	default:
+		errors = append(errors, fmt.Errorf("invalid type (%T) for 'block', expected list", rawBlock))
+	}
+
+	childNodes, childErr := TextToGraphNodes(childTaskMaps)
+	if childErr != nil {
+		errors = append(errors, fmt.Errorf("failed to parse child nodes for block: %w", childErr))
+	}
+
+	var applyInheritance func(nodes []GraphNode)
+	applyInheritance = func(nodes []GraphNode) {
+		for _, n := range nodes {
+			switch t := n.(type) {
+			case *Task:
+				if len(parentParams.When) > 0 {
+					t.When = append(t.When, parentParams.When...)
+				}
+				if parentParams.Become {
+					t.Become = true
+					if t.BecomeUser == "" {
+						t.BecomeUser = parentParams.BecomeUser
+					}
+				}
+				if parentParams.IsHandler {
+					t.IsHandler = true
+				}
+				if parentParams.DelegateTo != "" && t.DelegateTo == "" {
+					t.DelegateTo = parentParams.DelegateTo
+				}
+				if len(parentParams.Tags) > 0 {
+					t.Tags = append(parentParams.Tags, t.Tags...)
+				}
+				if parentParams.Vars != nil {
+					if parentVars, ok := parentParams.Vars.(map[string]interface{}); ok {
+						switch cv := t.Vars.(type) {
+						case map[string]interface{}:
+							merged := make(map[string]interface{}, len(parentVars)+len(cv))
+							for k, v := range parentVars {
+								merged[k] = v
+							}
+							for k, v := range cv {
+								merged[k] = v
+							}
+							t.Vars = merged
+						default:
+							if cv == nil {
+								t.Vars = parentVars
+							}
+						}
+					}
+				}
+			case *MetaTask:
+				// TODO: implement
+				applyInheritance(t.Children)
+			}
+		}
+	}
+	applyInheritance(childNodes)
+	return childNodes, errors
+}
+
 func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 	arguments := []string{
 		"name",
@@ -332,7 +407,6 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"loop",
 		"delegate_to",
 		"run_once",
-		"no_log", // Caught but ignored
 		"until",
 		"retries",
 		"delay",
@@ -345,8 +419,14 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		"_role_name",
 		"_role_path",
 		"with_items",
-		"throttle", // Caught but ignored
 		"local_action",
+
+		// Block-specific attributes
+		"rescue",
+		"always",
+
+		"throttle", // Caught but ignored
+		"no_log",   // Caught but ignored
 	}
 
 	var nodes []GraphNode
@@ -357,7 +437,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			continue
 		}
 
-		task := Task{
+		tp := &TaskParams{
 			Id:         idx,
 			Name:       getStringFromMap(block, "name"),
 			Validate:   getStringFromMap(block, "validate"),
@@ -368,121 +448,120 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			IsHandler:  isHandlerBlock(block),
 			RoleName:   getStringFromMap(block, "_role_name"),
 			RolePath:   getStringFromMap(block, "_role_path"),
-			// Booleans (that might be strings like 'yes') are handled below
 		}
 
 		// Declare errored flag here
 		var errored bool
 
-		until, untilErr := parseJinjaExpression(block, "until", task.Name)
+		until, untilErr := parseJinjaExpression(block, "until", tp.Name)
 		if untilErr != nil {
 			errors = append(errors, untilErr)
 			errored = true
 		} else {
-			task.Until = until
+			tp.Until = until
 		}
 
 		// Handle 'when' using the helper function
-		whenCond, whenErr := parseJinjaExpressionList(block, "when", task.Name)
+		whenCond, whenErr := parseJinjaExpressionList(block, "when", tp.Name)
 		if whenErr != nil {
 			errors = append(errors, whenErr)
 			errored = true
 		} else {
-			task.When = whenCond
+			tp.When = whenCond
 		}
 
-		task.BecomeUser = getStringFromMap(block, "run_as")
-		if task.BecomeUser != "" {
-			task.Become = true
+		tp.BecomeUser = getStringFromMap(block, "run_as")
+		if tp.BecomeUser != "" {
+			tp.Become = true
 		}
 
 		becomeUser := getStringFromMap(block, "become_user")
 
 		// Handle 'become' using the helper function
-		_, become, becomeErr := parseBoolOrStringBoolValue(block, "become", task.Name)
+		_, become, becomeErr := parseBoolOrStringBoolValue(block, "become", tp.Name)
 		if becomeErr != nil {
 			errors = append(errors, becomeErr)
 			errored = true
 		}
-		task.Become = become
+		tp.Become = become
 
-		if task.BecomeUser != "" && (become || becomeUser != "") {
+		if tp.BecomeUser != "" && (become || becomeUser != "") {
 			errors = append(errors, fmt.Errorf("'become'/'become_user' and 'run_as' are mutually exclusive"))
 			errored = true
 		}
 
 		// Use become/become_user to fill in run_as
 		if become && becomeUser != "" {
-			task.BecomeUser = becomeUser
+			tp.BecomeUser = becomeUser
 		} else if become {
-			task.BecomeUser = "root"
+			tp.BecomeUser = "root"
 		}
 
 		// Handle 'ignore_errors' using the helper function
-		ignoreErrors, ignoreErrorsErr := parseJinjaExpression(block, "ignore_errors", task.Name)
+		ignoreErrors, ignoreErrorsErr := parseJinjaExpression(block, "ignore_errors", tp.Name)
 		if ignoreErrorsErr != nil {
 			errors = append(errors, ignoreErrorsErr)
 			errored = true
 		} else {
-			task.IgnoreErrors = ignoreErrors
+			tp.IgnoreErrors = ignoreErrors
 		}
 
 		// Handle 'no_log' using the helper function
-		noLog, noLogErr := parseJinjaExpression(block, "no_log", task.Name)
+		noLog, noLogErr := parseJinjaExpression(block, "no_log", tp.Name)
 		if noLogErr != nil {
 			errors = append(errors, noLogErr)
 			errored = true
 		} else {
 			// If found, use the parsed value, otherwise default to false (handled by initial Task struct value)
-			task.NoLog = noLog
+			tp.NoLog = noLog
 		}
 
 		// Handle 'run_once' using the helper function
-		runOnce, runOnceErr := parseJinjaExpression(block, "run_once", task.Name)
+		runOnce, runOnceErr := parseJinjaExpression(block, "run_once", tp.Name)
 		if runOnceErr != nil {
 			errors = append(errors, runOnceErr)
 			errored = true
 		} else {
 			// If found, use the parsed value, otherwise default to false (handled by initial Task struct value)
-			task.RunOnce = runOnce
+			tp.RunOnce = runOnce
 		}
 
 		// Handle 'check_mode' using the helper function
-		checkModeVal, checkModeFound, checkModeErr := parseBoolOrStringBoolValue(block, "check_mode", task.Name)
+		checkModeVal, checkModeFound, checkModeErr := parseBoolOrStringBoolValue(block, "check_mode", tp.Name)
 		if checkModeErr != nil {
 			errors = append(errors, checkModeErr)
 			errored = true
 		} else {
 			if checkModeFound {
-				task.CheckMode = &checkModeVal
+				tp.CheckMode = &checkModeVal
 			}
 		}
 
 		// Handle 'check_mode' using the helper function
-		diffVal, diffFound, diffErr := parseBoolOrStringBoolValue(block, "diff", task.Name)
+		diffVal, diffFound, diffErr := parseBoolOrStringBoolValue(block, "diff", tp.Name)
 		if diffErr != nil {
 			errors = append(errors, diffErr)
 			errored = true
 		} else {
 			if diffFound {
-				task.Diff = &diffVal
+				tp.Diff = &diffVal
 			}
 		}
 
 		if retriesVal, ok := block["retries"]; ok {
 			if v, ok := retriesVal.(int); ok {
-				task.Retries = v
+				tp.Retries = v
 			} else {
-				errors = append(errors, fmt.Errorf("invalid type (%T) for 'retries' key in task %q, expected integer", retriesVal, task.Name))
+				errors = append(errors, fmt.Errorf("invalid type (%T) for 'retries' key in task %q, expected integer", retriesVal, tp.Name))
 				errored = true
 			}
 		}
 
 		if delayVal, ok := block["delay"]; ok {
 			if v, ok := delayVal.(int); ok {
-				task.Delay = v
+				tp.Delay = v
 			} else {
-				errors = append(errors, fmt.Errorf("invalid type (%T) for 'delay' key in task %q, expected integer", delayVal, task.Name))
+				errors = append(errors, fmt.Errorf("invalid type (%T) for 'delay' key in task %q, expected integer", delayVal, tp.Name))
 				errored = true
 			}
 		}
@@ -491,19 +570,19 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		if tagsVal, ok := block["tags"]; ok {
 			switch v := tagsVal.(type) {
 			case string:
-				task.Tags = []string{v}
+				tp.Tags = []string{v}
 			case []interface{}:
 				for i, tagVal := range v {
 					if tagStr, ok := tagVal.(string); ok {
-						task.Tags = append(task.Tags, tagStr)
+						tp.Tags = append(tp.Tags, tagStr)
 					} else {
-						errors = append(errors, fmt.Errorf("invalid type (%T) for item %d in 'tags' list in task %q, expected string", tagVal, i, task.Name))
+						errors = append(errors, fmt.Errorf("invalid type (%T) for item %d in 'tags' list in task %q, expected string", tagVal, i, tp.Name))
 						errored = true
 						break
 					}
 				}
 			default:
-				errors = append(errors, fmt.Errorf("invalid type (%T) for 'tags' key in task %q, expected string or list of strings", tagsVal, task.Name))
+				errors = append(errors, fmt.Errorf("invalid type (%T) for 'tags' key in task %q, expected string or list of strings", tagsVal, tp.Name))
 				errored = true
 			}
 		}
@@ -512,44 +591,51 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		if notifyVal, ok := block["notify"]; ok {
 			switch v := notifyVal.(type) {
 			case string:
-				task.Notify = []string{v}
+				tp.Notify = []string{v}
 			case []interface{}:
 				for i, handlerVal := range v {
 					if handlerStr, ok := handlerVal.(string); ok {
-						task.Notify = append(task.Notify, handlerStr)
+						tp.Notify = append(tp.Notify, handlerStr)
 					} else {
-						errors = append(errors, fmt.Errorf("invalid type (%T) for item %d in 'notify' list in task %q, expected string", handlerVal, i, task.Name))
+						errors = append(errors, fmt.Errorf("invalid type (%T) for item %d in 'notify' list in task %q, expected string", handlerVal, i, tp.Name))
 						errored = true
 						break
 					}
 				}
 			default:
-				errors = append(errors, fmt.Errorf("invalid type (%T) for 'notify' key in task %q, expected string or list of strings", notifyVal, task.Name))
+				errors = append(errors, fmt.Errorf("invalid type (%T) for 'notify' key in task %q, expected string or list of strings", notifyVal, tp.Name))
 				errored = true
 			}
 		}
 
 		// Handle 'failed_when' using the helper function
-		failedWhen, failedWhenErr := parseJinjaExpressionList(block, "failed_when", task.Name)
+		failedWhen, failedWhenErr := parseJinjaExpressionList(block, "failed_when", tp.Name)
 		if failedWhenErr != nil {
 			errors = append(errors, failedWhenErr)
 			errored = true
 		} else {
-			task.FailedWhen = failedWhen
+			tp.FailedWhen = failedWhen
 		}
 
-		changedWhen, changedWhenErr := parseJinjaExpressionList(block, "changed_when", task.Name)
+		changedWhen, changedWhenErr := parseJinjaExpressionList(block, "changed_when", tp.Name)
 		if changedWhenErr != nil {
 			errors = append(errors, changedWhenErr)
 			errored = true
 		} else {
-			task.ChangedWhen = changedWhen
+			tp.ChangedWhen = changedWhen
 		}
 
 		// Handle 'vars' field - can be a map of variables
 		if varsVal, ok := block["vars"]; ok {
 			// vars can be a map[string]interface{} or other types
-			task.Vars = varsVal
+			tp.Vars = varsVal
+		}
+
+		if withItemsVal, ok := block["with_items"]; ok {
+			tp.Loop = withItemsVal
+		}
+		if loopVal, ok := block["loop"]; ok {
+			tp.Loop = loopVal
 		}
 
 		var moduleName string
@@ -557,7 +643,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 
 		// Handle local_action by transforming it into a normal task with delegate_to: localhost
 		if localAction, ok := block["local_action"]; ok {
-			task.DelegateTo = "localhost"
+			tp.DelegateTo = "localhost"
 
 			switch v := localAction.(type) {
 			case string:
@@ -566,7 +652,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 					moduleName = parts[0]
 					moduleParams = strings.Join(parts[1:], " ")
 				} else {
-					errors = append(errors, fmt.Errorf("invalid local_action format in task %q: empty string", task.Name))
+					errors = append(errors, fmt.Errorf("invalid local_action format in task %q: empty string", tp.Name))
 					errored = true
 				}
 			case map[string]interface{}:
@@ -576,7 +662,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 					delete(v, "module")
 					moduleParams = v
 				} else {
-					errors = append(errors, fmt.Errorf("invalid local_action format in task %q: 'module' key not found", task.Name))
+					errors = append(errors, fmt.Errorf("invalid local_action format in task %q: 'module' key not found", tp.Name))
 					errored = true
 				}
 			default:
@@ -596,19 +682,21 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 
 		// If a module was identified, proceed with processing
 		if moduleName != "" {
-			task.Module = moduleName
+			tp.Module = moduleName
 		} else if !errored {
 			// Only error if no other error has occurred for this task
-			errors = append(errors, fmt.Errorf("no module specified for task %q", task.Name))
+			errors = append(errors, fmt.Errorf("no module specified for task %q", tp.Name))
 			errored = true
 		}
 
-		var module Module
-		if m, ok := GetModule(task.Module); ok {
+		var module BaseModule
+		if m, ok := GetModule(tp.Module); ok {
+			module = m
+		} else if m, ok := GetMetaModule(tp.Module); ok {
 			module = m
 		} else {
 			// Handle unknown modules with Python fallback
-			task.Module = "ansible_python" // Use the Python fallback module name
+			tp.Module = "ansible_python" // Use the Python fallback module name
 			if pythonModule, ok := GetModule("ansible_python"); ok {
 				module = pythonModule
 
@@ -636,20 +724,13 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 			}
 		}
 
-		if !errored && task.Module == "" {
-			errors = append(errors, fmt.Errorf("no module specified for task %q", task.Name))
+		if !errored && tp.Module == "" {
+			errors = append(errors, fmt.Errorf("no module specified for task %q", tp.Name))
 			errored = true
 		}
 
 		if errored {
 			continue
-		}
-
-		if withItemsVal, ok := block["with_items"]; ok {
-			task.Loop = withItemsVal
-		}
-		if loopVal, ok := block["loop"]; ok {
-			task.Loop = loopVal
 		}
 
 		// *** Generic Module Alias Handling Start ***
@@ -660,7 +741,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 				for aliasName, canonicalName := range aliases {
 					if _, canonicalExists := paramsMap[canonicalName]; !canonicalExists {
 						if aliasVal, aliasExists := paramsMap[aliasName]; aliasExists {
-							common.DebugOutput("Promoting alias %q to %q for module %s task %q", aliasName, canonicalName, task.Module, task.Name)
+							common.DebugOutput("Promoting alias %q to %q for module %s task %q", aliasName, canonicalName, tp.Module, tp.Name)
 							paramsMap[canonicalName] = aliasVal
 							delete(paramsMap, aliasName) // Remove the alias
 							modified = true
@@ -677,7 +758,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 
 		// *** Shorthand Parameter Parsing Start ***
 		// Handle Ansible shorthand syntax like "template: src=file.j2 dest=/path/file"
-		if shorthandParams, err := parseShorthandParams(moduleParams, task.Module, task.Name); err != nil {
+		if shorthandParams, err := parseShorthandParams(moduleParams, tp.Module, tp.Name); err != nil {
 			errors = append(errors, err)
 			continue
 		} else if shorthandParams != nil {
@@ -688,7 +769,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		// Convert back to yaml so we can unmarshal it into the correct type
 		paramsData, err := yaml.Marshal(moduleParams)
 		if err != nil {
-			errors = append(errors, fmt.Errorf("failed to marshal params for module %s: %v", task.Module, moduleParams))
+			errors = append(errors, fmt.Errorf("failed to marshal params for module %s: %v", tp.Module, moduleParams))
 			continue
 		}
 
@@ -698,7 +779,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		if err := yaml.Unmarshal(paramsData, params); err != nil {
 			// This error should now only happen for genuinely invalid map structures
 			// or if the custom unmarshaler in a module (like shell) returned an error.
-			errors = append(errors, fmt.Errorf("failed to unmarshal params for module %s: %w", task.Module, err))
+			errors = append(errors, fmt.Errorf("failed to unmarshal params for module %s: %w", tp.Module, err))
 			continue
 		}
 
@@ -709,7 +790,7 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 		// Ensure the pointed-to value is valid before trying to get its interface
 		if !paramsPtrValue.IsValid() {
 			// This might happen if reflect.New failed, though unlikely here
-			errors = append(errors, fmt.Errorf("internal error: invalid pointer created for module %s params", task.Module))
+			errors = append(errors, fmt.Errorf("internal error: invalid pointer created for module %s params", tp.Module))
 			continue
 		}
 
@@ -718,15 +799,47 @@ func TextToGraphNodes(blocks []map[string]interface{}) ([]GraphNode, error) {
 
 		// Assert the pointed-to value against the ConcreteModuleInputProvider interface
 		if typedParams, ok := paramsInterface.(ConcreteModuleInputProvider); ok {
-			task.Params.Actual = typedParams // Store the provider in task.Params.Actual
+			tp.Params.Actual = typedParams // Store the provider in task.Params.Actual
 		} else {
 			// This error case might indicate a fundamental issue with the module's InputType registration
 			// or the interface implementation itself.
-			errors = append(errors, fmt.Errorf("params value (%T) does not implement ConcreteModuleInputProvider for module %s", paramsInterface, task.Module))
+			errors = append(errors, fmt.Errorf("params value (%T) does not implement ConcreteModuleInputProvider for module %s", paramsInterface, tp.Module))
 			continue
 		}
 
-		nodes = append(nodes, &task)
+		// Handle meta 'block' directive by constructing a TaskCollection with child GraphNodes
+		// TODO: get other meta task directives here too such as 'include_playbook', 'include_role', 'import_tasks', 'include_tasks', 'include' etc
+		if rawBlock, hasBlock := block["block"]; hasBlock {
+			tc := &MetaTask{TaskParams: tp}
+			// Add child nodes
+			if childNodes, childErr := parseNestedNodes(rawBlock, tp); childErr != nil {
+				errors = append(errors, fmt.Errorf("failed to parse child nodes for block: %v", childErr))
+				continue
+			} else {
+				tc.Children = childNodes
+			}
+			// Add rescue nodes if they exist
+			if rescueBlock, hasRescue := block["rescue"]; hasRescue {
+				if rescueNodes, rescueErr := parseNestedNodes(rescueBlock, tp); rescueErr != nil {
+					errors = append(errors, fmt.Errorf("failed to parse rescue nodes for block: %v", rescueErr))
+					continue
+				} else {
+					tc.Rescue = rescueNodes
+				}
+			}
+			// Add always nodes if they exist
+			if alwaysBlock, hasAlways := block["always"]; hasAlways {
+				if alwaysNodes, alwaysErr := parseNestedNodes(alwaysBlock, tp); alwaysErr != nil {
+					errors = append(errors, fmt.Errorf("failed to parse always nodes for block: %v", alwaysErr))
+					continue
+				} else {
+					tc.Always = alwaysNodes
+				}
+			}
+			nodes = append(nodes, tc)
+		} else {
+			nodes = append(nodes, &Task{TaskParams: tp})
+		}
 	}
 
 	if len(errors) > 0 {

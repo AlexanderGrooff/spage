@@ -67,9 +67,9 @@ func toGraphNodeDTO(n pkg.GraphNode) GraphNodeDTO {
 		taskCopy := *t
 		return GraphNodeDTO{Kind: "task", Task: &taskCopy}
 	}
-	if c, ok := n.(*pkg.TaskCollection); ok {
+	if c, ok := n.(*pkg.MetaTask); ok {
 		var children []GraphNodeDTO
-		for _, child := range c.Tasks {
+		for _, child := range c.Children {
 			children = append(children, toGraphNodeDTO(child))
 		}
 		return GraphNodeDTO{Kind: "collection", Collection: &TaskCollectionDTO{Id: c.Id, Name: c.Name, Tasks: children}}
@@ -89,10 +89,10 @@ func fromGraphNodeDTO(dto GraphNodeDTO) pkg.GraphNode {
 		if dto.Collection == nil {
 			return nil
 		}
-		tc := &pkg.TaskCollection{Id: dto.Collection.Id, Name: dto.Collection.Name}
+		tc := &pkg.MetaTask{TaskParams: &pkg.TaskParams{Id: dto.Collection.Id, Name: dto.Collection.Name}}
 		for _, child := range dto.Collection.Tasks {
 			if gn := fromGraphNodeDTO(child); gn != nil {
-				tc.Tasks = append(tc.Tasks, gn)
+				tc.Children = append(tc.Children, gn)
 			}
 		}
 		return tc
@@ -185,7 +185,9 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 		closure.ExtraFacts[loopVarName] = input.LoopItem
 	}
 
-	taskResult := input.TaskDefinition.ExecuteModule(closure)
+	// TODO: handle meta tasks
+	taskResultCh := input.TaskDefinition.ExecuteModule(closure)
+	taskResult := <-taskResultCh
 	activity.RecordHeartbeat(ctx, fmt.Sprintf("Finished task %s on host %s", input.TaskDefinition.Name, input.TargetHost.Name))
 
 	result := &SpageActivityResult{
@@ -287,7 +289,7 @@ func ExecuteSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*S
 		notifiedHandlerTasks := hostCtx.HandlerTracker.GetNotifiedHandlers()
 		result.NotifiedHandlers = make([]string, len(notifiedHandlerTasks))
 		for i, handler := range notifiedHandlerTasks {
-			result.NotifiedHandlers[i] = handler.GetName()
+			result.NotifiedHandlers[i] = handler.Params().Name
 		}
 		logger.Debug("Activity captured handler notifications", "host", input.TargetHost.Name, "task", input.TaskDefinition.Name, "notified_handlers", result.NotifiedHandlers)
 	}
@@ -396,7 +398,7 @@ func NewTemporalTaskRunner(workflowCtx workflow.Context) *TemporalTaskRunner {
 // RunTask for Temporal dispatches the task as a Temporal activity.
 // It converts the SpageActivityResult from the activity into a TaskResult.
 // The original SpageActivityResult is stored in TaskResult.ExecutionSpecificOutput.
-func (r *TemporalTaskRunner) ExecuteTask(execCtx workflow.Context, task pkg.Task, closure *pkg.Closure, cfg *config.Config) pkg.TaskResult {
+func (r *TemporalTaskRunner) ExecuteTask(execCtx workflow.Context, task pkg.GraphNode, closure *pkg.Closure, cfg *config.Config) pkg.TaskResult {
 	// execCtx is the context of the coroutine calling ExecuteTask.
 	// r.WorkflowCtx is the root workflow context, kept for logger or other global workflow info if needed, but execCtx for blocking ops.
 	logger := workflow.GetLogger(execCtx) // Use execCtx for logger too for better context association
@@ -412,88 +414,104 @@ func (r *TemporalTaskRunner) ExecuteTask(execCtx workflow.Context, task pkg.Task
 		}
 	}
 
-	activityInput := SpageActivityInput{
-		TaskDefinition:   task,
-		TargetHost:       *closure.HostContext.Host,
-		LoopItem:         loopItem,
-		CurrentHostFacts: currentHostFacts,
-		SpageCoreConfig:  cfg,
-		Handlers:         handlers,
-	}
-
-	var activityOutput SpageActivityResult // Use a distinct name from the input
-
-	// Construct a unique and descriptive ActivityID
-	activityID := fmt.Sprintf("%s-%s-%s", task.Name, closure.HostContext.Host.Name, uuid.New().String())
-
-	ao := workflow.ActivityOptions{
-		ActivityID:          activityID,
-		StartToCloseTimeout: 30 * time.Minute,
-		HeartbeatTimeout:    2 * time.Minute,
-		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval:    time.Second,
-			BackoffCoefficient: 2.0,
-			MaximumInterval:    time.Minute,
-			MaximumAttempts:    3,
-		},
-	}
-	// Use execCtx for Temporal API calls like WithActivityOptions and ExecuteActivity
-	temporalAwareCtx := workflow.WithActivityOptions(execCtx, ao)
-
-	startTime := workflow.Now(execCtx) // Record start time before executing activity
-	future := workflow.ExecuteActivity(temporalAwareCtx, ExecuteSpageTaskActivity, activityInput)
-	errOnGet := future.Get(execCtx, &activityOutput) // Use execCtx for future.Get()
-	endTime := workflow.Now(execCtx)                 // Calculate duration after activity completion or error
-	duration := endTime.Sub(startTime)
-
-	if errOnGet != nil {
-		logger.Error("Temporal activity future.Get() failed", "task", task.Name, "host", closure.HostContext.Host.Name, "error", errOnGet)
-		return pkg.TaskResult{
-			Task:                    task,
-			Closure:                 closure,
-			Error:                   fmt.Errorf("activity %s on host %s failed to complete: %w", task.Name, closure.HostContext.Host.Name, errOnGet),
-			Status:                  pkg.TaskStatusFailed,
-			Failed:                  true,
-			Duration:                duration,
-			ExecutionSpecificOutput: nil, // No successful activityOutput to store
+	// Dispatch based on node type
+	switch n := task.(type) {
+	case *pkg.Task:
+		taskName := n.Params().Name
+		activityInput := SpageActivityInput{
+			TaskDefinition:   *n,
+			TargetHost:       *closure.HostContext.Host,
+			LoopItem:         loopItem,
+			CurrentHostFacts: currentHostFacts,
+			SpageCoreConfig:  cfg,
+			Handlers:         handlers,
 		}
-	}
 
-	var finalError error
-	if activityOutput.Error != "" {
-		if activityOutput.Ignored {
-			finalError = &pkg.IgnoredTaskError{OriginalErr: errors.New(activityOutput.Error)}
-		} else {
-			finalError = errors.New(activityOutput.Error)
+		var activityOutput SpageActivityResult
+		activityID := fmt.Sprintf("%s-%s-%s", taskName, closure.HostContext.Host.Name, uuid.New().String())
+		ao := workflow.ActivityOptions{
+			ActivityID:          activityID,
+			StartToCloseTimeout: 30 * time.Minute,
+			HeartbeatTimeout:    2 * time.Minute,
+			RetryPolicy: &temporal.RetryPolicy{
+				InitialInterval:    time.Second,
+				BackoffCoefficient: 2.0,
+				MaximumInterval:    time.Minute,
+				MaximumAttempts:    3,
+			},
 		}
-	}
+		temporalAwareCtx := workflow.WithActivityOptions(execCtx, ao)
 
-	finalStatus := pkg.TaskStatusOk
-	if activityOutput.Skipped {
-		finalStatus = pkg.TaskStatusSkipped
-	} else if finalError != nil {
-		if !activityOutput.Ignored { // Only set to Failed if not ignored
-			finalStatus = pkg.TaskStatusFailed
+		startTime := workflow.Now(execCtx)
+		future := workflow.ExecuteActivity(temporalAwareCtx, ExecuteSpageTaskActivity, activityInput)
+		errOnGet := future.Get(execCtx, &activityOutput)
+		endTime := workflow.Now(execCtx)
+		duration := endTime.Sub(startTime)
+
+		if errOnGet != nil {
+			logger.Error("Temporal activity future.Get() failed", "task", taskName, "host", closure.HostContext.Host.Name, "error", errOnGet)
+			return pkg.TaskResult{Task: n, Closure: closure, Error: fmt.Errorf("activity %s on host %s failed to complete: %w", taskName, closure.HostContext.Host.Name, errOnGet), Status: pkg.TaskStatusFailed, Failed: true, Duration: duration}
 		}
-		// If ignored, status remains Ok or Changed (if applicable) unless explicitly set otherwise
-	} else if activityOutput.Changed {
-		finalStatus = pkg.TaskStatusChanged
-	}
 
-	// Note: TaskResult.Output (ModuleOutput) is not directly populated from SpageActivityResult.Output (string).
-	// This would require parsing the string or changing SpageActivityResult.
-	// For now, TaskResult.Output will be nil when using TemporalTaskRunner if ExecuteSpageTaskActivity doesn't provide it.
+		var finalError error
+		if activityOutput.Error != "" {
+			if activityOutput.Ignored {
+				finalError = &pkg.IgnoredTaskError{OriginalErr: errors.New(activityOutput.Error)}
+			} else {
+				finalError = errors.New(activityOutput.Error)
+			}
+		}
+		finalStatus := pkg.TaskStatusOk
+		if activityOutput.Skipped {
+			finalStatus = pkg.TaskStatusSkipped
+		} else if finalError != nil {
+			if !activityOutput.Ignored {
+				finalStatus = pkg.TaskStatusFailed
+			}
+		} else if activityOutput.Changed {
+			finalStatus = pkg.TaskStatusChanged
+		}
+		return pkg.TaskResult{Task: n, Closure: closure, Error: finalError, Status: finalStatus, Failed: (finalError != nil && !activityOutput.Ignored), Changed: activityOutput.Changed, Duration: duration, ExecutionSpecificOutput: activityOutput, Output: NewFormattedGenericOutput(activityOutput.Output, activityOutput.ModuleOutputMap, activityOutput.Changed)}
 
-	return pkg.TaskResult{
-		Task:                    task,
-		Closure:                 closure,
-		Error:                   finalError,
-		Status:                  finalStatus,
-		Failed:                  (finalError != nil && !activityOutput.Ignored), // True if a non-ignored error occurred
-		Changed:                 activityOutput.Changed,
-		Duration:                duration,
-		ExecutionSpecificOutput: activityOutput, // Store the full SpageActivityResult
-		Output:                  NewFormattedGenericOutput(activityOutput.Output, activityOutput.ModuleOutputMap, activityOutput.Changed),
+	case *pkg.MetaTask:
+		input := SpageMetaWorkflowInput{
+			MetaName: n.Params().Name,
+			Children: func(children []pkg.GraphNode) []GraphNodeDTO {
+				var out []GraphNodeDTO
+				for _, c := range children {
+					out = append(out, toGraphNodeDTO(c))
+				}
+				return out
+			}(n.Children),
+			TargetHost:       *closure.HostContext.Host,
+			CurrentHostFacts: currentHostFacts,
+			SpageCoreConfig:  cfg,
+			Handlers:         handlers,
+		}
+		cwo := workflow.ChildWorkflowOptions{TaskQueue: workflow.GetInfo(execCtx).TaskQueueName}
+		childCtx := workflow.WithChildOptions(execCtx, cwo)
+		start := workflow.Now(execCtx)
+		var metaResult SpageMetaWorkflowResult
+		cf := workflow.ExecuteChildWorkflow(childCtx, SpageMetaWorkflow, input)
+		err := cf.Get(childCtx, &metaResult)
+		end := workflow.Now(execCtx)
+		duration := end.Sub(start)
+		var finalErr error
+		if err != nil {
+			finalErr = err
+		} else if metaResult.Error != "" {
+			finalErr = errors.New(metaResult.Error)
+		}
+		status := pkg.TaskStatusOk
+		if finalErr != nil {
+			status = pkg.TaskStatusFailed
+		} else if metaResult.Changed {
+			status = pkg.TaskStatusChanged
+		}
+		return pkg.TaskResult{Task: n, Closure: closure, Error: finalErr, Status: status, Failed: finalErr != nil, Changed: metaResult.Changed, Duration: duration}
+
+	default:
+		return pkg.TaskResult{Task: task, Closure: closure, Error: fmt.Errorf("unsupported node type %T", task), Status: pkg.TaskStatusFailed, Failed: true}
 	}
 }
 
@@ -663,7 +681,9 @@ func RevertSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*Sp
 		logger.Debug("Loop item added to closure facts for revert", "loopVar", loopVarName, "value", input.LoopItem)
 	}
 
-	taskResult := input.TaskDefinition.RevertModule(closure) // Changed to RevertModule
+	// TODO: handle meta tasks
+	taskResultCh := input.TaskDefinition.RevertModule(closure) // Changed to RevertModule
+	taskResult := <-taskResultCh
 	activity.RecordHeartbeat(ctx, fmt.Sprintf("Finished revert for task %s on host %s", input.TaskDefinition.Name, input.TargetHost.Name))
 
 	result := &SpageActivityResult{
@@ -754,7 +774,7 @@ func RevertSpageTaskActivity(ctx context.Context, input SpageActivityInput) (*Sp
 		notifiedHandlerTasks := hostCtx.HandlerTracker.GetNotifiedHandlers()
 		result.NotifiedHandlers = make([]string, len(notifiedHandlerTasks))
 		for i, handler := range notifiedHandlerTasks {
-			result.NotifiedHandlers[i] = handler.GetName()
+			result.NotifiedHandlers[i] = handler.Params().Name
 		}
 		logger.Debug("Revert activity captured handler notifications", "host", input.TargetHost.Name, "task", input.TaskDefinition.Name, "notified_handlers", result.NotifiedHandlers)
 	}
@@ -1024,9 +1044,29 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 	}
 
 	for _, taskDefinition := range tasksInLevel {
+		if meta, isMeta := taskDefinition.(*pkg.MetaTask); isMeta {
+			// Dispatch one MetaTask per host
+			for _, hostCtx := range hostContexts {
+				closure := (&pkg.Task{TaskParams: &pkg.TaskParams{}}).ConstructClosure(hostCtx, cfg)
+				if isParallelDispatch {
+					actualDispatchedTasks++
+					workflow.Go(workflowCtx, func(childTaskCtx workflow.Context) {
+						result := e.Runner.ExecuteTask(childTaskCtx, meta, closure, cfg)
+						resultsCh.SendAsync(result)
+						if completionCh != nil {
+							completionCh.SendAsync(true)
+						}
+					})
+				} else {
+					result := e.Runner.ExecuteTask(workflowCtx, meta, closure, cfg)
+					resultsCh.SendAsync(result)
+				}
+			}
+			continue
+		}
+
 		task, ok := taskDefinition.(*pkg.Task)
 		if !ok {
-			// TODO: handle non-task nodes
 			common.LogWarn("Skipping non-task node in loadLevelTasks", map[string]interface{}{"node": taskDefinition.String()})
 			continue
 		}
@@ -1272,11 +1312,11 @@ func (e *TemporalGraphExecutor) processLevelResults(
 	// Create the fact processing callback for temporal executor
 	onResult := func(result pkg.TaskResult) error {
 		if result.Closure == nil || result.Closure.HostContext == nil || result.Closure.HostContext.Host == nil {
-			return fmt.Errorf("received TaskResult with nil Closure/HostContext/Host for task %s on level %d", result.Task.Name, executionLevel)
+			return fmt.Errorf("received TaskResult with nil Closure/HostContext/Host for task %s on level %d", result.Task.Params().Name, executionLevel)
 		}
 
 		hostname := result.Closure.HostContext.Host.Name
-		taskName := result.Task.Name
+		taskName := result.Task.Params().Name
 
 		activitySpecificOutput, ok := result.ExecutionSpecificOutput.(SpageActivityResult)
 		if !ok {
@@ -1467,7 +1507,7 @@ func (e *TemporalGraphExecutor) executeHandlers(
 			}
 
 			// Skip if already executed
-			if hostCtx.HandlerTracker.IsExecuted(handler.GetName()) {
+			if hostCtx.HandlerTracker.IsExecuted(handler.Params().Name) {
 				continue
 			}
 
@@ -1484,15 +1524,16 @@ func (e *TemporalGraphExecutor) executeHandlers(
 			handlerClosure := handler.ConstructClosure(hostCtx, cfg)
 
 			// Execute the handler using the temporal task runner
-			result := e.Runner.ExecuteTask(workflowCtx, *handler, handlerClosure, cfg)
+			// TODO: this assumes a single result
+			result := e.Runner.ExecuteTask(workflowCtx, handler, handlerClosure, cfg)
 
 			// Mark the handler as executed
-			hostCtx.HandlerTracker.MarkExecuted(handler.GetName())
+			hostCtx.HandlerTracker.MarkExecuted(handler.Params().Name)
 
 			// Handle temporal-specific fact registration first
 			if activityResult, ok := result.ExecutionSpecificOutput.(SpageActivityResult); ok {
-				if errFact := processActivityResultAndRegisterFacts(workflowCtx, activityResult, handler.GetName(), hostname, workflowHostFacts, hostContexts); errFact != nil {
-					logger.Error("Handler task reported an error after fact registration", "handler", handler.Name, "host", hostname, "error", errFact)
+				if errFact := processActivityResultAndRegisterFacts(workflowCtx, activityResult, handler.Params().Name, hostname, workflowHostFacts, hostContexts); errFact != nil {
+					logger.Error("Handler task reported an error after fact registration", "handler", handler.Params().Name, "host", hostname, "error", errFact)
 					// Continue processing - the shared processor will handle the result display
 				}
 			}
@@ -1555,7 +1596,7 @@ func (e *TemporalGraphExecutor) revertWorkflow(
 				}
 				// We only store the output if the task was not skipped and had output.
 				if taskResult.Output != nil && taskResult.Status != pkg.TaskStatusSkipped {
-					workflowTaskHistory[hostName][taskResult.Task.Name] = taskResult.Output
+					workflowTaskHistory[hostName][taskResult.Task.Params().Name] = taskResult.Output
 				}
 			}
 		}
@@ -1586,11 +1627,11 @@ func (e *TemporalGraphExecutor) revertWorkflow(
 			originalClosure := taskResultToRevert.Closure // Capture for goroutine
 
 			if originalClosure == nil || originalClosure.HostContext == nil || originalClosure.HostContext.Host == nil {
-				logger.Error("Cannot revert task due to nil Closure/HostContext/Host in stored TaskResult", "task_name", originalTask.Name)
+				logger.Error("Cannot revert task due to nil Closure/HostContext/Host in stored TaskResult", "task_name", originalTask.Params().Name)
 				syntheticRevertResult := pkg.TaskResult{
 					Task:    originalTask,
 					Closure: originalClosure,
-					Error:   fmt.Errorf("revert skipped for task %s due to missing context in original result", originalTask.Name),
+					Error:   fmt.Errorf("revert skipped for task %s due to missing context in original result", originalTask.Params().Name),
 					Status:  pkg.TaskStatusFailed,
 				}
 				revertResultsCh.SendAsync(syntheticRevertResult)
@@ -1601,8 +1642,8 @@ func (e *TemporalGraphExecutor) revertWorkflow(
 			}
 
 			// Quick check: Skip expensive temporal activity for tasks without revert actions
-			if P, ok := originalTask.Params.Actual.(interface{ HasRevert() bool }); !ok || !P.HasRevert() {
-				logger.Debug("Skipping revert activity for task without revert action", "task", originalTask.Name)
+			if P, ok := originalTask.Params().Params.Actual.(interface{ HasRevert() bool }); !ok || !P.HasRevert() {
+				logger.Debug("Skipping revert activity for task without revert action", "task", originalTask.Params().Name)
 				syntheticRevertResult := pkg.TaskResult{
 					Task:    originalTask,
 					Closure: originalClosure,
@@ -1641,7 +1682,7 @@ func (e *TemporalGraphExecutor) revertWorkflow(
 					clonedRevertClosure.HostContext.Facts.Store(k, v)
 				}
 			} else {
-				logger.Warn("No current facts found for host during revert, revert task will use minimal facts", "host", hostName, "task", originalTask.Name)
+				logger.Warn("No current facts found for host during revert, revert task will use minimal facts", "host", hostName, "task", originalTask.Params().Name)
 			}
 			if historyForHost, ok := workflowTaskHistory[hostName]; ok {
 				for taskName, output := range historyForHost {
@@ -1652,15 +1693,26 @@ func (e *TemporalGraphExecutor) revertWorkflow(
 			actualRevertsDispatched++
 			if cfg.ExecutionMode == "parallel" {
 				workflow.Go(workflowCtx, func(revertCtx workflow.Context) {
-					revertResult := e.Runner.RevertTask(revertCtx, originalTask, clonedRevertClosure, cfg)
-					revertResultsCh.SendAsync(revertResult)
-					if revertCompletionCh != nil {
-						revertCompletionCh.SendAsync(true)
+					if t2, ok2 := originalTask.(*pkg.Task); ok2 {
+						revertResult := e.Runner.RevertTask(revertCtx, *t2, clonedRevertClosure, cfg)
+						revertResultsCh.SendAsync(revertResult)
+						if revertCompletionCh != nil {
+							revertCompletionCh.SendAsync(true)
+						}
+					} else {
+						revertResultsCh.SendAsync(pkg.TaskResult{Task: originalTask, Closure: clonedRevertClosure, Status: pkg.TaskStatusOk})
+						if revertCompletionCh != nil {
+							revertCompletionCh.SendAsync(true)
+						}
 					}
 				})
 			} else {
-				revertResult := e.Runner.RevertTask(workflowCtx, originalTask, clonedRevertClosure, cfg)
-				revertResultsCh.SendAsync(revertResult)
+				if t2, ok2 := originalTask.(*pkg.Task); ok2 {
+					revertResult := e.Runner.RevertTask(workflowCtx, *t2, clonedRevertClosure, cfg)
+					revertResultsCh.SendAsync(revertResult)
+				} else {
+					revertResultsCh.SendAsync(pkg.TaskResult{Task: originalTask, Closure: clonedRevertClosure, Status: pkg.TaskStatusOk})
+				}
 			}
 		}
 
@@ -1691,7 +1743,7 @@ func (e *TemporalGraphExecutor) revertWorkflow(
 
 			if revertResult.Closure != nil && revertResult.Closure.HostContext != nil && revertResult.Closure.HostContext.Host != nil {
 				hostName := revertResult.Closure.HostContext.Host.Name
-				taskName := revertResult.Task.Name
+				taskName := revertResult.Task.Params().Name
 				if activityOutput, ok := revertResult.ExecutionSpecificOutput.(SpageActivityResult); ok {
 					if errFact := processActivityResultAndRegisterFacts(workflowCtx, activityOutput, "revert-"+taskName, hostName, workflowHostFacts, hostContexts); errFact != nil {
 						logger.Error("Reverted task reported an error after fact registration", "task", taskName, "host", hostName, "original_error", errFact)
@@ -1705,7 +1757,7 @@ func (e *TemporalGraphExecutor) revertWorkflow(
 					levelRevertHardErrored = true
 				}
 			} else if revertResult.Error != nil { // Closure or context was nil, but there's an error
-				logger.Error("Revert task failed (context missing in original result or other error)", "task_name", revertResult.Task.Name, "error", revertResult.Error)
+				logger.Error("Revert task failed (context missing in original result or other error)", "task_name", revertResult.Task.Params().Name, "error", revertResult.Error)
 				levelRevertHardErrored = true
 			}
 		}
@@ -1925,7 +1977,9 @@ func ExecuteSpageRunOnceLoopActivity(ctx context.Context, input SpageRunOnceLoop
 			closure.ExtraFacts[loopVarName] = loopItem
 		}
 
-		taskResult := input.TaskDefinition.ExecuteModule(closure)
+		// TODO: handle meta tasks
+		taskResultCh := input.TaskDefinition.ExecuteModule(closure)
+		taskResult := <-taskResultCh
 		activity.RecordHeartbeat(ctx, fmt.Sprintf("Finished loop iteration %d for task %s on host %s", i+1, input.TaskDefinition.Name, input.TargetHost.Name))
 
 		result := SpageActivityResult{
@@ -2001,7 +2055,7 @@ func ExecuteSpageRunOnceLoopActivity(ctx context.Context, input SpageRunOnceLoop
 			notifiedHandlerTasks := hostCtx.HandlerTracker.GetNotifiedHandlers()
 			result.NotifiedHandlers = make([]string, len(notifiedHandlerTasks))
 			for j, handler := range notifiedHandlerTasks {
-				result.NotifiedHandlers[j] = handler.GetName()
+				result.NotifiedHandlers[j] = handler.Params().Name
 			}
 		}
 
@@ -2081,4 +2135,76 @@ func processActivityResultAndRegisterFacts(
 	}
 
 	return nil
+}
+
+// SpageMetaWorkflowInput defines the input for executing a MetaTask as a child workflow
+type SpageMetaWorkflowInput struct {
+	MetaName         string
+	Children         []GraphNodeDTO
+	TargetHost       pkg.Host
+	CurrentHostFacts map[string]interface{}
+	SpageCoreConfig  *config.Config
+	Handlers         []GraphNodeDTO
+}
+
+// SpageMetaWorkflowResult summarizes the child workflow execution
+type SpageMetaWorkflowResult struct {
+	Changed bool
+	Error   string
+}
+
+// SpageMetaWorkflow executes a MetaTask's children sequentially for a single host
+func SpageMetaWorkflow(ctx workflow.Context, input SpageMetaWorkflowInput) (SpageMetaWorkflowResult, error) {
+	logger := workflow.GetLogger(ctx)
+
+	// Initialize host context
+	hostCtx, err := pkg.InitializeHostContext(&input.TargetHost, input.SpageCoreConfig)
+	if err != nil {
+		return SpageMetaWorkflowResult{Changed: false, Error: fmt.Sprintf("failed to initialize host context: %v", err)}, nil
+	}
+	defer func() {
+		if closeErr := hostCtx.Close(); closeErr != nil {
+			logger.Warn("Failed to close host context in MetaWorkflow", "host", input.TargetHost.Name, "error", closeErr)
+		}
+	}()
+
+	// Seed facts
+	if input.CurrentHostFacts != nil {
+		for k, v := range input.CurrentHostFacts {
+			hostCtx.Facts.Store(k, v)
+		}
+	}
+
+	// Initialize handlers on this host
+	if len(input.Handlers) > 0 {
+		nodes := make([]pkg.GraphNode, 0, len(input.Handlers))
+		for _, dto := range input.Handlers {
+			if gn := fromGraphNodeDTO(dto); gn != nil {
+				nodes = append(nodes, gn)
+			}
+		}
+		hostCtx.InitializeHandlerTracker(nodes)
+	} else {
+		hostCtx.InitializeHandlerTracker(nil)
+	}
+
+	changed := false
+	for _, childDTO := range input.Children {
+		child := fromGraphNodeDTO(childDTO)
+		if child == nil {
+			continue
+		}
+		// Build closure for each child
+		closure := (&pkg.Task{TaskParams: &pkg.TaskParams{}}).ConstructClosure(hostCtx, input.SpageCoreConfig)
+		// Execute child
+		result := NewTemporalTaskRunner(ctx).ExecuteTask(ctx, child, closure, input.SpageCoreConfig)
+		if result.Error != nil {
+			return SpageMetaWorkflowResult{Changed: changed, Error: result.Error.Error()}, nil
+		}
+		if result.Status == pkg.TaskStatusChanged || result.Changed {
+			changed = true
+		}
+	}
+
+	return SpageMetaWorkflowResult{Changed: changed}, nil
 }

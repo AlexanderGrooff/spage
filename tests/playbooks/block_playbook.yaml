@@ -1,20 +1,93 @@
 ---
-- name: series of tasks
-  block:
-    - name: task 1
-      command: /bin/true
-    - name: task 2
-      command: /bin/true
-    - name: task 3
-      command: /bin/true
-    - name: task 4
-      command: /bin/true
-    - name: task 5
-      command: /bin/true
-  rescue:
-    - name: task 6
-      command: /bin/true
-  always:
-    - name: task 7
-      command: /bin/true
-  when: true
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: block with rescue only
+      block:
+        - name: task 1
+          command: /bin/false
+      rescue:
+        - name: rescue file
+          file:
+            path: /tmp/spage/rescue_file.txt
+            state: touch
+
+    - name: file exists
+      stat:
+        path: /tmp/spage/rescue_file.txt
+      register: file_stat
+
+    - name: assert file exists
+      assert:
+        that:
+          - file_stat.stat.exists
+
+    - name: block with always only
+      block:
+        - name: task 1
+          command: /bin/true
+        - name: task 2
+          command: /bin/true
+      always:
+        - name: always task
+          command: /bin/true
+
+    - name: outer block
+      block:
+        - name: outer task 1
+          command: /bin/true
+        - name: inner block
+          block:
+            - name: create file
+              file:
+                path: /tmp/spage/nested_file.txt
+                state: touch
+
+    - name: assert file exists
+      stat:
+        path: /tmp/spage/nested_file.txt
+      register: file_stat
+
+    - name: assert file exists
+      assert:
+        that:
+          - file_stat.stat.exists
+
+    - name: series of tasks
+      block:
+        - name: task 1
+          command: /bin/true
+        - name: task 2
+          command: /bin/true
+      rescue:
+        - name: task 3 (no errors so does not run)
+          command: /bin/false
+      always:
+        - name: task 4
+          file:
+            path: /tmp/spage/block_file.txt
+            state: touch
+      when: true
+
+    - name: file exists
+      stat:
+        path: /tmp/spage/block_file.txt
+      register: file_stat
+
+    - name: assert file exists
+      assert:
+        that:
+          - file_stat.stat.exists
+
+    - name: block does not run
+      block:
+        - name: task 1
+          command: /bin/true
+        - name: task 2 (no errors so does not run)
+          command: /bin/false
+      always:
+        - name: task 3
+          file:
+            path: /tmp/spage/does_not_exist.txt
+            state: touch
+      when: false

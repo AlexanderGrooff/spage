@@ -172,7 +172,7 @@ func mergeParamDocs(fields []fieldDoc, docs map[string]pkg.ParameterDoc) []param
 	return out
 }
 
-func writeModuleDoc(moduleName string, mod pkg.Module, repoRoot, docsRoot string) error {
+func writeModuleDoc(moduleName string, mod pkg.BaseModule, repoRoot, docsRoot string) error {
 	inputT := mod.InputType()
 	outputT := mod.OutputType()
 
