@@ -428,8 +428,6 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 	cfg *config.Config,
 	executionLevel int,
 ) {
-	defer close(resultsCh)
-
 	for _, taskDefinition := range tasksInLevel {
 		task := taskDefinition
 
@@ -671,7 +669,9 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 				taskResultCh := e.loadTaskForHost(task, hostCtx, hostContexts, cfg, errCh, ctx, wg, resultsCh)
 
 				// Forward results from the task channel to the level results channel
+				wg.Add(1)
 				go func() {
+					defer wg.Done()
 					common.LogDebug("Starting result forwarding goroutine", map[string]interface{}{
 						"task": task.Params().Name,
 						"host": hostCtx.Host.Name,
@@ -704,6 +704,9 @@ func (e *LocalGraphExecutor) loadLevelTasks(
 			}
 		}
 	}
+	// Wait for all forwarding goroutines to finish before closing results channel
+	wg.Wait()
+	close(resultsCh)
 }
 
 // executeHandlers runs all notified handlers across all hosts
