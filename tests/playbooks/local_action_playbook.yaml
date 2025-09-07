@@ -20,13 +20,15 @@
     - name: Stat copy files
       stat:
         path: /tmp/spage/local_action_test_args.txt
-      register: stat_result
+      register: stat_result_args
 
     - name: Assert files exist
       assert:
         that:
           - stat_result.stat.exists
           - stat_result.stat.isreg
+          - stat_result_args.stat.exists
+          - stat_result_args.stat.isreg
           - copy_local_action.contents.after == "local_action module args"
           - shell_local_action.stdout == "hello from local_action\n"
       when: inventory_hostname == "localhost"

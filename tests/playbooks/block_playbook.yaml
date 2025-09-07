@@ -12,15 +12,16 @@
             path: /tmp/spage/rescue_file.txt
             state: touch
 
-    - name: file exists
+    - name: rescue file exists
       stat:
         path: /tmp/spage/rescue_file.txt
-      register: file_stat
+      register: rescue_file_stat
+      after: block with rescue only
 
-    - name: assert file exists
+    - name: assert rescue file exists
       assert:
         that:
-          - file_stat.stat.exists
+          - rescue_file_stat.stat.exists
 
     - name: block with always only
       block:
@@ -43,15 +44,16 @@
                 path: /tmp/spage/nested_file.txt
                 state: touch
 
-    - name: assert file exists
+    - name: assert nested file exists
       stat:
         path: /tmp/spage/nested_file.txt
-      register: file_stat
+      register: nested_file_stat
+      after: outer block
 
-    - name: assert file exists
+    - name: assert nested file exists
       assert:
         that:
-          - file_stat.stat.exists
+          - nested_file_stat.stat.exists
 
     - name: series of tasks
       block:
@@ -69,15 +71,16 @@
             state: touch
       when: true
 
-    - name: file exists
+    - name: always file exists
       stat:
         path: /tmp/spage/block_file.txt
-      register: file_stat
+      register: always_file_stat
+      after: series of tasks
 
-    - name: assert file exists
+    - name: assert always file exists
       assert:
         that:
-          - file_stat.stat.exists
+          - always_file_stat.stat.exists
 
     - name: block does not run
       block:

@@ -113,7 +113,10 @@ func (mt *MetaTask) ToCode() string {
 }
 
 func (mt *MetaTask) GetVariableUsage() ([]string, error) {
-	variables := []string{}
+	variables, err := mt.TaskParams.GetVariableUsage()
+	if err != nil {
+		return nil, err
+	}
 
 	// Collect variables from children
 	for _, task := range mt.Children {

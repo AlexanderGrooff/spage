@@ -386,6 +386,10 @@ func GetVariableUsageFromModule(input ConcreteModuleInputProvider) ([]string, er
 
 	var allVars []string
 
+	// Include module-declared variable usage first (module-specific logic)
+	// This captures cases like assert's expression-based variables
+	allVars = append(allVars, input.GetVariableUsage()...)
+
 	// Use reflection to walk through all fields of the input
 	inputVal := reflect.ValueOf(input)
 
@@ -470,12 +474,14 @@ func extractVariablesFromValue(val reflect.Value) ([]string, error) {
 			if isDefaultOmitPattern(str) {
 				return vars, nil
 			}
+			// 1) Parse template variables like "{{ var }}"
 			templateVars, err := jinja.ParseVariables(str)
 			if err != nil {
 				// If parsing fails, fall back to the existing regex-based approach
 				templateVars = GetVariableUsageFromTemplate(str)
 			}
 			vars = append(vars, templateVars...)
+			// Note: Expression parsing is handled by specific contexts (e.g., AssertInput, JinjaExpression types)
 		}
 
 	case reflect.Struct:

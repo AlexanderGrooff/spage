@@ -310,60 +310,8 @@ func (tp *TaskParams) ToCode() string {
 	return sb.String()
 }
 
-type Task struct {
-	*TaskParams
-}
-
-func (t Task) Params() *TaskParams {
-	return t.TaskParams
-}
-
-// UnmarshalJSON implements the json.Unmarshaler interface for Task.
-func (t *Task) UnmarshalJSON(data []byte) error {
-	return json.Unmarshal(data, &t.TaskParams)
-}
-
-// MarshalJSON implements the json.Marshaler interface for Task.
-// This ensures that the Params field is marshaled correctly by handling the Actual field.
-func (t Task) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		*TaskParams
-	}{
-		TaskParams: t.TaskParams,
-	})
-}
-
-func (t Task) ToCode() string {
-	return fmt.Sprintf("&pkg.Task{TaskParams: %s}", t.TaskParams.ToCode())
-}
-
-func (t Task) String() string {
-	return t.Name
-}
-
-// Conform to GraphNode interface
-func (t Task) GetId() int {
-	return t.Id
-}
-
-func (t *Task) SetId(id int) {
-	t.Id = id
-}
-
-func (t Task) GetName() string {
-	return t.Name
-}
-
-func (t Task) GetIsHandler() bool {
-	return t.IsHandler
-}
-
-func (t Task) GetTags() []string {
-	return t.Tags
-}
-
-func (t Task) GetVariableUsage() ([]string, error) {
-	varsUsage, err := GetVariableUsageFromModule(t.TaskParams.Params.Actual)
+func (t TaskParams) GetVariableUsage() ([]string, error) {
+	varsUsage, err := GetVariableUsageFromModule(t.Params.Actual)
 	if err != nil {
 		return nil, fmt.Errorf("error getting variable usage from module: %w", err)
 	}
@@ -449,7 +397,66 @@ func (t Task) GetVariableUsage() ([]string, error) {
 	for k := range unique {
 		result = append(result, k)
 	}
+	if len(result) > 0 {
+		common.LogDebug("Task variable usage", map[string]interface{}{"task": t.Name, "usage": result})
+	}
 	return result, nil
+}
+
+type Task struct {
+	*TaskParams
+}
+
+func (t Task) Params() *TaskParams {
+	return t.TaskParams
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface for Task.
+func (t *Task) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &t.TaskParams)
+}
+
+// MarshalJSON implements the json.Marshaler interface for Task.
+// This ensures that the Params field is marshaled correctly by handling the Actual field.
+func (t Task) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		*TaskParams
+	}{
+		TaskParams: t.TaskParams,
+	})
+}
+
+func (t Task) ToCode() string {
+	return fmt.Sprintf("&pkg.Task{TaskParams: %s}", t.TaskParams.ToCode())
+}
+
+func (t Task) String() string {
+	return t.Name
+}
+
+// Conform to GraphNode interface
+func (t Task) GetId() int {
+	return t.Id
+}
+
+func (t *Task) SetId(id int) {
+	t.Id = id
+}
+
+func (t Task) GetName() string {
+	return t.Name
+}
+
+func (t Task) GetIsHandler() bool {
+	return t.IsHandler
+}
+
+func (t Task) GetTags() []string {
+	return t.Tags
+}
+
+func (t Task) GetVariableUsage() ([]string, error) {
+	return t.TaskParams.GetVariableUsage()
 }
 
 func (t Task) ConstructClosure(c *HostContext, cfg *config.Config) *Closure {

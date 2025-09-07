@@ -32,6 +32,21 @@ var AllowedFacts = map[string]struct{}{
 	"ansible_distribution_major_version": {},
 }
 
+// normalizeVarNameForDependency converts a variable usage like
+// "my_reg.stat.exists" or "my_reg['stat']" into its base registered
+// variable name "my_reg" and lowercases it to match how register names
+// are stored in the variableProvidedBy map.
+func normalizeVarNameForDependency(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return v
+	}
+	if idx := strings.IndexAny(v, ".["); idx != -1 {
+		v = v[:idx]
+	}
+	return strings.ToLower(v)
+}
+
 type HasParams interface {
 	Params() *TaskParams
 }
@@ -498,8 +513,7 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 	recStack := map[string]bool{}
 
 	// 1. Flatten nodes and record original order index
-	var flattenNodes func([]GraphNode) []GraphNode
-	flattenNodes = func(in []GraphNode) []GraphNode {
+	flattenNodes := func(in []GraphNode) []GraphNode {
 		var out []GraphNode
 		for _, n := range in {
 			switch t := n.(type) {
@@ -534,9 +548,11 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 	// Process only regular tasks for the main execution flow
 	for i, task := range regularTasks {
 		if _, exists := lastTaskNameMapping[task.Params().Name]; exists {
-			// Handle potential duplicate task names if necessary, though Ansible usually requires unique names within a play
+			// Handle potential duplicate task names by uniquifying the later ones
 			common.LogWarn("Duplicate task name found during flattening", map[string]interface{}{"name": task.Params().Name, "index": i})
-			// For now, we'll overwrite, assuming later tasks with the same name take precedence or are errors
+			// Append module and index to ensure uniqueness
+			uniqueName := fmt.Sprintf("%s [%s #%d]", task.Params().Name, task.Params().Module, i)
+			task.Params().Name = uniqueName
 		}
 		taskIdMapping[task.Params().Id] = task
 		lastTaskNameMapping[task.Params().Name] = task
@@ -545,70 +561,78 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 
 	// 2. Build dependencies based on flattened tasks
 	for _, gn := range taskIdMapping {
-		// TODO: Handle TaskCollection
-		t, ok := gn.(*Task)
-		if !ok {
-			continue
-		}
-
-		common.DebugOutput("Processing node TaskNode %q %q: %+v", t.Name, t.Module, t.Params)
-		// Check if n.Params.Actual is nil, as n.Params is a struct and cannot be nil itself.
-		if t.Params().Params.Actual == nil {
-			common.DebugOutput("Task %q has no actual params, skipping dependency analysis for params", t.Name)
+		p := gn.Params()
+		common.DebugOutput("Processing node %q %q: %+v", p.Name, p.Module, p.Params)
+		// Check if Params.Actual is nil
+		if p.Params.Actual == nil {
+			common.DebugOutput("Node %q has no actual params, skipping dependency analysis for params", p.Name)
 			// Continue processing other dependencies like before/after
 		} else {
-			vars, err := t.GetVariableUsage()
+			vars, err := gn.GetVariableUsage()
 			if err != nil {
-				return Graph{}, fmt.Errorf("error getting variable usage for task %q: %w", t.Name, err)
+				return Graph{}, fmt.Errorf("error getting variable usage for node %q: %w", p.Name, err)
 			}
 
 			// Filter out variables that are provided by task-level vars
 			filteredVars := []string{}
-			if t.Vars != nil {
-				if varsMap, ok := t.Vars.(map[string]interface{}); ok {
+			if p.Vars != nil {
+				if varsMap, ok := p.Vars.(map[string]interface{}); ok {
 					taskVarNames := make(map[string]bool)
 					for varName := range varsMap {
 						taskVarNames[varName] = true
 					}
 					// Only include variables that are NOT provided by task-level vars
 					for _, varName := range vars {
-						if !taskVarNames[varName] {
-							filteredVars = append(filteredVars, varName)
+						base := normalizeVarNameForDependency(varName)
+						if base == "" {
+							continue
+						}
+						if !taskVarNames[base] {
+							filteredVars = append(filteredVars, base)
 						}
 					}
 				} else {
 					// If vars is not a map, use all variables
-					filteredVars = vars
+					for _, varName := range vars {
+						base := normalizeVarNameForDependency(varName)
+						if base != "" {
+							filteredVars = append(filteredVars, base)
+						}
+					}
 				}
 			} else {
 				// No task-level vars, use all variables
-				filteredVars = vars
+				for _, varName := range vars {
+					base := normalizeVarNameForDependency(varName)
+					if base != "" {
+						filteredVars = append(filteredVars, base)
+					}
+				}
 			}
 
-			dependsOnVariables[t.Name] = filteredVars
+			dependsOnVariables[p.Name] = filteredVars
 		}
 
-		if t.Before != "" {
+		if p.Before != "" {
 			// Task 'n' must run *before* task 'n.Before'
 			// So, 'n.Before' depends on 'n'
-			dependsOn[t.Before] = append(dependsOn[t.Before], t.Name)
+			dependsOn[p.Before] = append(dependsOn[p.Before], p.Name)
 		}
-		if t.After != "" {
+		if p.After != "" {
 			// Task 'n' must run *after* task 'n.After'
 			// So, 'n' depends on 'n.After'
-			dependsOn[t.Name] = append(dependsOn[t.Name], t.After)
+			dependsOn[p.Name] = append(dependsOn[p.Name], p.After)
 		}
-		if t.Register != "" {
-			variableProvidedBy[strings.ToLower(t.Register)] = t.Name
+		if p.Register != "" {
+			variableProvidedBy[strings.ToLower(p.Register)] = p.Name
 		}
 
 		// Check if the module's parameters inherently provide variables (like set_fact)
 		// Ensure n.Params.Actual is not nil before accessing its methods.
-		if t.Params().Params.Actual != nil {
-			providedVars := t.Params().Params.Actual.ProvidesVariables()
+		if p.Params.Actual != nil {
+			providedVars := p.Params.Actual.ProvidesVariables()
 			for _, providedVar := range providedVars {
-				// TODO: Consider case sensitivity/normalization if needed (Ansible usually lowercases)
-				variableProvidedBy[providedVar] = t.Name
+				variableProvidedBy[strings.ToLower(providedVar)] = p.Name
 			}
 		}
 	}
@@ -740,6 +764,7 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 
 	// If we need a setup task, adjust the execution levels
 	if hasSetupTask {
+		common.DebugOutput("Adding setup task", map[string]interface{}{"factList": factList})
 		// Increment all execution levels by 1 to make room for the setup task at level 0
 		for taskName := range executedOnStep {
 			executedOnStep[taskName]++

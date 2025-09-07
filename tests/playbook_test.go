@@ -1334,3 +1334,14 @@ func TestBlockPlaybook(t *testing.T) {
 		},
 	})
 }
+
+func TestBlockParallelPlaybook(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/block_playbook.yaml",
+		configFile:   "parallel_revert.yaml",
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "block_playbook should succeed")
+			assertFileExistsWithInventory(t, "/tmp/spage/block_file.txt", inventory)
+		},
+	})
+}

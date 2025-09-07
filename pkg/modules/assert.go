@@ -48,15 +48,34 @@ func (i AssertInput) ToCode() string {
 }
 
 func (i AssertInput) GetVariableUsage() []string {
-	var vars []string
+	var baseVars []string
 	for _, assertion := range i.That {
 		newVars, err := jinja.ParseVariablesFromExpression(assertion)
 		if err == nil {
-			vars = append(vars, newVars...)
+			for _, v := range newVars {
+				base := v
+				if idx := strings.IndexAny(base, ".["); idx != -1 {
+					base = base[:idx]
+				}
+				baseVars = append(baseVars, strings.ToLower(base))
+			}
 		}
 	}
-	vars = append(vars, pkg.GetVariableUsageFromTemplate(i.Msg)...)
-	return vars
+	baseVars = append(baseVars, pkg.GetVariableUsageFromTemplate(i.Msg)...)
+	// Deduplicate
+	uniq := make(map[string]struct{}, len(baseVars))
+	out := make([]string, 0, len(baseVars))
+	for _, v := range baseVars {
+		if v == "" {
+			continue
+		}
+		if _, ok := uniq[v]; ok {
+			continue
+		}
+		uniq[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }
 
 // HasRevert indicates that the assert module cannot be reverted.
