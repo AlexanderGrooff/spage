@@ -57,9 +57,11 @@ type GraphNodeDTO struct {
 
 // TaskCollectionDTO serializes TaskCollection
 type TaskCollectionDTO struct {
-	Id    int            `json:"id"`
-	Name  string         `json:"name"`
-	Tasks []GraphNodeDTO `json:"tasks"`
+	Id     int            `json:"id"`
+	Name   string         `json:"name"`
+	Tasks  []GraphNodeDTO `json:"tasks"`
+	Rescue []GraphNodeDTO `json:"rescue,omitempty"`
+	Always []GraphNodeDTO `json:"always,omitempty"`
 }
 
 func toGraphNodeDTO(n pkg.GraphNode) GraphNodeDTO {
@@ -72,7 +74,15 @@ func toGraphNodeDTO(n pkg.GraphNode) GraphNodeDTO {
 		for _, child := range c.Children {
 			children = append(children, toGraphNodeDTO(child))
 		}
-		return GraphNodeDTO{Kind: "collection", Collection: &TaskCollectionDTO{Id: c.Id, Name: c.Name, Tasks: children}}
+		var rescue []GraphNodeDTO
+		for _, r := range c.Rescue {
+			rescue = append(rescue, toGraphNodeDTO(r))
+		}
+		var always []GraphNodeDTO
+		for _, a := range c.Always {
+			always = append(always, toGraphNodeDTO(a))
+		}
+		return GraphNodeDTO{Kind: "collection", Collection: &TaskCollectionDTO{Id: c.Id, Name: c.Name, Tasks: children, Rescue: rescue, Always: always}}
 	}
 	return GraphNodeDTO{Kind: "unknown"}
 }
@@ -93,6 +103,16 @@ func fromGraphNodeDTO(dto GraphNodeDTO) pkg.GraphNode {
 		for _, child := range dto.Collection.Tasks {
 			if gn := fromGraphNodeDTO(child); gn != nil {
 				tc.Children = append(tc.Children, gn)
+			}
+		}
+		for _, child := range dto.Collection.Rescue {
+			if gn := fromGraphNodeDTO(child); gn != nil {
+				tc.Rescue = append(tc.Rescue, gn)
+			}
+		}
+		for _, child := range dto.Collection.Always {
+			if gn := fromGraphNodeDTO(child); gn != nil {
+				tc.Always = append(tc.Always, gn)
 			}
 		}
 		return tc
@@ -475,14 +495,7 @@ func (r *TemporalTaskRunner) ExecuteTask(execCtx workflow.Context, task pkg.Grap
 
 	case *pkg.MetaTask:
 		input := SpageMetaWorkflowInput{
-			MetaName: n.Params().Name,
-			Children: func(children []pkg.GraphNode) []GraphNodeDTO {
-				var out []GraphNodeDTO
-				for _, c := range children {
-					out = append(out, toGraphNodeDTO(c))
-				}
-				return out
-			}(n.Children),
+			Meta:             toGraphNodeDTO(n),
 			TargetHost:       *closure.HostContext.Host,
 			CurrentHostFacts: currentHostFacts,
 			SpageCoreConfig:  cfg,
@@ -508,7 +521,8 @@ func (r *TemporalTaskRunner) ExecuteTask(execCtx workflow.Context, task pkg.Grap
 		} else if metaResult.Changed {
 			status = pkg.TaskStatusChanged
 		}
-		return pkg.TaskResult{Task: n, Closure: closure, Error: finalErr, Status: status, Failed: finalErr != nil, Changed: metaResult.Changed, Duration: duration}
+		// Store meta workflow result as ExecutionSpecificOutput so temporal path can register facts/handlers
+		return pkg.TaskResult{Task: n, Closure: closure, Error: finalErr, Status: status, Failed: finalErr != nil, Changed: metaResult.Changed, Duration: duration, ExecutionSpecificOutput: metaResult}
 
 	default:
 		return pkg.TaskResult{Task: task, Closure: closure, Error: fmt.Errorf("unsupported node type %T", task), Status: pkg.TaskStatusFailed, Failed: true}
@@ -792,223 +806,6 @@ func NewTemporalGraphExecutor(runner TemporalTaskRunner) *TemporalGraphExecutor 
 
 // executeRunOnceWithAllLoops executes a run_once task with all its loop iterations
 // as a single deterministic activity, then replicates the results to all hosts
-func (e *TemporalGraphExecutor) executeRunOnceWithAllLoops(
-	ctx workflow.Context,
-	task pkg.Task,
-	closures []*pkg.Closure,
-	hostContexts map[string]*pkg.HostContext,
-	workflowHostFacts map[string]map[string]interface{},
-	cfg *config.Config,
-	handlers []GraphNodeDTO,
-) []pkg.TaskResult {
-	logger := workflow.GetLogger(ctx)
-
-	// Prepare loop items for the activity
-	var loopItems []interface{}
-	for _, closure := range closures {
-		if item, exists := closure.ExtraFacts["item"]; exists {
-			loopItems = append(loopItems, item)
-		} else {
-			loopItems = append(loopItems, nil) // Non-loop task
-		}
-	}
-
-	// Get the first closure for context, handle delegate_to
-	firstClosure := closures[0]
-	if task.DelegateTo != "" {
-		delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, firstClosure, cfg)
-		if err != nil {
-			logger.Error("Failed to resolve delegate_to for run_once task", "task", task.Name, "error", err)
-			// Create an error result and replicate it
-			errorResult := pkg.TaskResult{
-				Task:     task,
-				Closure:  firstClosure,
-				Error:    fmt.Errorf("failed to resolve delegate_to: %w", err),
-				Status:   pkg.TaskStatusFailed,
-				Failed:   true,
-				Duration: 0,
-			}
-			return CreateRunOnceResultsForAllHosts(errorResult, hostContexts, firstClosure.HostContext.Host.Name)
-		}
-		if delegatedHostContext != nil {
-			firstClosure.HostContext = delegatedHostContext
-		}
-	}
-
-	// Create a single activity that will execute all loop iterations
-	activityInput := SpageRunOnceLoopActivityInput{
-		TaskDefinition:   task,
-		TargetHost:       *firstClosure.HostContext.Host,
-		LoopItems:        loopItems,
-		CurrentHostFacts: firstClosure.GetFacts(),
-		SpageCoreConfig:  cfg,
-		Handlers:         handlers,
-	}
-
-	var activityResult SpageRunOnceLoopActivityResult
-
-	// Construct a unique and descriptive ActivityID
-	activityID := fmt.Sprintf("run-once-loop-%s-%s-%s", task.Name, firstClosure.HostContext.Host.Name, uuid.New().String())
-
-	ao := workflow.ActivityOptions{
-		ActivityID:          activityID,
-		StartToCloseTimeout: 30 * time.Minute,
-		HeartbeatTimeout:    2 * time.Minute,
-		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval:    time.Second,
-			BackoffCoefficient: 2.0,
-			MaximumInterval:    time.Minute,
-			MaximumAttempts:    3,
-		},
-	}
-
-	temporalAwareCtx := workflow.WithActivityOptions(ctx, ao)
-	startTime := workflow.Now(ctx)
-	future := workflow.ExecuteActivity(temporalAwareCtx, ExecuteSpageRunOnceLoopActivity, activityInput)
-	errOnGet := future.Get(ctx, &activityResult)
-	endTime := workflow.Now(ctx)
-	duration := endTime.Sub(startTime)
-
-	if errOnGet != nil {
-		logger.Error("Run-once loop activity failed", "task", task.Name, "host", firstClosure.HostContext.Host.Name, "error", errOnGet)
-		errorResult := pkg.TaskResult{
-			Task:     task,
-			Closure:  firstClosure,
-			Error:    fmt.Errorf("run-once loop activity failed: %w", errOnGet),
-			Status:   pkg.TaskStatusFailed,
-			Failed:   true,
-			Duration: duration,
-		}
-		return CreateRunOnceResultsForAllHosts(errorResult, hostContexts, firstClosure.HostContext.Host.Name)
-	}
-
-	// Convert activity results to TaskResults and replicate to all hosts
-	var allResults []pkg.TaskResult
-	for i, loopResult := range activityResult.LoopResults {
-		// Create a closure for this loop iteration
-		closure := closures[i]
-
-		var finalError error
-		if loopResult.Error != "" {
-			if loopResult.Ignored {
-				finalError = &pkg.IgnoredTaskError{OriginalErr: errors.New(loopResult.Error)}
-			} else {
-				finalError = errors.New(loopResult.Error)
-			}
-		}
-
-		finalStatus := pkg.TaskStatusOk
-		if loopResult.Skipped {
-			finalStatus = pkg.TaskStatusSkipped
-		} else if finalError != nil {
-			if !loopResult.Ignored {
-				finalStatus = pkg.TaskStatusFailed
-			}
-		} else if loopResult.Changed {
-			finalStatus = pkg.TaskStatusChanged
-		}
-
-		loopTaskResult := pkg.TaskResult{
-			Task:                    task,
-			Closure:                 closure,
-			Error:                   finalError,
-			Status:                  finalStatus,
-			Failed:                  (finalError != nil && !loopResult.Ignored),
-			Changed:                 loopResult.Changed,
-			Duration:                duration / time.Duration(len(loopItems)), // Approximate duration per loop
-			ExecutionSpecificOutput: loopResult,
-			Output:                  NewFormattedGenericOutput(loopResult.Output, loopResult.ModuleOutputMap, loopResult.Changed),
-		}
-
-		// Create results for all hosts based on this loop iteration
-		loopResults := CreateRunOnceResultsForAllHosts(loopTaskResult, hostContexts, firstClosure.HostContext.Host.Name)
-		allResults = append(allResults, loopResults...)
-	}
-
-	// Propagate the aggregated facts to all hosts if task.Register is set
-	// This mirrors the behavior in the Local executor
-	if task.Register != "" && len(activityResult.LoopResults) > 0 {
-		// Use the RegisteredVars from the activity results
-		var registeredValue interface{}
-
-		// Check if any loop result has the registered variable
-		for _, loopResult := range activityResult.LoopResults {
-			if registeredVar, exists := loopResult.RegisteredVars[task.Register]; exists {
-				registeredValue = registeredVar
-				break
-			}
-		}
-
-		// If no registered variable found in RegisteredVars, fall back to creating one from ModuleOutputMap
-		if registeredValue == nil {
-			for _, loopResult := range activityResult.LoopResults {
-				if loopResult.Error == "" || loopResult.Ignored {
-					// Create a map with the loop results
-					if len(activityResult.LoopResults) > 1 {
-						// Multiple loop items - create a results array
-						var results []map[string]interface{}
-						for _, lr := range activityResult.LoopResults {
-							resultMap := map[string]interface{}{
-								"failed":  lr.Error != "" && !lr.Ignored,
-								"changed": lr.Changed,
-							}
-							if lr.ModuleOutputMap != nil {
-								for k, v := range lr.ModuleOutputMap {
-									resultMap[k] = v
-								}
-							}
-							results = append(results, resultMap)
-						}
-						registeredValue = map[string]interface{}{
-							"results": results,
-							"changed": false, // Will be set below if any result changed
-							"failed":  false,
-						}
-						// Check if any result changed
-						for _, lr := range activityResult.LoopResults {
-							if lr.Changed {
-								if m, ok := registeredValue.(map[string]interface{}); ok {
-									m["changed"] = true
-								}
-								break
-							}
-						}
-					} else {
-						// Single result - use the module output map directly
-						if activityResult.LoopResults[0].ModuleOutputMap != nil {
-							registeredValue = activityResult.LoopResults[0].ModuleOutputMap
-							// Ensure consistent fields
-							if m, ok := registeredValue.(map[string]interface{}); ok {
-								m["failed"] = false
-								if _, present := m["changed"]; !present {
-									m["changed"] = activityResult.LoopResults[0].Changed
-								}
-							}
-						} else {
-							registeredValue = map[string]interface{}{
-								"failed":  false,
-								"changed": activityResult.LoopResults[0].Changed,
-							}
-						}
-					}
-					break
-				}
-			}
-		}
-
-		// Store the registered variable in all host contexts and workflow facts
-		if registeredValue != nil {
-			logger.Debug("Propagating run_once facts to all hosts", map[string]interface{}{
-				"task":     task.Name,
-				"variable": task.Register,
-			})
-			PropagateRegisteredToAllHosts(task, registeredValue, hostContexts, workflowHostFacts)
-		}
-	}
-
-	return allResults
-}
-
 func (e *TemporalGraphExecutor) loadLevelTasks(
 	workflowCtx workflow.Context,
 	tasksInLevel []pkg.GraphNode,
@@ -1018,15 +815,11 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 	cfg *config.Config,
 	workflowHostFacts map[string]map[string]interface{},
 ) {
-	logger := workflow.GetLogger(workflowCtx)
-
 	defer resultsCh.Close()
 	defer errCh.Close()
 
 	isParallelDispatch := cfg.ExecutionMode == "parallel"
 	var completionCh workflow.Channel
-	// Pre-calculate numDispatchedTasks for buffered channel capacity if in parallel mode
-	actualDispatchedTasks := 0 // Renamed from numDispatchedTasks to avoid confusion in the pre-calculation loop
 
 	if isParallelDispatch {
 		countForBuffer, err := CalculateExpectedResults(tasksInLevel, hostContexts, cfg)
@@ -1039,257 +832,12 @@ func (e *TemporalGraphExecutor) loadLevelTasks(
 
 		if countForBuffer > 0 {
 			completionCh = workflow.NewBufferedChannel(workflowCtx, countForBuffer)
-			// else: No tasks to dispatch in parallel, no need for completionCh (completionCh remains nil)
 		}
 	}
 
-	for _, taskDefinition := range tasksInLevel {
-		if meta, isMeta := taskDefinition.(*pkg.MetaTask); isMeta {
-			// Dispatch one MetaTask per host
-			for _, hostCtx := range hostContexts {
-				closure := (&pkg.Task{TaskParams: &pkg.TaskParams{}}).ConstructClosure(hostCtx, cfg)
-				if isParallelDispatch {
-					actualDispatchedTasks++
-					workflow.Go(workflowCtx, func(childTaskCtx workflow.Context) {
-						result := e.Runner.ExecuteTask(childTaskCtx, meta, closure, cfg)
-						resultsCh.SendAsync(result)
-						if completionCh != nil {
-							completionCh.SendAsync(true)
-						}
-					})
-				} else {
-					result := e.Runner.ExecuteTask(workflowCtx, meta, closure, cfg)
-					resultsCh.SendAsync(result)
-				}
-			}
-			continue
-		}
-
-		task, ok := taskDefinition.(*pkg.Task)
-		if !ok {
-			common.LogWarn("Skipping non-task node in loadLevelTasks", map[string]interface{}{"node": taskDefinition.String()})
-			continue
-		}
-
-		logger.Debug("Processing task", map[string]interface{}{
-			"task": task,
-		})
-
-		// Handle run_once tasks separately
-		// TODO: template the run_once condition with actual closure
-		if !task.RunOnce.IsEmpty() && task.RunOnce.IsTruthy(nil) {
-			// Get the first available host
-			firstHostCtx, firstHostName := GetFirstAvailableHost(hostContexts)
-
-			if firstHostCtx == nil {
-				errMsg := fmt.Errorf("no hosts available for run_once task '%s'", task.Name)
-				common.LogError("No hosts available for run_once task", map[string]interface{}{"error": errMsg})
-				errCh.SendAsync(errMsg)
-				return
-			}
-
-			// Execute only on the first host
-			closures, err := GetTaskClosures(*task, firstHostCtx, cfg)
-			if err != nil {
-				errMsg := fmt.Errorf("critical error: failed to get task closures for run_once task '%s' on host '%s': %w", task.Name, firstHostName, err)
-				common.LogError("Dispatch error for run_once task", map[string]interface{}{"error": errMsg})
-				errCh.SendAsync(errMsg)
-				return
-			}
-
-			if len(closures) == 0 {
-				// Empty loop, do nothing and continue to the next task.
-				continue
-			}
-
-			if len(closures) > 1 {
-				// Looped run_once: execute all loop iterations on the first host and collect results
-				if isParallelDispatch {
-					actualDispatchedTasks++ // We'll dispatch one execution but generate results for all hosts
-					workflow.Go(workflowCtx, func(childTaskCtx workflow.Context) {
-						// Get handlers from the first host context
-						var handlers []GraphNodeDTO
-						if firstHostCtx.HandlerTracker != nil {
-							for _, h := range firstHostCtx.HandlerTracker.GetAllHandlers() {
-								handlers = append(handlers, toGraphNodeDTO(h))
-							}
-						}
-
-						// Execute all loop iterations on the first host and collect results
-						allLoopResults := e.executeRunOnceWithAllLoops(childTaskCtx, *task, closures, hostContexts, workflowHostFacts, cfg, handlers)
-
-						// Send results for all hosts
-						for _, result := range allLoopResults {
-							resultsCh.SendAsync(result)
-						}
-
-						completionCh.SendAsync(true)
-					})
-				} else {
-					// Get handlers from the first host context
-					var handlers []GraphNodeDTO
-					if firstHostCtx.HandlerTracker != nil {
-						for _, h := range firstHostCtx.HandlerTracker.GetAllHandlers() {
-							handlers = append(handlers, toGraphNodeDTO(h))
-						}
-					}
-
-					// Execute all loop iterations on the first host and collect results
-					allLoopResults := e.executeRunOnceWithAllLoops(workflowCtx, *task, closures, hostContexts, workflowHostFacts, cfg, handlers)
-
-					// Send results for all hosts
-					for _, result := range allLoopResults {
-						resultsCh.SendAsync(result)
-					}
-				}
-			} else {
-				// Single run_once (no loop or loop with one item)
-				closure := closures[0]
-
-				if task.DelegateTo != "" {
-					delegatedHostContext, err := GetDelegatedHostContext(*task, hostContexts, closure, cfg)
-					if err != nil {
-						errMsg := fmt.Errorf("failed to resolve delegate_to for run_once task '%s': %w", task.Name, err)
-						common.LogError("Delegate resolution error for run_once task", map[string]interface{}{
-							"error": errMsg,
-						})
-						errCh.SendAsync(errMsg)
-						return
-					}
-					if delegatedHostContext != nil {
-						closure.HostContext = delegatedHostContext
-					}
-				}
-
-				logger.Info("Executing single run_once task", map[string]interface{}{
-					"task":           task.Name,
-					"execution_host": closure.HostContext.Host.Name,
-				})
-
-				if isParallelDispatch {
-					actualDispatchedTasks++
-					workflow.Go(workflowCtx, func(childTaskCtx workflow.Context) {
-						// Execute the single run_once task
-						taskResult := e.Runner.ExecuteTask(childTaskCtx, *task, closure, cfg)
-
-						// Propagate the registered variable from the single run_once execution to all hosts
-						if task.Register != "" {
-							reg := BuildRegisteredFromOutput(taskResult.Output, taskResult.Status == pkg.TaskStatusChanged || taskResult.Changed)
-							PropagateRegisteredToAllHosts(*task, reg, hostContexts, workflowHostFacts)
-						}
-
-						// Create results for all hosts
-						allResults := CreateRunOnceResultsForAllHosts(taskResult, hostContexts, closure.HostContext.Host.Name)
-						logger.Debug("Created run_once results for all hosts (parallel)", map[string]interface{}{
-							"task":           task.Name,
-							"num_results":    len(allResults),
-							"execution_host": closure.HostContext.Host.Name,
-						})
-						for _, result := range allResults {
-							resultsCh.SendAsync(result)
-						}
-
-						completionCh.SendAsync(true)
-					})
-				} else {
-					// Execute the single run_once task
-					taskResult := e.Runner.ExecuteTask(workflowCtx, *task, closure, cfg)
-
-					// Propagate the registered variable from the single run_once execution to all hosts
-					if task.Register != "" && taskResult.Output != nil {
-						value := pkg.ConvertOutputToFactsMap(taskResult.Output)
-						if m, ok := value.(map[string]interface{}); ok {
-							// Ensure consistent fields
-							m["failed"] = false
-							if _, present := m["changed"]; !present {
-								m["changed"] = taskResult.Status == pkg.TaskStatusChanged || taskResult.Changed
-							}
-							logger.Debug("Propagating run_once facts to all hosts (single execution)", map[string]interface{}{
-								"task":     task.Name,
-								"variable": task.Register,
-							})
-							for hostName, hc := range hostContexts {
-								hc.Facts.Store(task.Register, m)
-								if workflowHostFacts != nil {
-									if _, ok := workflowHostFacts[hostName]; !ok {
-										workflowHostFacts[hostName] = make(map[string]interface{})
-									}
-									workflowHostFacts[hostName][task.Register] = m
-								}
-							}
-						}
-					}
-
-					// Create results for all hosts
-					allResults := CreateRunOnceResultsForAllHosts(taskResult, hostContexts, closure.HostContext.Host.Name)
-					logger.Debug("Created run_once results for all hosts", map[string]interface{}{
-						"task":           task.Name,
-						"num_results":    len(allResults),
-						"execution_host": closure.HostContext.Host.Name,
-					})
-					for _, result := range allResults {
-						resultsCh.SendAsync(result)
-					}
-				}
-			}
-
-			// Continue to next task since run_once is handled
-			continue
-		}
-
-		// Normal task execution for non-run_once tasks
-		for hostName, hostCtx := range hostContexts {
-			closures, err := GetTaskClosures(*task, hostCtx, cfg)
-			if err != nil {
-				errMsg := fmt.Errorf("critical error: failed to get task closures for task '%s' on host '%s': %w. Aborting level", task.Name, hostName, err)
-				common.LogError("Dispatch error in loadLevelTasks", map[string]interface{}{"error": errMsg})
-				errCh.SendAsync(errMsg)
-				return
-			}
-
-			for _, individualClosure := range closures {
-				closure := individualClosure
-
-				if task.DelegateTo != "" {
-					delegatedHostContext, err := GetDelegatedHostContext(*task, hostContexts, closure, cfg)
-					if err != nil {
-						errMsg := fmt.Errorf("failed to resolve delegate_to for task '%s': %w", task.Name, err)
-						common.LogError("Delegate resolution error in loadLevelTasks", map[string]interface{}{"error": errMsg})
-						errCh.SendAsync(errMsg)
-						return
-					}
-					if delegatedHostContext != nil {
-						closure.HostContext = delegatedHostContext
-					}
-				}
-
-				if isParallelDispatch {
-					actualDispatchedTasks++ // Increment the counter for actual dispatches
-					workflow.Go(workflowCtx, func(childTaskCtx workflow.Context) {
-						taskResult := e.Runner.ExecuteTask(childTaskCtx, *task, closure, cfg)
-						resultsCh.SendAsync(taskResult)
-
-						completionCh.SendAsync(true)
-					})
-				} else {
-					taskResult := e.Runner.ExecuteTask(workflowCtx, *task, closure, cfg)
-					resultsCh.SendAsync(taskResult)
-				}
-			}
-		}
-	}
-
-	if isParallelDispatch && actualDispatchedTasks > 0 { // Use actualDispatchedTasks here
-		for i := 0; i < actualDispatchedTasks; i++ { // Loop up to actualDispatchedTasks
-			// Ensure completionCh is not nil (it wouldn't be if actualDispatchedTasks > 0)
-			if completionCh == nil {
-				logger.Error("completionCh is nil before Receive, this should not happen if actualDispatchedTasks > 0")
-				// This is a critical logic error, potentially send to errCh or panic workflow.
-				// For now, let it proceed, it will panic on nil channel receive.
-			}
-			completionCh.Receive(workflowCtx, nil)
-		}
-	}
+	adapter := NewTemporalRunnerAdapter(workflowCtx, &e.Runner, cfg)
+	env := NewTemporalDispatchEnv(workflowCtx, resultsCh, errCh, completionCh, isParallelDispatch, adapter)
+	SharedLoadLevelTasks(env, adapter, tasksInLevel, hostContexts, cfg, workflowHostFacts)
 }
 
 func (e *TemporalGraphExecutor) processLevelResults(
@@ -1318,13 +866,26 @@ func (e *TemporalGraphExecutor) processLevelResults(
 		hostname := result.Closure.HostContext.Host.Name
 		taskName := result.Task.Params().Name
 
-		activitySpecificOutput, ok := result.ExecutionSpecificOutput.(SpageActivityResult)
-		if !ok {
-			logger.Error("TaskResult.ExecutionSpecificOutput is not of type SpageActivityResult", "task", taskName, "host", hostname)
-			return nil // Don't fail for this, just log and continue
+		if activitySpecificOutput, ok := result.ExecutionSpecificOutput.(SpageActivityResult); ok {
+			return processActivityResultAndRegisterFacts(ctx, activitySpecificOutput, taskName, hostname, hostFacts, hostContexts)
 		}
-
-		return processActivityResultAndRegisterFacts(ctx, activitySpecificOutput, taskName, hostname, hostFacts, hostContexts)
+		if metaOutput, ok := result.ExecutionSpecificOutput.(SpageMetaWorkflowResult); ok {
+			// Apply meta snapshot to workflow facts
+			if _, ok := hostFacts[hostname]; !ok {
+				hostFacts[hostname] = make(map[string]interface{})
+			}
+			for k, v := range metaOutput.HostFactsSnapshot {
+				hostFacts[hostname][k] = v
+			}
+			// Apply notified handlers
+			if hostCtx, exists := hostContexts[hostname]; exists && hostCtx.HandlerTracker != nil {
+				for _, name := range metaOutput.NotifiedHandlers {
+					hostCtx.HandlerTracker.NotifyHandler(name)
+				}
+			}
+			return nil
+		}
+		return nil // Unknown type; do nothing
 	}
 
 	levelHardErrored, processedTasksOnLevel, err := SharedProcessLevelResults(
@@ -1865,6 +1426,7 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 	myWorker := worker.New(temporalClient, taskQueue, worker.Options{})
 
 	myWorker.RegisterWorkflow(SpageTemporalWorkflow)
+	myWorker.RegisterWorkflow(SpageMetaWorkflow)
 	myWorker.RegisterActivity(ExecuteSpageTaskActivity)
 	myWorker.RegisterActivity(RevertSpageTaskActivity)         // Register the new activity
 	myWorker.RegisterActivity(ExecuteSpageRunOnceLoopActivity) // Register the run_once loop activity
@@ -2139,8 +1701,7 @@ func processActivityResultAndRegisterFacts(
 
 // SpageMetaWorkflowInput defines the input for executing a MetaTask as a child workflow
 type SpageMetaWorkflowInput struct {
-	MetaName         string
-	Children         []GraphNodeDTO
+	Meta             GraphNodeDTO
 	TargetHost       pkg.Host
 	CurrentHostFacts map[string]interface{}
 	SpageCoreConfig  *config.Config
@@ -2149,8 +1710,10 @@ type SpageMetaWorkflowInput struct {
 
 // SpageMetaWorkflowResult summarizes the child workflow execution
 type SpageMetaWorkflowResult struct {
-	Changed bool
-	Error   string
+	Changed           bool
+	Error             string
+	HostFactsSnapshot map[string]interface{}
+	NotifiedHandlers  []string
 }
 
 // SpageMetaWorkflow executes a MetaTask's children sequentially for a single host
@@ -2188,23 +1751,122 @@ func SpageMetaWorkflow(ctx workflow.Context, input SpageMetaWorkflowInput) (Spag
 		hostCtx.InitializeHandlerTracker(nil)
 	}
 
+	// Reconstruct the meta task from DTO
+	metaNode := fromGraphNodeDTO(input.Meta)
+	meta, ok := metaNode.(*pkg.MetaTask)
+	if !ok || meta == nil {
+		return SpageMetaWorkflowResult{Changed: false, Error: "invalid meta input"}, nil
+	}
+
 	changed := false
-	for _, childDTO := range input.Children {
-		child := fromGraphNodeDTO(childDTO)
-		if child == nil {
-			continue
-		}
-		// Build closure for each child
+	blockFailed := false
+
+	// Execute children sequentially
+	for _, child := range meta.Children {
 		closure := (&pkg.Task{TaskParams: &pkg.TaskParams{}}).ConstructClosure(hostCtx, input.SpageCoreConfig)
-		// Execute child
-		result := NewTemporalTaskRunner(ctx).ExecuteTask(ctx, child, closure, input.SpageCoreConfig)
-		if result.Error != nil {
-			return SpageMetaWorkflowResult{Changed: changed, Error: result.Error.Error()}, nil
+		res := NewTemporalTaskRunner(ctx).ExecuteTask(ctx, child, closure, input.SpageCoreConfig)
+		if activityResult, ok := res.ExecutionSpecificOutput.(SpageActivityResult); ok {
+			if activityResult.HostFactsSnapshot != nil {
+				for k, v := range activityResult.HostFactsSnapshot {
+					hostCtx.Facts.Store(k, v)
+				}
+			}
+			if len(activityResult.RegisteredVars) > 0 {
+				for k, v := range activityResult.RegisteredVars {
+					hostCtx.Facts.Store(k, v)
+				}
+			}
+			if hostCtx.HandlerTracker != nil {
+				for _, name := range activityResult.NotifiedHandlers {
+					hostCtx.HandlerTracker.NotifyHandler(name)
+				}
+			}
 		}
-		if result.Status == pkg.TaskStatusChanged || result.Changed {
+		if res.Status == pkg.TaskStatusFailed {
+			blockFailed = true
+		}
+		if res.Status == pkg.TaskStatusChanged || res.Changed {
 			changed = true
 		}
 	}
 
-	return SpageMetaWorkflowResult{Changed: changed}, nil
+	// If failed, run rescue
+	if blockFailed {
+		rescueFailed := false
+		for _, rNode := range meta.Rescue {
+			rClosure := (&pkg.Task{TaskParams: &pkg.TaskParams{}}).ConstructClosure(hostCtx, input.SpageCoreConfig)
+			rRes := NewTemporalTaskRunner(ctx).ExecuteTask(ctx, rNode, rClosure, input.SpageCoreConfig)
+			if activityResult, ok := rRes.ExecutionSpecificOutput.(SpageActivityResult); ok {
+				if activityResult.HostFactsSnapshot != nil {
+					for k, v := range activityResult.HostFactsSnapshot {
+						hostCtx.Facts.Store(k, v)
+					}
+				}
+				if len(activityResult.RegisteredVars) > 0 {
+					for k, v := range activityResult.RegisteredVars {
+						hostCtx.Facts.Store(k, v)
+					}
+				}
+				if hostCtx.HandlerTracker != nil {
+					for _, name := range activityResult.NotifiedHandlers {
+						hostCtx.HandlerTracker.NotifyHandler(name)
+					}
+				}
+			}
+			if rRes.Status == pkg.TaskStatusFailed {
+				rescueFailed = true
+			}
+			if rRes.Status == pkg.TaskStatusChanged || rRes.Changed {
+				changed = true
+			}
+		}
+		if !rescueFailed {
+			blockFailed = false
+		}
+	}
+
+	// Always
+	for _, aNode := range meta.Always {
+		aClosure := (&pkg.Task{TaskParams: &pkg.TaskParams{}}).ConstructClosure(hostCtx, input.SpageCoreConfig)
+		aRes := NewTemporalTaskRunner(ctx).ExecuteTask(ctx, aNode, aClosure, input.SpageCoreConfig)
+		if activityResult, ok := aRes.ExecutionSpecificOutput.(SpageActivityResult); ok {
+			if activityResult.HostFactsSnapshot != nil {
+				for k, v := range activityResult.HostFactsSnapshot {
+					hostCtx.Facts.Store(k, v)
+				}
+			}
+			if len(activityResult.RegisteredVars) > 0 {
+				for k, v := range activityResult.RegisteredVars {
+					hostCtx.Facts.Store(k, v)
+				}
+			}
+			if hostCtx.HandlerTracker != nil {
+				for _, name := range activityResult.NotifiedHandlers {
+					hostCtx.HandlerTracker.NotifyHandler(name)
+				}
+			}
+		}
+		if aRes.Status == pkg.TaskStatusChanged || aRes.Changed {
+			changed = true
+		}
+	}
+
+	snapshot := make(map[string]interface{})
+	hostCtx.Facts.Range(func(key, value interface{}) bool {
+		if ks, ok := key.(string); ok {
+			snapshot[ks] = value
+		}
+		return true
+	})
+	var notified []string
+	if hostCtx.HandlerTracker != nil {
+		for _, h := range hostCtx.HandlerTracker.GetNotifiedHandlers() {
+			notified = append(notified, h.Params().Name)
+		}
+	}
+	var errMsg string
+	if blockFailed {
+		errMsg = "block failed"
+	}
+	return SpageMetaWorkflowResult{Changed: changed, Error: errMsg, HostFactsSnapshot: snapshot, NotifiedHandlers: notified}, nil
 }

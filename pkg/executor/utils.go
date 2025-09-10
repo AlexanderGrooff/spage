@@ -7,10 +7,14 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/AlexanderGrooff/spage/pkg"
 	"github.com/AlexanderGrooff/spage/pkg/common"
 	"github.com/AlexanderGrooff/spage/pkg/config"
+
+	"go.temporal.io/sdk/workflow"
 )
 
 func InitializeRecapStats(hostContexts map[string]*pkg.HostContext) map[string]map[string]int {
@@ -149,6 +153,12 @@ func ParseLoop(task pkg.GraphNode, c *pkg.HostContext, cfg *config.Config) ([]in
 	var loopItems []interface{}
 	closure := task.ConstructClosure(c, cfg)
 
+	common.LogDebug("Parsing loop for task", map[string]interface{}{
+		"task":       task.Params().Name,
+		"loop_type":  fmt.Sprintf("%T", task.Params().Loop),
+		"loop_value": task.Params().Loop,
+	})
+
 	switch loopValue := task.Params().Loop.(type) {
 	case string:
 		trimmedLoopStr := strings.TrimSpace(loopValue)
@@ -186,10 +196,22 @@ func ParseLoop(task pkg.GraphNode, c *pkg.HostContext, cfg *config.Config) ([]in
 
 	case []interface{}:
 		loopItems = loopValue
+		common.LogDebug("Parsed loop items from []interface{}", map[string]interface{}{
+			"task":       task.Params().Name,
+			"item_count": len(loopItems),
+			"items":      loopItems,
+		})
 
 	default:
 		return nil, fmt.Errorf("unsupported loop type '%T' for task '%s'", task.Params().Loop, task.Params().Name)
 	}
+
+	common.LogDebug("Final loop items", map[string]interface{}{
+		"task":       task.Params().Name,
+		"item_count": len(loopItems),
+		"items":      loopItems,
+	})
+
 	return loopItems, nil
 }
 
@@ -782,4 +804,357 @@ func PropagateRegisteredToAllHosts(
 			workflowHostFacts[hostName][task.Params().Register] = registeredValue
 		}
 	}
+}
+
+// -------- Generic dispatch abstractions for shared load-level logic --------
+
+// RunnerAdapter abstracts task execution for different executors
+type RunnerAdapter interface {
+	Execute(task pkg.GraphNode, closure *pkg.Closure, handle func(pkg.TaskResult))
+}
+
+// LocalRunnerAdapter adapts pkg.TaskRunner to RunnerAdapter
+type LocalRunnerAdapter struct {
+	Ctx    context.Context
+	Runner pkg.TaskRunner
+	Config *config.Config
+}
+
+func NewLocalRunnerAdapter(ctx context.Context, runner pkg.TaskRunner, cfg *config.Config) *LocalRunnerAdapter {
+	return &LocalRunnerAdapter{Ctx: ctx, Runner: runner, Config: cfg}
+}
+
+func (a *LocalRunnerAdapter) Execute(task pkg.GraphNode, closure *pkg.Closure, handle func(pkg.TaskResult)) {
+	ch := a.Runner.ExecuteTask(a.Ctx, task, closure, a.Config)
+	if _, isMeta := task.(*pkg.MetaTask); isMeta {
+		for res := range ch {
+			handle(res)
+		}
+	} else {
+		handle(<-ch)
+	}
+}
+
+// TemporalRunnerAdapter adapts TemporalTaskRunner-like runners to RunnerAdapter
+type TemporalRunnerAdapter struct {
+	WorkflowCtx workflow.Context
+	CurrentCtx  workflow.Context
+	Runner      interface {
+		ExecuteTask(workflow.Context, pkg.GraphNode, *pkg.Closure, *config.Config) pkg.TaskResult
+	}
+	Config *config.Config
+}
+
+func NewTemporalRunnerAdapter(ctx workflow.Context, runner interface {
+	ExecuteTask(workflow.Context, pkg.GraphNode, *pkg.Closure, *config.Config) pkg.TaskResult
+}, cfg *config.Config) *TemporalRunnerAdapter {
+	return &TemporalRunnerAdapter{WorkflowCtx: ctx, CurrentCtx: ctx, Runner: runner, Config: cfg}
+}
+
+func (a *TemporalRunnerAdapter) Execute(task pkg.GraphNode, closure *pkg.Closure, handle func(pkg.TaskResult)) {
+	ctx := a.CurrentCtx
+	if ctx == nil {
+		ctx = a.WorkflowCtx
+	}
+	res := a.Runner.ExecuteTask(ctx, task, closure, a.Config)
+	handle(res)
+}
+
+// DispatchEnv abstracts concurrency and channel operations for shared load-level logic
+type DispatchEnv interface {
+	IsParallel() bool
+	Go(fn func())
+	SendResult(result pkg.TaskResult)
+	SendError(err error)
+	Inc()
+	Done()
+	Wait()
+}
+
+// LocalDispatchEnv implements DispatchEnv for the local executor
+type LocalDispatchEnv struct {
+	ctx       context.Context
+	wg        *sync.WaitGroup
+	resultsCh chan pkg.TaskResult
+	errCh     chan error
+	parallel  bool
+}
+
+func NewLocalDispatchEnv(ctx context.Context, wg *sync.WaitGroup, resultsCh chan pkg.TaskResult, errCh chan error, parallel bool) *LocalDispatchEnv {
+	return &LocalDispatchEnv{ctx: ctx, wg: wg, resultsCh: resultsCh, errCh: errCh, parallel: parallel}
+}
+
+func (e *LocalDispatchEnv) IsParallel() bool { return e.parallel }
+func (e *LocalDispatchEnv) Go(fn func())     { go fn() }
+func (e *LocalDispatchEnv) SendResult(result pkg.TaskResult) {
+	select {
+	case e.resultsCh <- result:
+	case <-e.ctx.Done():
+	}
+}
+func (e *LocalDispatchEnv) SendError(err error) {
+	select {
+	case e.errCh <- err:
+	case <-e.ctx.Done():
+	}
+}
+func (e *LocalDispatchEnv) Inc()  { e.wg.Add(1) }
+func (e *LocalDispatchEnv) Done() { e.wg.Done() }
+func (e *LocalDispatchEnv) Wait() { e.wg.Wait() }
+
+// TemporalDispatchEnv implements DispatchEnv for the Temporal executor
+type TemporalDispatchEnv struct {
+	ctx           workflow.Context
+	resultsCh     workflow.Channel
+	errCh         workflow.Channel
+	completionCh  workflow.Channel
+	runnerAdapter *TemporalRunnerAdapter
+	parallel      bool
+	dispatchedCnt int
+}
+
+func NewTemporalDispatchEnv(ctx workflow.Context, resultsCh, errCh, completionCh workflow.Channel, parallel bool, adapter *TemporalRunnerAdapter) *TemporalDispatchEnv {
+	return &TemporalDispatchEnv{ctx: ctx, resultsCh: resultsCh, errCh: errCh, completionCh: completionCh, parallel: parallel, runnerAdapter: adapter}
+}
+
+func (e *TemporalDispatchEnv) IsParallel() bool { return e.parallel }
+func (e *TemporalDispatchEnv) Go(fn func()) {
+	workflow.Go(e.ctx, func(childCtx workflow.Context) {
+		if e.runnerAdapter != nil {
+			e.runnerAdapter.CurrentCtx = childCtx
+		}
+		fn()
+	})
+}
+func (e *TemporalDispatchEnv) SendResult(result pkg.TaskResult) {
+	e.resultsCh.SendAsync(result)
+}
+func (e *TemporalDispatchEnv) SendError(err error) {
+	e.errCh.SendAsync(err)
+}
+func (e *TemporalDispatchEnv) Inc() { e.dispatchedCnt++ }
+func (e *TemporalDispatchEnv) Done() {
+	if e.completionCh != nil {
+		e.completionCh.SendAsync(true)
+	}
+}
+func (e *TemporalDispatchEnv) Wait() {
+	if e.completionCh == nil || e.dispatchedCnt == 0 {
+		return
+	}
+	for i := 0; i < e.dispatchedCnt; i++ {
+		e.completionCh.Receive(e.ctx, nil)
+	}
+}
+
+// SharedLoadLevelTasks contains the unified logic for dispatching tasks for a level
+func SharedLoadLevelTasks(
+	env DispatchEnv,
+	runner RunnerAdapter,
+	tasksInLevel []pkg.GraphNode,
+	hostContexts map[string]*pkg.HostContext,
+	cfg *config.Config,
+	workflowHostFacts map[string]map[string]interface{},
+) {
+	for _, taskDefinition := range tasksInLevel {
+		task := taskDefinition
+
+		// Handle run_once
+		if !task.Params().RunOnce.IsEmpty() && task.Params().RunOnce.IsTruthy(nil) {
+			firstHostCtx, firstHostName := GetFirstAvailableHost(hostContexts)
+			if firstHostCtx == nil {
+				env.SendError(fmt.Errorf("no hosts available for run_once task '%s'", task.Params().Name))
+				return
+			}
+
+			closures, err := GetTaskClosures(task, firstHostCtx, cfg)
+			if err != nil {
+				env.SendError(fmt.Errorf("critical error: failed to get task closures for run_once task '%s' on host '%s': %w", task.Params().Name, firstHostName, err))
+				return
+			}
+			if len(closures) == 0 {
+				continue
+			}
+
+			if len(closures) > 1 {
+				// Execute looped run_once sequentially on first host and aggregate
+				var itemResults []pkg.TaskResult
+				var finalError error
+				changed := false
+				var totalDuration time.Duration
+
+				for _, closure := range closures {
+					// Note: delegate_to inside run_once loop is complex; we execute on first host's context
+					// Execute task via adapter and collect results
+					if _, isMetaTask := task.(*pkg.MetaTask); isMetaTask {
+						// Collect all meta results, forward additional to result stream
+						var first pkg.TaskResult
+						firstSet := false
+						runner.Execute(task, closure, func(res pkg.TaskResult) {
+							if !firstSet {
+								first = res
+								firstSet = true
+								itemResults = append(itemResults, res)
+							} else {
+								env.SendResult(res)
+							}
+						})
+						totalDuration += first.Duration
+						if first.Status == pkg.TaskStatusChanged || first.Changed {
+							changed = true
+						}
+						if first.Error != nil {
+							finalError = first.Error
+							break
+						}
+					} else {
+						var captured pkg.TaskResult
+						runner.Execute(task, closure, func(res pkg.TaskResult) { captured = res })
+						itemResults = append(itemResults, captured)
+						totalDuration += captured.Duration
+						if captured.Status == pkg.TaskStatusChanged || captured.Changed {
+							changed = true
+						}
+						if captured.Error != nil {
+							finalError = captured.Error
+							break
+						}
+					}
+				}
+
+				var itemOutputs []pkg.ModuleOutput
+				for _, res := range itemResults {
+					itemOutputs = append(itemOutputs, res.Output)
+				}
+
+				finalOutput := pkg.GenericOutput{
+					"results": itemOutputs,
+					"changed": changed,
+				}
+				finalStatus := pkg.TaskStatusOk
+				if changed {
+					finalStatus = pkg.TaskStatusChanged
+				}
+				if finalError != nil {
+					finalStatus = pkg.TaskStatusFailed
+				}
+
+				finalClosure := task.ConstructClosure(firstHostCtx, cfg)
+				aggregatedResult := pkg.TaskResult{
+					Task:     task,
+					Closure:  finalClosure,
+					Error:    finalError,
+					Status:   finalStatus,
+					Failed:   finalError != nil,
+					Output:   finalOutput,
+					Duration: totalDuration,
+				}
+
+				if task.Params().Register != "" {
+					reg := BuildRegisteredFromOutput(aggregatedResult.Output, aggregatedResult.Status == pkg.TaskStatusChanged || aggregatedResult.Changed)
+					PropagateRegisteredToAllHosts(task, reg, hostContexts, workflowHostFacts)
+				}
+
+				allResults := CreateRunOnceResultsForAllHosts(aggregatedResult, hostContexts, firstHostName)
+				for _, result := range allResults {
+					env.SendResult(result)
+				}
+			} else {
+				// Single run_once
+				closure := closures[0]
+
+				if task.Params().DelegateTo != "" {
+					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure, cfg)
+					if err != nil {
+						env.SendError(fmt.Errorf("failed to resolve delegate_to for run_once task '%s': %w", task.Params().Name, err))
+						return
+					}
+					if delegatedHostContext != nil {
+						closure.HostContext = delegatedHostContext
+					}
+				}
+
+				var originalResult pkg.TaskResult
+				if _, isMetaTask := task.(*pkg.MetaTask); isMetaTask {
+					var first pkg.TaskResult
+					firstSet := false
+					runner.Execute(task, closure, func(res pkg.TaskResult) {
+						if !firstSet {
+							first = res
+							firstSet = true
+						} else {
+							env.SendResult(res)
+						}
+					})
+					originalResult = first
+				} else {
+					runner.Execute(task, closure, func(res pkg.TaskResult) { originalResult = res })
+				}
+
+				if task.Params().Register != "" {
+					reg := BuildRegisteredFromOutput(originalResult.Output, originalResult.Status == pkg.TaskStatusChanged || originalResult.Changed)
+					PropagateRegisteredToAllHosts(task, reg, hostContexts, workflowHostFacts)
+				}
+
+				allResults := CreateRunOnceResultsForAllHosts(originalResult, hostContexts, firstHostName)
+				for _, result := range allResults {
+					env.SendResult(result)
+				}
+			}
+
+			continue
+		}
+
+		// Normal tasks
+		for _, hostCtx := range hostContexts {
+			// Special-case meta tasks: construct a basic closure without loop splitting
+			if _, isMeta := task.(*pkg.MetaTask); isMeta {
+				closure := (&pkg.Task{TaskParams: &pkg.TaskParams{}}).ConstructClosure(hostCtx, cfg)
+				if env.IsParallel() {
+					env.Inc()
+					env.Go(func() {
+						runner.Execute(task, closure, func(res pkg.TaskResult) { env.SendResult(res) })
+						env.Done()
+					})
+				} else {
+					runner.Execute(task, closure, func(res pkg.TaskResult) { env.SendResult(res) })
+				}
+				continue
+			}
+
+			closures, err := GetTaskClosures(task, hostCtx, cfg)
+			if err != nil {
+				env.SendError(fmt.Errorf("critical error: failed to get task closures for task '%s' on host '%s': %w. Aborting level", task.Params().Name, hostCtx.Host.Name, err))
+				return
+			}
+
+			for _, individualClosure := range closures {
+				closure := individualClosure
+
+				if task.Params().DelegateTo != "" {
+					delegatedHostContext, err := GetDelegatedHostContext(task, hostContexts, closure, cfg)
+					if err != nil {
+						env.SendError(fmt.Errorf("failed to resolve delegate_to for task '%s': %w", task.Params().Name, err))
+						return
+					}
+					if delegatedHostContext != nil {
+						closure.HostContext = delegatedHostContext
+					}
+				}
+
+				if env.IsParallel() {
+					env.Inc()
+					env.Go(func() {
+						runner.Execute(task, closure, func(res pkg.TaskResult) { env.SendResult(res) })
+						env.Done()
+					})
+				} else {
+					runner.Execute(task, closure, func(res pkg.TaskResult) { env.SendResult(res) })
+				}
+			}
+		}
+	}
+
+	// Wait for any parallel dispatches to complete
+	env.Wait()
 }

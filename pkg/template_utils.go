@@ -8,18 +8,19 @@ import (
 	"encoding/json"
 
 	"github.com/AlexanderGrooff/jinja-go"
+	"github.com/AlexanderGrooff/spage/pkg/common"
 )
 
-// isDefaultOmitPattern returns true if the template string uses the default(omit) pattern anywhere.
+// CheckIfVariableIsUnused returns true if the template string uses the default() pattern anywhere.
 // This allows treating variables inside such expressions as optional (no graph dependency).
-func isDefaultOmitPattern(s string) bool {
+func CheckIfVariableIsUnused(s string) bool {
 	// quick contains checks before more costly parsing
-	if !strings.Contains(s, "default") {
+	if !strings.Contains(s, "default") && !strings.Contains(s, "defined") {
 		return false
 	}
 	// Heuristic: any occurrence of "default(" or "| default(" indicates omit default usage
 	ls := strings.ToLower(s)
-	return strings.Contains(ls, "| default(") || strings.Contains(ls, "|default(")
+	return strings.Contains(ls, "| default(") || strings.Contains(ls, "is defined")
 }
 
 type JinjaExpression struct {
@@ -471,7 +472,8 @@ func extractVariablesFromValue(val reflect.Value) ([]string, error) {
 		if str != "" {
 			// If this string uses a default(omit) pattern, treat referenced variables as optional
 			// and do not require producers in the graph. We skip variable extraction to avoid enforcing deps.
-			if isDefaultOmitPattern(str) {
+			if CheckIfVariableIsUnused(str) {
+				common.LogDebug("Skipping variable extraction for unused variable", map[string]interface{}{"variable": str})
 				return vars, nil
 			}
 			// 1) Parse template variables like "{{ var }}"

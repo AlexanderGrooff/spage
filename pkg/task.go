@@ -330,6 +330,11 @@ func (t TaskParams) GetVariableUsage() ([]string, error) {
 		if field.Kind() == reflect.String {
 			str := field.String()
 			if str != "" {
+				// Skip variable extraction for unused variables (e.g., default() patterns)
+				if CheckIfVariableIsUnused(str) {
+					common.LogDebug("Skipping variable extraction for unused variable", map[string]interface{}{"variable": str})
+					continue
+				}
 				varsUsage = append(varsUsage, GetVariableUsageFromTemplate(str)...)
 			}
 			continue
@@ -720,16 +725,18 @@ func (t Task) executeOnce(closure *Closure) TaskResult {
 	}
 
 	// Evaluate jinja2 in the module input fields
-	if t.TaskParams.Params.Actual != nil {
-		templatedActualProvider, templateErr := TemplateModuleInputFields(t.TaskParams.Params.Actual, closure)
+	// Create a copy of the task parameters to avoid modifying the original task
+	taskParamsCopy := *t.TaskParams
+	if taskParamsCopy.Params.Actual != nil {
+		templatedActualProvider, templateErr := TemplateModuleInputFields(taskParamsCopy.Params.Actual, closure)
 		if templateErr != nil {
 			r.Error = fmt.Errorf("failed to template module input fields for task %s (module %s): %w", t.Name, t.Module, templateErr)
 			return r
 		}
-		t.TaskParams.Params.Actual = templatedActualProvider // This could be nil if original was nil and TemplateModuleInputFields returns nil
+		taskParamsCopy.Params.Actual = templatedActualProvider // This could be nil if original was nil and TemplateModuleInputFields returns nil
 	}
 
-	r.Output, r.Error = module.Execute(t.TaskParams.Params.Actual, closure, t.BecomeUser)
+	r.Output, r.Error = module.Execute(taskParamsCopy.Params.Actual, closure, t.BecomeUser)
 	duration := time.Since(startTime)
 	r.Duration = duration
 

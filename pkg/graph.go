@@ -81,11 +81,14 @@ type graphNodeDTO struct {
 	Collection *taskCollectionD `json:"collection,omitempty"`
 }
 
-// taskCollectionD is a serializable form of TaskCollection that avoids interface fields.
+// taskCollectionD is a serializable form of MetaTask that avoids interface fields.
 type taskCollectionD struct {
-	Id    int            `json:"id"`
-	Name  string         `json:"name"`
-	Tasks []graphNodeDTO `json:"tasks"`
+	Id   int    `json:"id"`
+	Name string `json:"name"`
+	// TODO: make this more generic per metatask module
+	Tasks  []graphNodeDTO `json:"tasks"`
+	Rescue []graphNodeDTO `json:"rescue,omitempty"`
+	Always []graphNodeDTO `json:"always,omitempty"`
 }
 
 // graphJSON is the on-the-wire representation of Graph for JSON.
@@ -117,7 +120,29 @@ func (g Graph) MarshalJSON() ([]byte, error) {
 					children = append(children, dto)
 				}
 			}
-			return graphNodeDTO{Kind: "collection", Collection: &taskCollectionD{Id: c.Id, Name: c.Name, Tasks: children}}, nil
+			var rescue []graphNodeDTO
+			if len(c.Rescue) > 0 {
+				rescue = make([]graphNodeDTO, 0, len(c.Rescue))
+				for _, r := range c.Rescue {
+					dto, err := toDTO(r)
+					if err != nil {
+						return graphNodeDTO{}, err
+					}
+					rescue = append(rescue, dto)
+				}
+			}
+			var always []graphNodeDTO
+			if len(c.Always) > 0 {
+				always = make([]graphNodeDTO, 0, len(c.Always))
+				for _, a := range c.Always {
+					dto, err := toDTO(a)
+					if err != nil {
+						return graphNodeDTO{}, err
+					}
+					always = append(always, dto)
+				}
+			}
+			return graphNodeDTO{Kind: "collection", Collection: &taskCollectionD{Id: c.Id, Name: c.Name, Tasks: children, Rescue: rescue, Always: always}}, nil
 		}
 		return graphNodeDTO{}, fmt.Errorf("unsupported GraphNode type %T for JSON marshal", n)
 	}
@@ -185,6 +210,26 @@ func (g *Graph) UnmarshalJSON(data []byte) error {
 						return nil, err
 					}
 					tc.Children = append(tc.Children, gn)
+				}
+			}
+			if len(dto.Collection.Rescue) > 0 {
+				tc.Rescue = make([]GraphNode, 0, len(dto.Collection.Rescue))
+				for _, child := range dto.Collection.Rescue {
+					gn, err := fromDTO(child)
+					if err != nil {
+						return nil, err
+					}
+					tc.Rescue = append(tc.Rescue, gn)
+				}
+			}
+			if len(dto.Collection.Always) > 0 {
+				tc.Always = make([]GraphNode, 0, len(dto.Collection.Always))
+				for _, child := range dto.Collection.Always {
+					gn, err := fromDTO(child)
+					if err != nil {
+						return nil, err
+					}
+					tc.Always = append(tc.Always, gn)
 				}
 			}
 			return tc, nil
@@ -520,8 +565,8 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 			case *Task:
 				out = append(out, t)
 			case *MetaTask:
-				common.DebugOutput(fmt.Sprintf("Flattening task collection %q", t.Name))
-				// out = append(out, flattenNodes(t.Tasks)...)
+				common.DebugOutput(fmt.Sprintf("Flattening metatask %q", t.Name))
+				// Keep metatask as a single node for execution, similar to local executor
 				out = append(out, t)
 			default:
 				// ignore unknown node types
@@ -636,30 +681,6 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 			}
 		}
 	}
-
-	// TODO: does this do anything?
-	// // Extract required inputs from nested graphs (if any were present in the original structure)
-	// var collectRequiredInputs func(node GraphNode)
-	// collectRequiredInputs = func(node GraphNode) {
-	// 	switch n := node.(type) {
-	// 	case Graph:
-	// 		for _, input := range n.RequiredInputs {
-	// 			if !containsInSlice(g.RequiredInputs, input) {
-	// 				g.RequiredInputs = append(g.RequiredInputs, input)
-	// 			}
-	// 		}
-	// 		// Recursively check nested graphs
-	// 		for _, step := range n.Nodes {
-	// 			for _, subNode := range step {
-	// 				collectRequiredInputs(subNode)
-	// 			}
-	// 		}
-	// 		// Ignore TaskNode and Task types for required inputs collection
-	// 	}
-	// }
-	// for _, node := range nodes { // Iterate original nodes structure for nested graph inputs
-	// 	collectRequiredInputs(node)
-	// }
 
 	// Get required inputs from graph attributes
 	for _, v := range graphAttributes["vars"].(map[string]interface{}) {

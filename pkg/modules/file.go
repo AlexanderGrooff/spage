@@ -194,6 +194,7 @@ func (m FileModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg
 	if err != nil {
 		return nil, fmt.Errorf("failed to template path %s: %w", fileParams.Path, err)
 	}
+
 	templatedSrc, err := pkg.TemplateString(fileParams.Src, closure)
 	if err != nil {
 		return nil, fmt.Errorf("failed to template src %s: %w", fileParams.Src, err)

@@ -274,10 +274,12 @@ func TemplateString(s string, closure *Closure) (string, error) {
 		return "", nil
 	}
 	context := closure.GetFacts()
+
 	res, err := jinja.TemplateString(s, context)
 	if err != nil {
 		return "", fmt.Errorf("failed to template string: %w", err)
 	}
+
 	if s != res {
 		common.DebugOutput("Templated %q into %q with facts: %v", s, res, context)
 	}
@@ -285,6 +287,10 @@ func TemplateString(s string, closure *Closure) (string, error) {
 }
 
 func GetVariableUsageFromTemplate(s string) []string {
+	if CheckIfVariableIsUnused(s) {
+		common.LogDebug("Skipping variable extraction for unused variable", map[string]interface{}{"variable": s})
+		return nil
+	}
 	vars, err := jinja.ParseVariables(s)
 	if err != nil {
 		return nil

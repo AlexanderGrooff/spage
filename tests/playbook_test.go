@@ -22,7 +22,7 @@ var testEnvironments = []struct {
 }{
 	{executor: "local", inventoryFile: "inventory.yaml", limitHosts: []string{"localhost"}},
 	// {executor: "local", inventoryFile: "inventory.yaml", limitHosts: []string{}},
-	// {executor: "temporal", inventoryFile: "inventory.yaml", limitHosts: []string{"localhost"}},
+	{executor: "temporal", inventoryFile: "inventory.yaml", limitHosts: []string{"localhost"}},
 	// {executor: "temporal", inventoryFile: "inventory.yaml"},
 }
 var allowSudo = false
