@@ -11,3 +11,7 @@ func TestLocalGraphExecutorImplementsGraphExecutor(t *testing.T) {
 	// This is a compile-time check to ensure LocalGraphExecutor implements GraphExecutor
 	var _ pkg.GraphExecutor = (*LocalGraphExecutor)(nil)
 }
+
+func TestLocalDispatchEnvImplementsDispatchEnv(t *testing.T) {
+	var _ DispatchEnv = (*LocalDispatchEnv)(nil)
+}
