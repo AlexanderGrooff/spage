@@ -668,6 +668,7 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 			// So, 'n' depends on 'n.After'
 			dependsOn[p.Name] = append(dependsOn[p.Name], p.After)
 		}
+
 		if p.Register != "" {
 			variableProvidedBy[strings.ToLower(p.Register)] = p.Name
 		}
@@ -679,6 +680,27 @@ func NewGraph(nodes []GraphNode, graphAttributes map[string]interface{}, playboo
 			for _, providedVar := range providedVars {
 				variableProvidedBy[strings.ToLower(providedVar)] = p.Name
 			}
+		}
+
+		// If this is a MetaTask, propagate providers from its children to the meta task name,
+		// so downstream tasks depend on the include/block group rather than inner tasks.
+		if mt, isMeta := gn.(*MetaTask); isMeta {
+			propagate := func(children []GraphNode) {
+				for _, child := range children {
+					cp := child.Params()
+					if cp.Register != "" {
+						variableProvidedBy[strings.ToLower(cp.Register)] = p.Name
+					}
+					if cp.Params.Actual != nil {
+						for _, v := range cp.Params.Actual.ProvidesVariables() {
+							variableProvidedBy[strings.ToLower(v)] = p.Name
+						}
+					}
+				}
+			}
+			propagate(mt.Children)
+			propagate(mt.Rescue)
+			propagate(mt.Always)
 		}
 	}
 

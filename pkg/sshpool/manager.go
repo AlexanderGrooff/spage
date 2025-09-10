@@ -158,7 +158,7 @@ func (m *Manager) createSSHConfig(host string, hostVars map[string]interface{}) 
 		Auth:            authMethods,
 		HostKeyCallback: hostKeyCallback,
 		Timeout:         timeout,
-		ClientVersion:   "SSH-spage",
+		ClientVersion:   "SSH-2.0-spage",
 	}
 
 	// Optionally check what authentication methods the server supports (skip when jump_host == "none")

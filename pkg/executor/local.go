@@ -162,13 +162,18 @@ func (e *LocalGraphExecutor) Revert(ctx context.Context, executedTasks []map[str
 
 			// Drain the channel for this host and level
 			for taskNode := range taskHistoryCh { // taskHistoryCh should be closed by processLevelResults
-				task, ok := taskNode.(*pkg.Task)
-				if !ok {
-					// Handle meta tasks (like blocks) - they don't need revert
-					if _, isMetaTask := taskNode.(*pkg.MetaTask); isMetaTask {
-						common.LogDebug("Skipping meta task in Revert (no revert needed)", map[string]interface{}{"node": taskNode.String()})
-						continue
-					}
+				// Accept both pointer and value Task types, and skip MetaTask in both forms
+				var task *pkg.Task
+				switch tn := taskNode.(type) {
+				case *pkg.Task:
+					task = tn
+				case pkg.Task:
+					task = &tn
+				case *pkg.MetaTask:
+					common.LogDebug("Skipping meta task in Revert (no revert needed)", map[string]interface{}{"node": taskNode.String()})
+					continue
+				// Note: non-pointer MetaTask does not implement GraphNode (pointer methods), so it won't appear here
+				default:
 					// TODO: handle other non-task nodes
 					common.LogWarn("Skipping non-task node in Revert", map[string]interface{}{"node": taskNode.String()})
 					continue

@@ -177,7 +177,8 @@ func loadRoleHandlers(fsys fileSystem, roleBaseDir string, rolesPaths []string) 
 	return handlerBlocks, nil
 }
 
-// processIncludeDirective handles the 'include' directive during preprocessing.
+// processIncludeDirective handles the 'include' family by expanding the file and wrapping
+// the result as a single meta-task (module: include_tasks) so runtime semantics match block-like execution.
 func processIncludeDirective(fsys fileSystem, includeValue interface{}, currentBasePath string, rolesPaths []string) ([]map[string]interface{}, error) {
 	if pathStr, ok := includeValue.(string); ok {
 		absPath := pathStr
@@ -194,7 +195,13 @@ func processIncludeDirective(fsys fileSystem, includeValue interface{}, currentB
 		if err != nil {
 			return nil, fmt.Errorf("failed to preprocess included file %s: %w", absPath, err)
 		}
-		return nestedBlocks, nil
+
+		// Wrap into a single block so TextToGraphNodes will create a MetaTask with module include_tasks
+		wrapper := map[string]interface{}{
+			"include_tasks": map[string]interface{}{"file": pathStr},
+			"block":         nestedBlocks,
+		}
+		return []map[string]interface{}{wrapper}, nil
 	}
 	return nil, fmt.Errorf("invalid 'include' value: expected string, got %T", includeValue)
 }
@@ -274,7 +281,13 @@ func processIncludeRoleDirective(fsys fileSystem, roleParams interface{}, curren
 			roleBlocks[i]["_role_path"] = roleBaseDir
 		}
 	}
-	result = append(result, roleBlocks...)
+
+	// Wrap the role tasks into a single meta-task with include_role module, keeping defaults/vars separate
+	wrapper := map[string]interface{}{
+		"include_role": map[string]interface{}{"name": roleName},
+		"block":        roleBlocks,
+	}
+	result = append(result, wrapper)
 
 	// 4. Load role handlers (executed at the end)
 	roleHandlers, err := loadRoleHandlers(fsys, roleBaseDir, rolesPaths)
