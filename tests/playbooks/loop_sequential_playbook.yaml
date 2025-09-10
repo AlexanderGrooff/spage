@@ -97,7 +97,7 @@
         fail_msg: "Item 5 or 6 does not exist"
 
     - name: loop and access dict item
-      command: test -z "{{ item['key'] }}"
+      command: test ! -z "{{ item['key'] }}"
       loop:
         - key: abc
           value: 123
