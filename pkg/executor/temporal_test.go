@@ -15,3 +15,6 @@ func TestTemporalGraphExecutorImplementsGraphExecutor(t *testing.T) {
 func TestTemporalDispatchEnvImplementsDispatchEnv(t *testing.T) {
 	var _ DispatchEnv = (*TemporalDispatchEnv)(nil)
 }
+func TestTemporalRunnerAdapterImplementsRunnerAdapter(t *testing.T) {
+	var _ RunnerAdapter = (*TemporalRunnerAdapter)(nil)
+}

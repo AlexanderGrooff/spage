@@ -15,3 +15,7 @@ func TestLocalGraphExecutorImplementsGraphExecutor(t *testing.T) {
 func TestLocalDispatchEnvImplementsDispatchEnv(t *testing.T) {
 	var _ DispatchEnv = (*LocalDispatchEnv)(nil)
 }
+
+func TestLocalRunnerAdapterImplementsRunnerAdapter(t *testing.T) {
+	var _ RunnerAdapter = (*LocalRunnerAdapter)(nil)
+}
