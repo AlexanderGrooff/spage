@@ -33,7 +33,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/pkg/sftp v1.13.9
 	github.com/spf13/viper v1.20.1
-	github.com/stretchr/testify v1.10.0
+	github.com/stretchr/testify v1.11.1
 	go.temporal.io/sdk v1.36.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/term v0.34.0
