@@ -1,0 +1,36 @@
+---
+- name: Test Set Fact Module
+  hosts: all
+  tasks:
+    - name: Set a simple fact
+      set_fact:
+        test_fact: "simple value"
+
+    - name: Set a computed fact
+      set_fact:
+        computed_fact: "{{ test_fact | upper }}"
+
+    - name: Set multiple facts
+      set_fact:
+        fact1: "value1"
+        fact2: "value2"
+
+    - name: Verify facts are set
+      debug:
+        var: test_fact
+
+    - name: Verify computed fact
+      debug:
+        var: computed_fact
+
+    - name: Verify multiple facts
+      debug:
+        var: fact1
+
+    - name: Assert facts are set correctly
+      assert:
+        that:
+          - "test_fact == 'simple value'"
+          - "computed_fact == 'SIMPLE VALUE'"
+          - "fact1 == 'value1'"
+          - "fact2 == 'value2'"

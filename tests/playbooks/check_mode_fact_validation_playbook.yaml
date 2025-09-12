@@ -1,0 +1,38 @@
+---
+- name: Validate Check Mode Fact
+  hosts: all
+  tasks:
+    - name: Verify ansible_check_mode fact is available
+      debug:
+        msg: "ansible_check_mode is {{ ansible_check_mode }}"
+
+    - name: Assert check mode fact is true
+      assert:
+        that:
+          - "ansible_check_mode == true"
+
+    - name: Test conditional execution based on check mode
+      debug:
+        msg: "This task should run in check mode"
+      when: ansible_check_mode
+
+    - name: Test conditional execution that should NOT run
+      debug:
+        msg: "This task should NOT run in check mode"
+      when: not ansible_check_mode
+
+    - name: Test file creation that should be skipped
+      file:
+        path: /tmp/spage/check_mode_fact_test.txt
+        state: touch
+      when: not ansible_check_mode
+
+    - name: Verify file was not created in check mode
+      stat:
+        path: /tmp/spage/check_mode_fact_test.txt
+      register: check_mode_file_stat
+
+    - name: Assert file does not exist in check mode
+      assert:
+        that:
+          - "not check_mode_file_stat.stat.exists"

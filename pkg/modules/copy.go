@@ -123,6 +123,8 @@ func (m CopyModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg
 		}
 	}
 
+	checkMode := closure.IsCheckMode()
+
 	if copyParams.Src != "" {
 		// TODO: copy as user
 		common.DebugOutput("Copying %s to %s", copyParams.Src, copyParams.Dst)
@@ -132,15 +134,30 @@ func (m CopyModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg
 			return nil, fmt.Errorf("failed to read source file %s: %v", copyParams.Src, err)
 		}
 
-		// Write the contents to destination
-		if err := closure.HostContext.WriteFile(copyParams.Dst, newContents, runAs); err != nil {
-			return nil, fmt.Errorf("failed to write to %s: %v", copyParams.Dst, err)
+		// Write the contents to destination (skip in check mode)
+		if checkMode {
+			common.LogDebug("Would copy file from %s to %s", map[string]interface{}{
+				"host": closure.HostContext.Host.Name,
+				"src":  copyParams.Src,
+				"dst":  copyParams.Dst,
+			})
+		} else {
+			if err := closure.HostContext.WriteFile(copyParams.Dst, newContents, runAs); err != nil {
+				return nil, fmt.Errorf("failed to write to %s: %v", copyParams.Dst, err)
+			}
 		}
 	}
 
 	if copyParams.Content != "" {
-		if err := closure.HostContext.WriteFile(copyParams.Dst, copyParams.Content, runAs); err != nil {
-			return nil, fmt.Errorf("failed to place contents in %s: %v", copyParams.Dst, err)
+		if checkMode {
+			common.LogDebug("Would write content to %s", map[string]interface{}{
+				"host": closure.HostContext.Host.Name,
+				"dst":  copyParams.Dst,
+			})
+		} else {
+			if err := closure.HostContext.WriteFile(copyParams.Dst, copyParams.Content, runAs); err != nil {
+				return nil, fmt.Errorf("failed to place contents in %s: %v", copyParams.Dst, err)
+			}
 		}
 		newContents = copyParams.Content
 	}
@@ -148,8 +165,16 @@ func (m CopyModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg
 	// Apply mode if specified
 	newMode := originalMode
 	if copyParams.Mode != "" {
-		if err := closure.HostContext.SetFileMode(copyParams.Dst, copyParams.Mode, runAs); err != nil {
-			return nil, fmt.Errorf("failed to set mode %s on %s: %w", copyParams.Mode, copyParams.Dst, err)
+		if checkMode {
+			common.LogDebug("Would set mode %s on %s", map[string]interface{}{
+				"host": closure.HostContext.Host.Name,
+				"mode": copyParams.Mode,
+				"path": copyParams.Dst,
+			})
+		} else {
+			if err := closure.HostContext.SetFileMode(copyParams.Dst, copyParams.Mode, runAs); err != nil {
+				return nil, fmt.Errorf("failed to set mode %s on %s: %w", copyParams.Mode, copyParams.Dst, err)
+			}
 		}
 		newMode = copyParams.Mode
 	}

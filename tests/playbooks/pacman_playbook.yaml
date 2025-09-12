@@ -1,0 +1,18 @@
+---
+- name: Test Pacman Module
+  hosts: all
+  tasks:
+    - name: Install a package with pacman
+      pacman:
+        name: vim
+        state: present
+
+    - name: Verify package is installed
+      command: pacman -Q vim
+      register: package_check
+      failed_when: false
+
+    - name: Assert package status
+      assert:
+        that:
+          - "package_check.rc == 0"

@@ -1,0 +1,20 @@
+---
+- name: Test Git Module
+  hosts: all
+  tasks:
+    - name: Clone a test repository
+      git:
+        repo: https://github.com/AlexanderGrooff/spage.git
+        dest: /tmp/spage/git_test_repo
+        version: main
+
+    - name: Verify repository was cloned
+      stat:
+        path: /tmp/spage/git_test_repo
+      register: git_repo_stat
+
+    - name: Assert repository exists
+      assert:
+        that:
+          - "git_repo_stat.stat.exists"
+          - "git_repo_stat.stat.isdir"

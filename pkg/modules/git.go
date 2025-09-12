@@ -109,12 +109,34 @@ func (m GitModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.
 	}
 
 	revBefore, err := m.GetCurrentRev(gitParams.Dest, closure.HostContext, runAs)
+	checkMode := false
+	checkMode = closure.IsCheckMode()
 	if err != nil {
+		// Repo not present or unreadable
+		if checkMode {
+			common.LogDebug("Would clone repository %s to %s", map[string]interface{}{
+				"host": closure.HostContext.Host.Name,
+				"repo": gitParams.Repo,
+				"dest": gitParams.Dest,
+			})
+			// Simulate clone: before is empty, after is unknown placeholder
+			return GitOutput{Rev: pkg.RevertableChange[string]{Before: "", After: "<would-clone>"}, Dest: gitParams.Dest}, nil
+		}
 		if err := m.CloneRepo(gitParams.Repo, gitParams.Dest, closure.HostContext, runAs); err != nil {
 			return nil, err
 		}
+		revBefore = ""
 	}
 	if gitParams.Version != "" {
+		if checkMode {
+			common.LogDebug("Would checkout version %s in repository %s", map[string]interface{}{
+				"host":    closure.HostContext.Host.Name,
+				"version": gitParams.Version,
+				"dest":    gitParams.Dest,
+			})
+			// Simulate checkout: after becomes requested version label
+			return GitOutput{Rev: pkg.RevertableChange[string]{Before: revBefore, After: gitParams.Version}, Dest: gitParams.Dest}, nil
+		}
 		if _, err := m.CheckoutVersion(gitParams.Dest, gitParams.Version, closure.HostContext, runAs); err != nil {
 			return nil, err
 		}

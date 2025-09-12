@@ -153,6 +153,19 @@ func (m TemplateModule) templateContentsToFile(src, dest string, closure *pkg.Cl
 	}
 
 	originalContents, _ := closure.HostContext.ReadFile(dest, runAs)
+
+	// Detect check mode
+	checkMode := closure.IsCheckMode()
+
+	if checkMode {
+		// Simulate write: do not change filesystem, but return new content
+		common.LogDebug("Would write template file to %s", map[string]interface{}{
+			"host": closure.HostContext.Host.Name,
+			"path": dest,
+		})
+		return originalContents, templatedContents, nil
+	}
+
 	if err := closure.HostContext.WriteFile(dest, templatedContents, runAs); err != nil {
 		return "", "", fmt.Errorf("failed to write to file %s: %v", dest, err)
 	}
@@ -178,11 +191,22 @@ func (m TemplateModule) Execute(params pkg.ConcreteModuleInputProvider, closure 
 		return nil, err
 	}
 
+	// Apply mode if provided, honoring check mode
 	if templateParams.Mode != "" {
-		if err := closure.HostContext.SetFileMode(templateParams.Dst, templateParams.Mode, runAs); err != nil {
-			// Attempt to revert the content change if setting mode fails
-			_ = closure.HostContext.WriteFile(templateParams.Dst, original, runAs) // Best effort revert
-			return nil, fmt.Errorf("failed to set mode %s for file %s: %w", templateParams.Mode, templateParams.Dst, err)
+		checkMode := closure.IsCheckMode()
+		if checkMode {
+			common.LogDebug("Would set mode %s on %s", map[string]interface{}{
+				"host": closure.HostContext.Host.Name,
+				"mode": templateParams.Mode,
+				"path": templateParams.Dst,
+			})
+			// Simulate mode change by not touching filesystem
+		} else {
+			if err := closure.HostContext.SetFileMode(templateParams.Dst, templateParams.Mode, runAs); err != nil {
+				// Attempt to revert the content change if setting mode fails
+				_ = closure.HostContext.WriteFile(templateParams.Dst, original, runAs) // Best effort revert
+				return nil, fmt.Errorf("failed to set mode %s for file %s: %w", templateParams.Mode, templateParams.Dst, err)
+			}
 		}
 	}
 

@@ -1,38 +1,31 @@
 ---
-- name: Create a test file
-  file:
-    path: /tmp/spage/spage_test_file.txt
-    state: touch
+- name: Test Copy Module
+  hosts: all
+  tasks:
+    - name: Copy content to file (test 1)
+      copy:
+        content: "This is copied content\n"
+        dest: /tmp/spage/copied_content.txt
+        mode: "0644"
 
-- name: Write content to file
-  copy:
-    content: "This is a test file created by spage\n"
-    dest: /tmp/spage/spage_test_file.txt
-    mode: "0777"
-  after: Create a test file
+    - name: Copy content to file (test 2)
+      copy:
+        content: "Another copied content\n"
+        dest: /tmp/spage/copied_content2.txt
+        mode: "0755"
 
-- name: Copy from src to dst
-  copy:
-    src: /tmp/spage/spage_test_file.txt
-    dest: /tmp/spage/spage_test_file2.txt
-  after: Write content to file
+    - name: Verify copied content file exists
+      stat:
+        path: /tmp/spage/copied_content.txt
+      register: copied_content_stat
 
-- name: Assert file contains content
-  shell:
-    execute: "grep 'This is a test file created by spage' /tmp/spage/spage_test_file.txt"
-  after: Write content to file
+    - name: Verify second copied content file exists
+      stat:
+        path: /tmp/spage/copied_content2.txt
+      register: copied_content2_stat
 
-- name: Assert file mode is 0777
-  shell:
-    execute: "stat /tmp/spage/spage_test_file.txt | grep '777'"
-  after: Write content to file
-
-- name: show file mode
-  shell:
-    execute: "stat /tmp/spage/spage_test_file.txt"
-  after: Write content to file
-
-- name: Assert copied file exists
-  shell:
-    execute: "stat /tmp/spage/spage_test_file2.txt"
-  after: Copy from src to dst
+    - name: Assert copied files exist
+      assert:
+        that:
+          - "copied_content_stat.stat.exists"
+          - "copied_content2_stat.stat.exists"

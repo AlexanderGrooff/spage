@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/AlexanderGrooff/spage/pkg"
+	"github.com/AlexanderGrooff/spage/pkg/common"
 )
 
 type SystemdModule struct{}
@@ -132,30 +133,58 @@ func (m SystemdModule) Execute(params pkg.ConcreteModuleInputProvider, closure *
 	if err != nil {
 		return SystemdOutput{}, err
 	}
+	checkMode := closure.IsCheckMode()
+	desired := stateBeforeExecute
 	if systemdParams.DaemonReload {
-		err := m.DaemonReload(closure.HostContext, runAs)
-		if err != nil {
-			return SystemdOutput{}, err
+		if checkMode {
+			common.LogDebug("Would reload systemd daemon", map[string]interface{}{
+				"host": closure.HostContext.Host.Name,
+			})
+			// no-op in check mode
+		} else {
+			if err := m.DaemonReload(closure.HostContext, runAs); err != nil {
+				return SystemdOutput{}, err
+			}
 		}
 	}
 	if systemdParams.Enabled && !stateBeforeExecute.Enabled {
-		err := m.Enable(systemdParams.Name, closure.HostContext, runAs)
-		if err != nil {
-			return SystemdOutput{}, err
+		if checkMode {
+			common.LogDebug("Would enable service %s", map[string]interface{}{
+				"host":    closure.HostContext.Host.Name,
+				"service": systemdParams.Name,
+			})
+			desired.Enabled = true
+		} else {
+			if err := m.Enable(systemdParams.Name, closure.HostContext, runAs); err != nil {
+				return SystemdOutput{}, err
+			}
 		}
 	}
 	if systemdParams.State == "started" && !stateBeforeExecute.Started {
-		err := m.Start(systemdParams.Name, closure.HostContext, runAs)
-		if err != nil {
-			return SystemdOutput{}, err
+		if checkMode {
+			common.LogDebug("Would start service %s", map[string]interface{}{
+				"host":    closure.HostContext.Host.Name,
+				"service": systemdParams.Name,
+			})
+			desired.Started = true
+		} else {
+			if err := m.Start(systemdParams.Name, closure.HostContext, runAs); err != nil {
+				return SystemdOutput{}, err
+			}
 		}
 	}
-	currentState, err := m.getCurrentState(systemdParams.Name, closure.HostContext, runAs)
-	if err != nil {
-		return SystemdOutput{}, err
-	}
-	if systemdParams.State == "started" && !currentState.Started {
-		return SystemdOutput{}, fmt.Errorf("failed to start service %q", systemdParams.Name)
+	var currentState SystemdState
+	if checkMode {
+		currentState = desired
+	} else {
+		var gerr error
+		currentState, gerr = m.getCurrentState(systemdParams.Name, closure.HostContext, runAs)
+		if gerr != nil {
+			return SystemdOutput{}, gerr
+		}
+		if systemdParams.State == "started" && !currentState.Started {
+			return SystemdOutput{}, fmt.Errorf("failed to start service %q", systemdParams.Name)
+		}
 	}
 	return SystemdOutput{
 		State: pkg.RevertableChange[SystemdState]{

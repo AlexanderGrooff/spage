@@ -1,0 +1,20 @@
+---
+- name: Test Systemd Module
+  hosts: all
+  tasks:
+    - name: Start and enable a service (using a harmless service like systemd-resolved)
+      systemd:
+        name: systemd-resolved
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+    - name: Verify service is running
+      command: systemctl is-active systemd-resolved
+      register: service_status
+      failed_when: false
+
+    - name: Assert service status
+      assert:
+        that:
+          - "service_status.rc == 0"

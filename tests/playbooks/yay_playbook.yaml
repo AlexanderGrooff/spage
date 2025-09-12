@@ -1,0 +1,18 @@
+---
+- name: Test Yay Module
+  hosts: all
+  tasks:
+    - name: Install a package with yay
+      yay:
+        name: neofetch
+        state: present
+
+    - name: Verify package is installed
+      command: yay -Q neofetch
+      register: package_check
+      failed_when: false
+
+    - name: Assert package status
+      assert:
+        that:
+          - "package_check.rc == 0"

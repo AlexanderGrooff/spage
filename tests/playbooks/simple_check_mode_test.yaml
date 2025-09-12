@@ -1,0 +1,27 @@
+---
+- name: Simple Check Mode Test
+  hosts: all
+  tasks:
+    - name: Verify ansible_check_mode fact is set
+      debug:
+        msg: "ansible_check_mode is {{ ansible_check_mode }}"
+
+    - name: Assert check mode fact is true
+      assert:
+        that:
+          - "ansible_check_mode == true"
+
+    - name: Create a file (should not execute in check mode)
+      file:
+        path: /tmp/spage/simple_check_test.txt
+        state: touch
+
+    - name: Verify file was not created
+      stat:
+        path: /tmp/spage/simple_check_test.txt
+      register: test_file_stat
+
+    - name: Assert file does not exist
+      assert:
+        that:
+          - "not test_file_stat.stat.exists"

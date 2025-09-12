@@ -105,7 +105,7 @@ func (m ShellModule) templateAndExecute(command string, closure *pkg.Closure, pr
 }
 
 func (m ShellModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
-	if checkMode, ok := closure.GetFact("ansible_check_mode"); ok && checkMode.(bool) {
+	if closure.IsCheckMode() {
 		return ShellOutput{}, nil
 	}
 

@@ -276,12 +276,21 @@ func (m AnsiblePythonModule) executePythonModule(params AnsiblePythonInput, clos
 		return nil, fmt.Errorf("failed to write inventory file: %w", err)
 	}
 
+	checkMode := closure.IsCheckMode()
+
 	// Execute ansible-playbook
-	cmd := exec.Command("ansible-playbook",
+	args := []string{
 		"-i", inventoryFile,
 		"-v", // Verbose output to get JSON results
-		playbookFile,
-	)
+	}
+
+	// Add --check flag if in check mode
+	if checkMode {
+		args = append(args, "--check")
+	}
+
+	args = append(args, playbookFile)
+	cmd := exec.Command("ansible-playbook", args...)
 
 	// Set environment variables
 	cmd.Env = os.Environ()
@@ -295,7 +304,7 @@ func (m AnsiblePythonModule) executePythonModule(params AnsiblePythonInput, clos
 
 	output, err := cmd.CombinedOutput()
 
-	common.DebugOutput("Ansible command output on host %s with connection %s: %s", closure.HostContext.Host.Name, connection, string(output))
+	common.DebugOutput("Ansible command output on host %s with connection %s (check_mode: %t): %s", closure.HostContext.Host.Name, connection, checkMode, string(output))
 
 	result := m.parseAnsibleOutput(string(output), params.ModuleName)
 

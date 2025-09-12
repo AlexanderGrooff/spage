@@ -148,6 +148,19 @@ func (lm LineinfileModule) Execute(params pkg.ConcreteModuleInputProvider, closu
 	// Handle file creation if requested and file doesn't exist
 	if !originalFileExists && input.Create {
 		if state == "present" {
+			checkMode := closure.IsCheckMode()
+			if checkMode {
+				common.LogDebug("Would create file %s with line", map[string]interface{}{
+					"host": closure.HostContext.Host.Name,
+					"path": input.Path,
+				})
+				return LineinfileOutput{
+					Msg:                fmt.Sprintf("(check mode) would create %s with line", input.Path),
+					Diff:               pkg.RevertableChange[string]{Before: "", After: input.Line + "\n"},
+					OriginalFileExists: false,
+					ShouldShowDiff:     pkg.ShouldShowDiff(closure),
+				}, nil
+			}
 			if err := closure.HostContext.WriteFile(input.Path, input.Line+"\n", runAs); err != nil {
 				return nil, fmt.Errorf("failed to create and write to file %s: %w", input.Path, err)
 			}
@@ -311,8 +324,16 @@ func (lm LineinfileModule) Execute(params pkg.ConcreteModuleInputProvider, closu
 	}
 
 	if modified {
-		if err := closure.HostContext.WriteFile(input.Path, finalContent, runAs); err != nil {
-			return nil, fmt.Errorf("failed to write updated content to %s: %w", input.Path, err)
+		checkMode := closure.IsCheckMode()
+		if checkMode {
+			common.LogDebug("Would modify file %s", map[string]interface{}{
+				"host": closure.HostContext.Host.Name,
+				"path": input.Path,
+			})
+		} else {
+			if err := closure.HostContext.WriteFile(input.Path, finalContent, runAs); err != nil {
+				return nil, fmt.Errorf("failed to write updated content to %s: %w", input.Path, err)
+			}
 		}
 		msg := ""
 		if state == "present" {

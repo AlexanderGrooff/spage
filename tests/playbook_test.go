@@ -992,6 +992,302 @@ func TestCheckMode(t *testing.T) {
 	})
 }
 
+func TestCheckModeFileModule(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/file_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "check_mode file module should succeed")
+			// In check mode, no files should be created
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/spage_test_file.txt", inventory)
+		},
+	})
+}
+
+func TestCheckModeTemplateModule(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/template_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "check_mode template module should succeed")
+			// In check mode, template files should not be created
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/test.conf", inventory)
+		},
+	})
+}
+
+func TestCheckModeCopyModule(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/copy_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "check_mode copy module should succeed")
+			// In check mode, copied files should not be created
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/copied_content.txt", inventory)
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/copied_content2.txt", inventory)
+		},
+	})
+}
+
+func TestCheckModeLineinfileModule(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/lineinfile_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "check_mode lineinfile module should succeed")
+			// In check mode, lineinfile changes should not be applied
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/lineinfile_test.txt", inventory)
+		},
+	})
+}
+
+func TestCheckModeCommandModule(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/command_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "check_mode command module should succeed")
+			// In check mode, commands should not execute
+		},
+	})
+}
+
+func TestCheckModeShellModule(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/shell_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "check_mode shell module should succeed")
+			// In check mode, shell commands should not execute
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/spage_test", inventory)
+		},
+	})
+}
+
+func TestCheckModeAptModule(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/apt_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "check_mode apt module should succeed")
+			// In check mode, apt operations should not be executed
+		},
+	})
+}
+
+func TestCheckModeYumModule(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/yum_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "check_mode yum module should succeed")
+			// In check mode, yum operations should not be executed
+		},
+	})
+}
+
+func TestCheckModeGitModule(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/git_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "check_mode git module should succeed")
+			// In check mode, git operations should not be executed
+		},
+	})
+}
+
+func TestCheckModeSystemdModule(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/systemd_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "check_mode systemd module should succeed")
+			// In check mode, systemd operations should not be executed
+		},
+	})
+}
+
+func TestCheckModeAnsiblePythonModule(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/ansible_builtin_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "check_mode ansible_python module should succeed")
+			// In check mode, ansible_python operations should not be executed
+		},
+	})
+}
+
+func TestCheckModePacmanModule(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/pacman_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "check_mode pacman module should succeed")
+			// In check mode, pacman operations should not be executed
+		},
+	})
+}
+
+func TestCheckModeYayModule(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/yay_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "check_mode yay module should succeed")
+			// In check mode, yay operations should not be executed
+		},
+	})
+}
+
+func TestCheckModeStatModule(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/stat_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "check_mode stat module should succeed")
+			// Stat module is read-only, so check mode should work normally
+		},
+	})
+}
+
+func TestCheckModeSlurpModule(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/slurp_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "check_mode slurp module should succeed")
+			// Slurp module is read-only, so check mode should work normally
+		},
+	})
+}
+
+func TestCheckModeSetFactModule(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/set_fact_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "check_mode set_fact module should succeed")
+			// Set_fact module should work in check mode as it only sets variables
+		},
+	})
+}
+
+func TestCheckModeDebugModule(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/debug_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "check_mode debug module should succeed")
+			// Debug module should work in check mode as it only outputs information
+		},
+	})
+}
+
+func TestCheckModeAssertModule(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/assert_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			// Assert module should still fail in check mode as it's testing conditions
+			assert.NotEqual(t, 0, exitCode, "check_mode assert module should still fail when conditions are not met")
+		},
+	})
+}
+
+func TestCheckModeFailModule(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/fail_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			// Fail module should still fail in check mode
+			assert.NotEqual(t, 0, exitCode, "check_mode fail module should still fail")
+		},
+	})
+}
+
+func TestComprehensiveCheckMode(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/comprehensive_check_mode_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "comprehensive check mode test should succeed")
+
+			// Verify that no state-changing files were created
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/check_mode_file.txt", inventory)
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/check_mode_dir", inventory)
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/check_mode_template.conf", inventory)
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/check_mode_copy.txt", inventory)
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/check_mode_lineinfile.txt", inventory)
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/check_mode_command.txt", inventory)
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/check_mode_shell.txt", inventory)
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/check_mode_git_repo", inventory)
+
+			// Verify that the test output contains check mode indicators
+			assert.Contains(t, output, "check mode is working", "Output should contain check mode test fact")
+		},
+	})
+}
+
+func TestCheckModeFactValidation(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/check_mode_fact_validation_playbook.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "check mode fact validation should succeed")
+
+			// Verify that the ansible_check_mode fact is properly set
+			assert.Contains(t, output, "ansible_check_mode is true", "Output should show check mode fact is true")
+
+			// Verify that conditional tasks based on check mode work correctly
+			assert.Contains(t, output, "This task should run in check mode", "Conditional task should run")
+			assert.NotContains(t, output, "This task should NOT run in check mode", "Conditional task should not run")
+
+			// Verify that no files were created
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/check_mode_fact_test.txt", inventory)
+		},
+	})
+}
+
+func TestSimpleCheckMode(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/simple_check_mode_test.yaml",
+		configFile:   "sequential.yaml",
+		checkMode:    true,
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			assert.Equal(t, 0, exitCode, "simple check mode test should succeed")
+
+			// Verify that the ansible_check_mode fact is properly set
+			assert.Contains(t, output, "ansible_check_mode is true", "Output should show check mode fact is true")
+
+			// Verify that no files were created
+			assertFileDoesNotExistWithInventory(t, "/tmp/spage/simple_check_test.txt", inventory)
+		},
+	})
+}
+
 func TestDiffMode(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
 		playbookFile: "playbooks/diff_mode_playbook.yaml",

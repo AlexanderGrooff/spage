@@ -564,16 +564,34 @@ func (m YumModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.
 	}
 
 	if yumParams.UpdateCache {
-		common.LogDebug("Updating yum cache", map[string]interface{}{"host": closure.HostContext.Host.Name})
-		_, _, cacheChanged, err := runYumCommand(closure.HostContext, runAs, templatedEnablerepo, templatedDisablerepo, templatedExclude, "update")
-		if err != nil {
-			return nil, fmt.Errorf("failed to update yum cache: %w", err)
+		checkMode := closure.IsCheckMode()
+		if checkMode {
+			common.LogDebug("Would update yum cache", map[string]interface{}{
+				"host": closure.HostContext.Host.Name,
+			})
+			overallChanged = true
+		} else {
+			common.LogDebug("Updating yum cache", map[string]interface{}{"host": closure.HostContext.Host.Name})
+			_, _, cacheChanged, err := runYumCommand(closure.HostContext, runAs, templatedEnablerepo, templatedDisablerepo, templatedExclude, "update")
+			if err != nil {
+				return nil, fmt.Errorf("failed to update yum cache: %w", err)
+			}
+			overallChanged = overallChanged || cacheChanged
 		}
-		overallChanged = overallChanged || cacheChanged
 	}
 
 	// If autoremove is requested without explicit packages, run it directly
 	if yumParams.Autoremove && len(templatedPkgNames) == 0 {
+		checkMode := closure.IsCheckMode()
+		if checkMode {
+			common.LogDebug("Would run yum autoremove", map[string]interface{}{
+				"host": closure.HostContext.Host.Name,
+			})
+			overallChanged = true
+			output.State = "autoremoved"
+			output.WasChanged = overallChanged
+			return output, nil
+		}
 		common.LogDebug("Running yum autoremove (no packages specified)", map[string]interface{}{"host": closure.HostContext.Host.Name})
 		_, _, autoChanged, err := runYumCommand(closure.HostContext, runAs, templatedEnablerepo, templatedDisablerepo, templatedExclude, "autoremove")
 		if err != nil {
@@ -621,25 +639,45 @@ func (m YumModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.
 
 	// Execute yum commands if needed
 	if len(pkgsToInstall) > 0 {
-		common.LogDebug("Ensuring packages are present/latest", map[string]interface{}{"host": closure.HostContext.Host.Name, "packages": pkgsToInstall, "state": yumParams.State})
-		args := append([]string{"install"}, pkgsToInstall...)
-		_, _, changed, err := runYumCommand(closure.HostContext, runAs, templatedEnablerepo, templatedDisablerepo, templatedExclude, args...)
-		if err != nil {
-			return nil, fmt.Errorf("failed to install/upgrade packages %v: %w", pkgsToInstall, err)
+		checkMode := closure.IsCheckMode()
+		if checkMode {
+			common.LogDebug("Would install/upgrade packages", map[string]interface{}{
+				"host":     closure.HostContext.Host.Name,
+				"packages": pkgsToInstall,
+			})
+			overallChanged = true
+			finalState = "installed"
+		} else {
+			common.LogDebug("Ensuring packages are present/latest", map[string]interface{}{"host": closure.HostContext.Host.Name, "packages": pkgsToInstall, "state": yumParams.State})
+			args := append([]string{"install"}, pkgsToInstall...)
+			_, _, changed, err := runYumCommand(closure.HostContext, runAs, templatedEnablerepo, templatedDisablerepo, templatedExclude, args...)
+			if err != nil {
+				return nil, fmt.Errorf("failed to install/upgrade packages %v: %w", pkgsToInstall, err)
+			}
+			overallChanged = overallChanged || changed
+			finalState = "installed"
 		}
-		overallChanged = overallChanged || changed
-		finalState = "installed"
 	}
 
 	if len(pkgsToRemove) > 0 {
-		common.LogDebug("Ensuring packages are absent", map[string]interface{}{"host": closure.HostContext.Host.Name, "packages": pkgsToRemove})
-		args := append([]string{"remove"}, pkgsToRemove...)
-		_, _, changed, err := runYumCommand(closure.HostContext, runAs, templatedEnablerepo, templatedDisablerepo, templatedExclude, args...)
-		if err != nil {
-			return nil, fmt.Errorf("failed to remove packages %v: %w", pkgsToRemove, err)
+		checkMode := closure.IsCheckMode()
+		if checkMode {
+			common.LogDebug("Would remove packages", map[string]interface{}{
+				"host":     closure.HostContext.Host.Name,
+				"packages": pkgsToRemove,
+			})
+			overallChanged = true
+			finalState = "removed"
+		} else {
+			common.LogDebug("Ensuring packages are absent", map[string]interface{}{"host": closure.HostContext.Host.Name, "packages": pkgsToRemove})
+			args := append([]string{"remove"}, pkgsToRemove...)
+			_, _, changed, err := runYumCommand(closure.HostContext, runAs, templatedEnablerepo, templatedDisablerepo, templatedExclude, args...)
+			if err != nil {
+				return nil, fmt.Errorf("failed to remove packages %v: %w", pkgsToRemove, err)
+			}
+			overallChanged = overallChanged || changed
+			finalState = "removed"
 		}
-		overallChanged = overallChanged || changed
-		finalState = "removed"
 	}
 
 	// If requested, perform an autoremove to clean up leaf dependencies after removals

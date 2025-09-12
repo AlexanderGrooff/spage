@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/AlexanderGrooff/spage/pkg"
+	"github.com/AlexanderGrooff/spage/pkg/common"
 )
 
 type PacmanModule struct{}
@@ -139,11 +140,40 @@ func (m PacmanModule) Execute(params pkg.ConcreteModuleInputProvider, closure *p
 
 	packages := pacmanParams.Name
 	state := pacmanParams.State
+	checkMode := false
+	checkMode = closure.IsCheckMode()
+
+	if checkMode {
+		if state == "absent" {
+			common.LogDebug("Would remove packages", map[string]interface{}{
+				"host":     closure.HostContext.Host.Name,
+				"packages": packages,
+			})
+			presentPackages := []string{}
+			for _, packageName := range packages {
+				if m.IsPackageInstalled(packageName, closure.HostContext, runAs) {
+					presentPackages = append(presentPackages, packageName)
+				}
+			}
+			return PacmanOutput{Removed: presentPackages}, nil
+		}
+		common.LogDebug("Would install packages", map[string]interface{}{
+			"host":     closure.HostContext.Host.Name,
+			"packages": packages,
+		})
+		missingPackages := []string{}
+		for _, packageName := range packages {
+			if !m.IsPackageInstalled(packageName, closure.HostContext, runAs) {
+				missingPackages = append(missingPackages, packageName)
+			}
+		}
+		return PacmanOutput{Installed: missingPackages}, nil
+	}
+
 	if state == "absent" {
 		return m.RemovePackages(packages, closure.HostContext, runAs)
-	} else {
-		return m.InstallPackages(packages, closure.HostContext, runAs)
 	}
+	return m.InstallPackages(packages, closure.HostContext, runAs)
 }
 
 func (m PacmanModule) Revert(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, previous pkg.ModuleOutput, runAs string) (pkg.ModuleOutput, error) {

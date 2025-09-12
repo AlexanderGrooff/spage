@@ -235,63 +235,101 @@ func (m FileModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg
 		}
 	}
 
+	// Check mode detection
+	checkMode := closure.IsCheckMode()
+
 	// 2. Apply state changes if needed
 	if desiredState != originalState || !originalExists {
 		common.DebugOutput("Applying state change from %q to %q for %s", originalState, desiredState, templatedPath)
 		actionTaken = true
-		// If target state is different from absent, ensure path is clear first unless creating a directory
-		if originalExists && desiredState != originalState && desiredState != "absent" && desiredState != "directory" {
-			if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
-				return nil, fmt.Errorf("failed to remove existing path %s before changing state: %v", templatedPath, err)
+		if checkMode {
+			common.LogDebug("Would change %s from %s to %s", map[string]interface{}{
+				"host": closure.HostContext.Host.Name,
+				"path": templatedPath,
+				"from": originalState,
+				"to":   desiredState,
+			})
+			// Simulate outcome without changing system
+			switch desiredState {
+			case "file":
+				newExists = true
+				newState = "file"
+			case "directory":
+				newExists = true
+				newState = "directory"
+			case "absent":
+				newExists = false
+				newState = "absent"
+			case "link":
+				newExists = true
+				newState = "link"
+				newLinkTarget = templatedSrc
 			}
-		}
-
-		switch desiredState {
-		case "file":
-			// Ensure path exists as a file (touch)
-			if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("touch %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
-				return nil, fmt.Errorf("failed to touch file %s: %v", templatedPath, err)
-			}
-			newExists = true
-			newState = "file"
-		case "directory":
-			if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("mkdir -p %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
-				return nil, fmt.Errorf("failed to create directory %s: %v", templatedPath, err)
-			}
-			newExists = true
-			newState = "directory"
-		case "absent":
-			if originalExists {
+		} else {
+			// If target state is different from absent, ensure path is clear first unless creating a directory
+			if originalExists && desiredState != originalState && desiredState != "absent" && desiredState != "directory" {
 				if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
-					return nil, fmt.Errorf("failed to remove %s: %v", templatedPath, err)
+					return nil, fmt.Errorf("failed to remove existing path %s before changing state: %v", templatedPath, err)
 				}
 			}
-			newExists = false
-			newState = "absent"
-		case "link":
-			// Remove existing path if it's not already the link we want to create/update
-			if originalExists && (originalState != "link" || (originalState == "link" && originalLinkTarget != templatedSrc)) {
-				if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -f %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
-					return nil, fmt.Errorf("failed to remove existing file before creating link %s: %v", templatedPath, err)
+
+			switch desiredState {
+			case "file":
+				// Ensure path exists as a file (touch)
+				if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("touch %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
+					return nil, fmt.Errorf("failed to touch file %s: %v", templatedPath, err)
 				}
+				newExists = true
+				newState = "file"
+			case "directory":
+				if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("mkdir -p %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
+					return nil, fmt.Errorf("failed to create directory %s: %v", templatedPath, err)
+				}
+				newExists = true
+				newState = "directory"
+			case "absent":
+				if originalExists {
+					if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -rf %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
+						return nil, fmt.Errorf("failed to remove %s: %v", templatedPath, err)
+					}
+				}
+				newExists = false
+				newState = "absent"
+			case "link":
+				// Remove existing path if it's not already the link we want to create/update
+				if originalExists && (originalState != "link" || (originalState == "link" && originalLinkTarget != templatedSrc)) {
+					if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("rm -f %s", fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
+						return nil, fmt.Errorf("failed to remove existing file before creating link %s: %v", templatedPath, err)
+					}
+				}
+				// Create the symlink
+				if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("ln -sfn %s %s", fmt.Sprintf("%q", templatedSrc), fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
+					return nil, fmt.Errorf("failed to create symlink from %s to %s: %v", templatedSrc, templatedPath, err)
+				}
+				newExists = true
+				newState = "link"
 			}
-			// Create the symlink
-			if _, _, _, err := closure.HostContext.RunCommand(fmt.Sprintf("ln -sfn %s %s", fmt.Sprintf("%q", templatedSrc), fmt.Sprintf("%q", templatedPath)), runAs); err != nil {
-				return nil, fmt.Errorf("failed to create symlink from %s to %s: %v", templatedSrc, templatedPath, err)
-			}
-			newExists = true
-			newState = "link"
 		}
 	} else if desiredState == "link" && originalLinkTarget != templatedSrc {
 		// Special case: State is already 'link', but the target needs updating
 		common.DebugOutput("Updating link target for %s from %q to %q", templatedPath, originalLinkTarget, templatedSrc)
 		actionTaken = true
-		// Recreate the link with the new target
-		linkCmd := fmt.Sprintf("ln -sf %s %s", fmt.Sprintf("%q", templatedSrc), fmt.Sprintf("%q", templatedPath)) // Quote src and path
-		if _, _, _, err := closure.HostContext.RunCommand(linkCmd, runAs); err != nil {
-			return nil, fmt.Errorf("failed to update link %s -> %s: %v", templatedPath, templatedSrc, err)
+		if checkMode {
+			common.LogDebug("Would update link target for %s from %s to %s", map[string]interface{}{
+				"host": closure.HostContext.Host.Name,
+				"path": templatedPath,
+				"from": originalLinkTarget,
+				"to":   templatedSrc,
+			})
+			newLinkTarget = templatedSrc
+		} else {
+			// Recreate the link with the new target
+			linkCmd := fmt.Sprintf("ln -sf %s %s", fmt.Sprintf("%q", templatedSrc), fmt.Sprintf("%q", templatedPath)) // Quote src and path
+			if _, _, _, err := closure.HostContext.RunCommand(linkCmd, runAs); err != nil {
+				return nil, fmt.Errorf("failed to update link %s -> %s: %v", templatedPath, templatedSrc, err)
+			}
+			newLinkTarget = templatedSrc // Only target changes
 		}
-		newLinkTarget = templatedSrc // Only target changes
 	}
 
 	// 3. Apply mode changes if specified AND the file/dir exists after state changes
@@ -302,17 +340,26 @@ func (m FileModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg
 		finalMode := templatedMode                    // Assume templatedMode is octal for now
 		if finalMode != originalMode || actionTaken { // Apply if mode differs or if file was just created/state changed
 			common.DebugOutput("Applying mode %s to %s", finalMode, templatedPath)
-			if err := closure.HostContext.SetFileMode(templatedPath, finalMode, runAs); err != nil {
-				// Attempting to chmod a link target might fail if the link is broken
-				// SetFileMode handles local/remote automatically
-				// It might still fail for links, keep the warning
-				if newState == "link" {
-					common.DebugOutput("WARNING: Failed to set mode on target of link %s (mode %s): %v. This might be expected if link is broken.", templatedPath, finalMode, err)
-				} else {
-					return nil, fmt.Errorf("failed to set mode %s on %s: %w", finalMode, templatedPath, err)
-				}
-			} else {
+			if checkMode {
+				common.LogDebug("Would set mode %s on %s", map[string]interface{}{
+					"host": closure.HostContext.Host.Name,
+					"mode": finalMode,
+					"path": templatedPath,
+				})
 				newMode = finalMode
+			} else {
+				if err := closure.HostContext.SetFileMode(templatedPath, finalMode, runAs); err != nil {
+					// Attempting to chmod a link target might fail if the link is broken
+					// SetFileMode handles local/remote automatically
+					// It might still fail for links, keep the warning
+					if newState == "link" {
+						common.DebugOutput("WARNING: Failed to set mode on target of link %s (mode %s): %v. This might be expected if link is broken.", templatedPath, finalMode, err)
+					} else {
+						return nil, fmt.Errorf("failed to set mode %s on %s: %w", finalMode, templatedPath, err)
+					}
+				} else {
+					newMode = finalMode
+				}
 			}
 		}
 	}

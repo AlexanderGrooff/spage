@@ -145,6 +145,11 @@ type paramDoc struct {
 	Extra pkg.ParameterDoc
 }
 
+type moduleInfo struct {
+	HasRevert         bool
+	ProvidesVariables []string
+}
+
 func mergeParamDocs(fields []fieldDoc, docs map[string]pkg.ParameterDoc) []paramDoc {
 	byYaml := map[string]fieldDoc{}
 	for _, f := range fields {
@@ -172,6 +177,35 @@ func mergeParamDocs(fields []fieldDoc, docs map[string]pkg.ParameterDoc) []param
 	return out
 }
 
+func getModuleInfo(mod pkg.BaseModule) moduleInfo {
+	info := moduleInfo{
+		HasRevert:         false,
+		ProvidesVariables: []string{},
+	}
+
+	// Create a sample input to check HasRevert and ProvidesVariables
+	inputT := mod.InputType()
+	if inputT != nil {
+		// Handle both value and pointer types
+		var inputValue reflect.Value
+		if inputT.Kind() == reflect.Ptr {
+			// For pointer types, create a new instance and get the pointer
+			inputValue = reflect.New(inputT.Elem())
+		} else {
+			// For value types, create a new instance
+			inputValue = reflect.New(inputT).Elem()
+		}
+
+		// Check if it implements the ConcreteModuleInputProvider interface
+		if concreteInput, ok := inputValue.Interface().(pkg.ConcreteModuleInputProvider); ok {
+			info.HasRevert = concreteInput.HasRevert()
+			info.ProvidesVariables = concreteInput.ProvidesVariables()
+		}
+	}
+
+	return info
+}
+
 func writeModuleDoc(moduleName string, mod pkg.BaseModule, repoRoot, docsRoot string) error {
 	inputT := mod.InputType()
 	outputT := mod.OutputType()
@@ -188,6 +222,9 @@ func writeModuleDoc(moduleName string, mod pkg.BaseModule, repoRoot, docsRoot st
 	} else {
 		inputParamDocs = mergeParamDocs(inputFields, nil)
 	}
+
+	// Get module information
+	moduleInfo := getModuleInfo(mod)
 
 	b := &strings.Builder{}
 	fmt.Fprintf(b, "### %s module\n\n", moduleName)
@@ -207,6 +244,16 @@ func writeModuleDoc(moduleName string, mod pkg.BaseModule, repoRoot, docsRoot st
 			fmt.Fprint(b, content)
 		}
 	}
+
+	// Module capabilities
+	fmt.Fprintf(b, "**Module Capabilities**\n\n")
+	fmt.Fprintf(b, "- **Has Revert**: %t\n", moduleInfo.HasRevert)
+	if len(moduleInfo.ProvidesVariables) > 0 {
+		fmt.Fprintf(b, "- **Provides Variables**: %s\n", strings.Join(moduleInfo.ProvidesVariables, ", "))
+	} else {
+		fmt.Fprintf(b, "- **Provides Variables**: None\n")
+	}
+	fmt.Fprintln(b)
 
 	// Inputs table
 	fmt.Fprintf(b, "**Inputs**\n\n")

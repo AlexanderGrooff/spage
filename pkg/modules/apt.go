@@ -359,12 +359,21 @@ func (m AptModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.
 	// --- End Templating ---
 
 	if aptParams.UpdateCache {
-		common.LogDebug("Updating apt cache", map[string]interface{}{"host": closure.HostContext.Host.Name})
-		_, _, cacheChanged, err := runAptCommand(closure.HostContext, runAs, "update")
-		if err != nil {
-			return nil, fmt.Errorf("failed to update apt cache: %w", err)
+		checkMode := closure.IsCheckMode()
+		if checkMode {
+			common.LogDebug("Would update apt cache", map[string]interface{}{
+				"host": closure.HostContext.Host.Name,
+			})
+			// Simulate cache update
+			overallChanged = true
+		} else {
+			common.LogDebug("Updating apt cache", map[string]interface{}{"host": closure.HostContext.Host.Name})
+			_, _, cacheChanged, err := runAptCommand(closure.HostContext, runAs, "update")
+			if err != nil {
+				return nil, fmt.Errorf("failed to update apt cache: %w", err)
+			}
+			overallChanged = overallChanged || cacheChanged
 		}
-		overallChanged = overallChanged || cacheChanged
 	}
 
 	if len(templatedPkgNames) == 0 {
@@ -405,25 +414,45 @@ func (m AptModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.
 
 	// --- Execute apt commands if needed ---
 	if len(pkgsToInstall) > 0 {
-		common.LogDebug("Ensuring packages are present/latest", map[string]interface{}{"host": closure.HostContext.Host.Name, "packages": pkgsToInstall, "state": aptParams.State})
-		args := append([]string{"install"}, pkgsToInstall...)
-		_, _, changed, err := runAptCommand(closure.HostContext, runAs, args...)
-		if err != nil {
-			return nil, fmt.Errorf("failed to install/upgrade packages %v: %w", pkgsToInstall, err)
+		checkMode := closure.IsCheckMode()
+		if checkMode {
+			common.LogDebug("Would install/upgrade packages", map[string]interface{}{
+				"host":     closure.HostContext.Host.Name,
+				"packages": pkgsToInstall,
+			})
+			overallChanged = true
+			finalState = "installed"
+		} else {
+			common.LogDebug("Ensuring packages are present/latest", map[string]interface{}{"host": closure.HostContext.Host.Name, "packages": pkgsToInstall, "state": aptParams.State})
+			args := append([]string{"install"}, pkgsToInstall...)
+			_, _, changed, err := runAptCommand(closure.HostContext, runAs, args...)
+			if err != nil {
+				return nil, fmt.Errorf("failed to install/upgrade packages %v: %w", pkgsToInstall, err)
+			}
+			overallChanged = overallChanged || changed
+			finalState = "installed" // Simplification: assume installed/upgraded
 		}
-		overallChanged = overallChanged || changed
-		finalState = "installed" // Simplification: assume installed/upgraded
 	}
 
 	if len(pkgsToRemove) > 0 {
-		common.LogDebug("Ensuring packages are absent", map[string]interface{}{"host": closure.HostContext.Host.Name, "packages": pkgsToRemove})
-		args := append([]string{"remove"}, pkgsToRemove...)
-		_, _, changed, err := runAptCommand(closure.HostContext, runAs, args...)
-		if err != nil {
-			return nil, fmt.Errorf("failed to remove packages %v: %w", pkgsToRemove, err)
+		checkMode := closure.IsCheckMode()
+		if checkMode {
+			common.LogDebug("Would remove packages", map[string]interface{}{
+				"host":     closure.HostContext.Host.Name,
+				"packages": pkgsToRemove,
+			})
+			overallChanged = true
+			finalState = "removed"
+		} else {
+			common.LogDebug("Ensuring packages are absent", map[string]interface{}{"host": closure.HostContext.Host.Name, "packages": pkgsToRemove})
+			args := append([]string{"remove"}, pkgsToRemove...)
+			_, _, changed, err := runAptCommand(closure.HostContext, runAs, args...)
+			if err != nil {
+				return nil, fmt.Errorf("failed to remove packages %v: %w", pkgsToRemove, err)
+			}
+			overallChanged = overallChanged || changed
+			finalState = "removed"
 		}
-		overallChanged = overallChanged || changed
-		finalState = "removed"
 	}
 
 	output.State = finalState

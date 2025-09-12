@@ -1,0 +1,111 @@
+---
+- name: Comprehensive Check Mode Test
+  hosts: all
+  tasks:
+    # File operations that should NOT create files in check mode
+    - name: Create a file (should not execute in check mode)
+      file:
+        path: /tmp/spage/check_mode_file.txt
+        state: touch
+
+    - name: Create a directory (should not execute in check mode)
+      file:
+        path: /tmp/spage/check_mode_dir
+        state: directory
+
+    # Template operations that should NOT create files in check mode
+    - name: Template a file (should not execute in check mode)
+      template:
+        src: templates/test.conf.j2
+        dest: /tmp/spage/check_mode_template.conf
+
+    # Copy operations that should NOT create files in check mode
+    - name: Copy a file (should not execute in check mode)
+      copy:
+        content: "check mode test content\n"
+        dest: /tmp/spage/check_mode_copy.txt
+
+    # Lineinfile operations that should NOT modify files in check mode
+    - name: Modify a file with lineinfile (should not execute in check mode)
+      lineinfile:
+        path: /tmp/spage/check_mode_lineinfile.txt
+        line: "This line should not be added in check mode"
+        create: yes
+
+    # Command operations that should NOT execute in check mode
+    - name: Execute a command (should not execute in check mode)
+      command: touch /tmp/spage/check_mode_command.txt
+
+    # Shell operations that should NOT execute in check mode
+    - name: Execute a shell command (should not execute in check mode)
+      shell: echo "check mode test" > /tmp/spage/check_mode_shell.txt
+
+    # Package operations that should NOT execute in check mode
+    - name: Install a package with apt (should not execute in check mode)
+      apt:
+        name: curl
+        state: present
+      when: ansible_distribution == "Ubuntu"
+
+    - name: Install a package with yum (should not execute in check mode)
+      yum:
+        name: curl
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    # Git operations that should NOT execute in check mode
+    - name: Clone a repository (should not execute in check mode)
+      git:
+        repo: https://github.com/octocat/Hello-World.git
+        dest: /tmp/spage/check_mode_git_repo
+
+    # Systemd operations that should NOT execute in check mode
+    - name: Start a service (should not execute in check mode)
+      systemd:
+        name: systemd-resolved
+        state: started
+        enabled: yes
+
+    # Read-only operations that SHOULD execute in check mode
+    - name: Stat a file (should execute in check mode)
+      stat:
+        path: /etc/passwd
+      register: passwd_stat
+
+    - name: Slurp a file (should execute in check mode)
+      slurp:
+        src: /etc/hostname
+      register: hostname_content
+
+    # Set facts should work in check mode
+    - name: Set a fact (should execute in check mode)
+      set_fact:
+        check_mode_test_fact: "check mode is working"
+
+    # Debug should work in check mode
+    - name: Debug output (should execute in check mode)
+      debug:
+        msg: "Check mode test is running"
+
+    # Assertions to verify check mode behavior
+    - name: Verify check mode fact is set
+      assert:
+        that:
+          - "ansible_check_mode == true"
+          - "check_mode_test_fact == 'check mode is working'"
+          - "passwd_stat.stat.exists"
+          - "hostname_content.content is defined"
+
+    # Verify that state-changing operations did NOT create files
+    - name: Verify no files were created by state-changing operations
+      assert:
+        that:
+          - "not (lookup('file', '/tmp/spage/check_mode_file.txt') is defined)"
+          - "not (lookup('file', '/tmp/spage/check_mode_dir') is defined)"
+          - "not (lookup('file', '/tmp/spage/check_mode_template.conf') is defined)"
+          - "not (lookup('file', '/tmp/spage/check_mode_copy.txt') is defined)"
+          - "not (lookup('file', '/tmp/spage/check_mode_lineinfile.txt') is defined)"
+          - "not (lookup('file', '/tmp/spage/check_mode_command.txt') is defined)"
+          - "not (lookup('file', '/tmp/spage/check_mode_shell.txt') is defined)"
+          - "not (lookup('file', '/tmp/spage/check_mode_git_repo') is defined)"
+      when: ansible_check_mode

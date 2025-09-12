@@ -65,3 +65,13 @@ func (c *Closure) Clone() *Closure {
 	}
 	return newClosure
 }
+
+// IsCheckMode returns true if ansible_check_mode fact is set to true
+func (c *Closure) IsCheckMode() bool {
+	if checkMode, ok := c.GetFact("ansible_check_mode"); ok {
+		if checkModeBool, ok := checkMode.(bool); ok {
+			return checkModeBool
+		}
+	}
+	return false
+}
