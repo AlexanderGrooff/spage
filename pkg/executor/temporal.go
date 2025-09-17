@@ -1357,13 +1357,13 @@ func (e *TemporalGraphExecutor) printPlayRecap(cfg *config.Config, recapStats ma
 }
 
 // SpageTemporalWorkflow defines the main workflow logic.
-func SpageTemporalWorkflow(ctx workflow.Context, graphInput *pkg.Graph, inventoryFile string, spageConfigInput *config.Config) error {
+func SpageTemporalWorkflow(ctx workflow.Context, graphInput *pkg.Graph, inventoryFile string, spageConfigInput *config.Config, limitPattern string) error {
 	logger := workflow.GetLogger(ctx)
 
 	temporalRunner := NewTemporalTaskRunner(ctx)
 	e := &TemporalGraphExecutor{Runner: *temporalRunner}
 
-	err := pkg.ExecuteGraph(e, graphInput, inventoryFile, spageConfigInput, spageConfigInput.GetDaemonReporting())
+	err := pkg.ExecuteGraphWithLimit(e, graphInput, inventoryFile, spageConfigInput, spageConfigInput.GetDaemonReporting(), limitPattern)
 
 	if err != nil {
 		logger.Error("SpageTemporalWorkflow failed", "error", err)
@@ -1379,6 +1379,7 @@ type RunSpageTemporalWorkerAndWorkflowOptions struct {
 	InventoryPath    string
 	LoadedConfig     *config.Config // Changed from ConfigPath to break import cycle with cmd
 	WorkflowIDPrefix string
+	LimitPattern     string
 }
 
 // RunSpageTemporalWorkerAndWorkflow sets up and runs a Temporal worker for Spage tasks,
@@ -1457,7 +1458,7 @@ func RunSpageTemporalWorkerAndWorkflow(opts RunSpageTemporalWorkerAndWorkflowOpt
 			"config_mode":       spageAppConfig.ExecutionMode,
 		})
 
-		we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, SpageTemporalWorkflow, opts.Graph, opts.InventoryPath, spageAppConfig)
+		we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, SpageTemporalWorkflow, opts.Graph, opts.InventoryPath, spageAppConfig, opts.LimitPattern)
 		if err != nil {
 			common.LogError("Unable to execute SpageTemporalWorkflow", map[string]interface{}{"error": err})
 			return err

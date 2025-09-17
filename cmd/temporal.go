@@ -35,6 +35,7 @@ func StartTemporalExecutorWithLimit(graph *pkg.Graph, inventoryFile string, spag
 		InventoryPath:    inventoryFile,
 		LoadedConfig:     spageAppConfig, // spageAppConfig now contains Temporal settings from config file, env, or defaults
 		WorkflowIDPrefix: spageAppConfig.Temporal.WorkflowIDPrefix,
+		LimitPattern:     limitPattern,
 	}
 
 	// Run the worker and potentially the workflow
