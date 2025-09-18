@@ -1,0 +1,4 @@
+logging:
+  level: info
+temporal:
+  trigger: true

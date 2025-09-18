@@ -1,0 +1,41 @@
+---
+- hosts: all
+  gather_facts: false
+  vars:
+    test_var: "world"
+  tasks:
+    # - name: lookup template
+    #   copy:
+    #     content: "{{ lookup('file', 'templates/test_template.j2') }}"
+    #     dest: /tmp/spage/lookup_template.txt
+    #   register: copy_result
+
+    # - name: assert lookup template
+    #   assert:
+    #     that:
+    #       - copy_result.contents.after == "Hello world!\n"
+
+    - name: concatenate lists
+      set_fact:
+        list_1:
+          - 1
+          - 2
+          - 3
+        list_2:
+          - 4
+          - 5
+          - 6
+
+    - name: print set_fact_result
+      debug:
+        msg: "first list: {{ list_1 }}, second list: {{ list_2 }}"
+
+    - name: assert concatenate lists
+      assert:
+        that:
+          - list_1 == [1, 2, 3]
+          - list_2 == [4, 5, 6]
+          - list_1 + list_2 == [1, 2, 3, 4, 5, 6]
+
+    - name: test omit behaviour
+      shell: "echo {{ undefined_var | default(omit) }}"

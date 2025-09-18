@@ -2,16 +2,6 @@
 - hosts: all
   gather_facts: false
   tasks:
-    - name: cleanup old tmpdir
-      file:
-        path: /tmp/spage
-        state: absent
-
-    - name: create tmpdir
-      file:
-        path: /tmp/spage
-        state: directory
-
     - name: Create a test file
       file:
         path: /tmp/spage/spage_test_file.txt

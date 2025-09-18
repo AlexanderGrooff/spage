@@ -1,0 +1,72 @@
+---
+- hosts: localhost
+  vars:
+    iterations: 1
+    spage_docs_dir: "~/code/spage-docs"
+  tasks:
+    - name: remove test artifacts
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/spage
+        - generated_tasks
+        - generated_tasks.go
+
+    - name: run benchmarks
+      command: "go test -bench=. -run=^$ . -count={{ iterations | default(1) }}"
+      register: result
+
+    - name: print benchmarks
+      debug:
+        msg: "{{ result.stdout }}"
+
+    - name: write benchmarks to file
+      copy:
+        content: "{{ result.stdout }}"
+        dest: "benchmarks.txt"
+
+    - name: create benchmark directory
+      file:
+        path: "docs"
+        state: directory
+
+    - name: generate individual benchmark docs
+      shell: "./format_benchmark.sh benchmarks.txt {{ item }} | tee docs/{{ item }}.md"
+      loop:
+        - File
+        - Command
+        - Jinja
+
+    - name: generate File benchmark content for blockinfile
+      shell: "./format_benchmark.sh benchmarks.txt File no_header"
+      register: file_benchmark_content
+
+    - name: generate Command benchmark content for blockinfile
+      shell: "./format_benchmark.sh benchmarks.txt Command no_header"
+      register: command_benchmark_content
+
+    - name: generate Jinja benchmark content for blockinfile
+      shell: "./format_benchmark.sh benchmarks.txt Jinja no_header"
+      register: jinja_benchmark_content
+
+    - name: update main benchmarks.md with File benchmark
+      blockinfile:
+        path: "{{ spage_docs_dir }}/docs/benchmarks.md"
+        marker: "<!-- {mark} FILE_BENCHMARK -->"
+        block: "{{ file_benchmark_content.stdout }}"
+        backup: yes
+
+    - name: update main benchmarks.md with Command benchmark
+      blockinfile:
+        path: "{{ spage_docs_dir }}/docs/benchmarks.md"
+        marker: "<!-- {mark} COMMAND_BENCHMARK -->"
+        block: "{{ command_benchmark_content.stdout }}"
+        backup: yes
+
+    - name: update main benchmarks.md with Jinja benchmark
+      blockinfile:
+        path: "{{ spage_docs_dir }}/docs/benchmarks.md"
+        marker: "<!-- {mark} JINJA_BENCHMARK -->"
+        block: "{{ jinja_benchmark_content.stdout }}"
+        backup: yes

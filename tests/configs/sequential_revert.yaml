@@ -1,0 +1,7 @@
+execution_mode: sequential
+revert: true
+logging:
+  format: plain
+  level: debug
+temporal:
+  trigger: true

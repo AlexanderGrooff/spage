@@ -94,3 +94,18 @@
             path: /tmp/spage/does_not_exist.txt
             state: touch
       when: false
+
+    - name: parent block with variables
+      block:
+        - name: task 1
+          assert:
+            that:
+              - variable_1 == 1
+      vars:
+        variable_1: 1
+
+    - name: assert variable doesn't exists
+      assert:
+        that:
+          - variable_1 is not defined
+      after: parent block with variables

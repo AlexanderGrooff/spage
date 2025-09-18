@@ -1,0 +1,27 @@
+goos: linux
+goarch: amd64
+pkg: github.com/AlexanderGrooff/spage/cmd/docgen
+cpu: 12th Gen Intel(R) Core(TM) i7-12700K
+BenchmarkPlaybooks/File/ansible-20         	       1	3098845694 ns/op
+BenchmarkPlaybooks/File/bash-20            	      56	  20165208 ns/op
+BenchmarkPlaybooks/File/spage_run-20       	      32	  34467043 ns/op
+BenchmarkPlaybooks/File/spage_run_temporal-20         	       1	1338306331 ns/op
+BenchmarkPlaybooks/File/go_run_generated-20           	       9	 149306848 ns/op
+BenchmarkPlaybooks/File/compiled_binary-20            	      42	  23998288 ns/op
+BenchmarkPlaybooks/Command/ansible-20                 	       1	1468925320 ns/op
+BenchmarkPlaybooks/Command/bash-20                    	     147	   7964071 ns/op
+BenchmarkPlaybooks/Command/spage_run-20               	      42	  26960555 ns/op
+BenchmarkPlaybooks/Command/spage_run_temporal-20      	       6	 746629433 ns/op
+BenchmarkPlaybooks/Command/go_run_generated-20        	       8	 149849632 ns/op
+BenchmarkPlaybooks/Command/compiled_binary-20         	      72	  16372159 ns/op
+BenchmarkPlaybooks/Jinja/ansible-20                   	       2	 685711904 ns/op
+BenchmarkPlaybooks/Jinja/bash-20                      	     681	   1762102 ns/op
+BenchmarkPlaybooks/Jinja/spage_run-20                 	      69	  17223676 ns/op
+BenchmarkPlaybooks/Jinja/spage_run_temporal-20        	       8	 426915767 ns/op
+BenchmarkPlaybooks/Jinja/go_run_generated-20          	       8	 156445566 ns/op
+BenchmarkPlaybooks/Jinja/compiled_binary-20           	     151	   7722281 ns/op
+BenchmarkBashScripts/File-20                          	      50	  22568794 ns/op
+BenchmarkBashScripts/Command-20                       	     132	   8979162 ns/op
+BenchmarkBashScripts/Jinja-20                         	     638	   1842796 ns/op
+PASS
+ok  	github.com/AlexanderGrooff/spage/cmd/docgen	56.110s
