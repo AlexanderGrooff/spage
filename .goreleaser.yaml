@@ -55,11 +55,6 @@ nfpms:
     priority: optional
     provides:
       - spage
-    contents:
-      - src: "{{ .Binary }}"
-        dst: "/usr/bin/spage"
-        file_info:
-          mode: 0755
 
 changelog:
   sort: asc
