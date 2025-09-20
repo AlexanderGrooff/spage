@@ -24,6 +24,7 @@
             # Add other Go tools or dependencies here if needed, e.g.:
             pkgs.gopls
             pkgs.delve
+            pkgs.goreleaser
           ];
 
           # Disable hardening for cgo

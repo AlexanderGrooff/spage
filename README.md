@@ -23,6 +23,18 @@ Spage works by:
 3. Compiling this into a single binary for your target environment
 4. Executing tasks with native Go modules where possible, falling back to Python for full compatibility
 
+## Installation
+
+The fastest way to install Spage is using our installation script:
+
+```bash
+curl -sSL https://spage.dev/install.sh | bash
+```
+
+This will automatically detect your OS and architecture, download the latest release, and install it to `/usr/local/bin/spage`.
+
+For other installation methods (manual download, Go install, building from source), see the [Installation Guide](https://spage.dev/docs/installation).
+
 ## Usage
 
 You can use Spage in two ways:
@@ -53,9 +65,11 @@ or on the target host.
 **A: Spage is a drop-in replacement for Ansible** that compiles your playbooks into Go programs. You can then utilize the
 Golang toolchain to compile and run the playbook, either locally or on the target host.
 
-If you're familiar with Ansible but want to improve performance, compile to a binary, get rid of the Python dependency or want to adopt different execution models
+If you're familiar with Ansible but want to improve performance, compile to a binary, get
+rid of the Python dependency or want to adopt different execution models
 such as running in Temporal, Spage is for you.
-Instead of running `ansible-playbook playbook.yaml`, you can run `spage run -p playbook.yaml` or `spage generate -p playbook.yaml -o generated_tasks.go && go run generated_tasks.go`.
+Instead of running `ansible-playbook playbook.yaml`, you can run
+`spage run playbook.yaml` or `spage generate playbook.yaml -o generated_tasks.go && go run generated_tasks.go`.
 Typical variables such as `--become`, `--inventory`, `--tags`, `--extra-vars` are supported.
 
 ### Q: Why is it called Spage?
