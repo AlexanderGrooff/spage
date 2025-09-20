@@ -590,22 +590,22 @@ func (m AptModule) ParameterAliases() map[string]string {
 
 // ParameterDocs provides rich documentation for apt module inputs.
 func (m AptModule) ParameterDocs() map[string]pkg.ParameterDoc {
-	optional := false
+	notRequired := false
 	return map[string]pkg.ParameterDoc{
 		"name": {
 			Description: "Name of the package(s) to operate on. Can be a string or a list of strings.",
-			Required:    &optional,
+			Required:    &notRequired, // name is optional (can use update_cache alone)
 			Default:     "",
 		},
 		"state": {
 			Description: "Desired package state.",
-			Required:    &optional,
+			Required:    &notRequired, // state is optional (defaults to present)
 			Default:     "present",
 			Choices:     []string{"present", "absent", "latest"},
 		},
 		"update_cache": {
 			Description: "Run apt-get update before the operation.",
-			Required:    &optional,
+			Required:    &notRequired, // update_cache is optional
 			Default:     "false",
 			Choices:     []string{"true", "false"},
 		},

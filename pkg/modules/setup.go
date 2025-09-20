@@ -28,6 +28,57 @@ func (sm SetupModule) OutputType() reflect.Type {
 	return reflect.TypeOf(SetupOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (sm SetupModule) Doc() string {
+	return `Gather facts about the target host. This module collects system information and makes it available as variables for use in subsequent tasks.
+
+## Examples
+
+` + "```yaml" + `
+- name: Gather all facts
+  setup:
+
+- name: Gather specific facts
+  setup:
+    facts:
+      - hostname
+      - distribution
+      - memory
+
+- name: Gather network facts
+  setup:
+    facts:
+      - network
+
+- name: Gather OS information
+  setup:
+    facts:
+      - ansible_distribution
+      - ansible_distribution_major_version
+      - ansible_os_family
+
+- name: Use gathered facts
+  debug:
+    msg: "Running on {{ ansible_hostname }} ({{ ansible_distribution }} {{ ansible_os_family }})"
+` + "```" + `
+
+**Note**: The setup module is typically run automatically at the beginning of playbooks. Facts are available as variables prefixed with 'ansible_'.
+`
+}
+
+// ParameterDocs provides rich documentation for setup module inputs.
+func (sm SetupModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	notRequired := false
+	return map[string]pkg.ParameterDoc{
+		"facts": {
+			Description: "List of specific fact categories to gather. If not specified, all available facts are collected.",
+			Required:    &notRequired, // facts parameter is optional
+			Default:     "all facts",
+			Choices:     []string{"hostname", "distribution", "memory", "network", "hardware", "system", "ansible_distribution", "ansible_distribution_major_version", "ansible_os_family"},
+		},
+	}
+}
+
 func (i SetupInput) ToCode() string {
 	return fmt.Sprintf("modules.SetupInput{Facts: %#v}", i.Facts)
 }
@@ -70,7 +121,7 @@ func (m SetupModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pk
 	// Precompute distribution facts once if needed
 	needsDistro := false
 	for _, f := range input.Facts {
-		if f == "ansible_distribution" || f == "ansible_distribution_major_version" {
+		if f == "ansible_distribution" || f == "ansible_distribution_major_version" || f == "ansible_os_family" {
 			needsDistro = true
 			break
 		}
@@ -113,6 +164,8 @@ func (m SetupModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pk
 			factValue = distroName
 		case "ansible_distribution_major_version":
 			factValue = distroMajor
+		case "ansible_os_family":
+			factValue = m.getOSFamily(distroName)
 		}
 
 		// Store the fact in the host context and in our return map
@@ -224,4 +277,43 @@ func trimOsReleaseValue(v string) string {
 		return v[1 : len(v)-1]
 	}
 	return v
+}
+
+// getOSFamily maps distribution names to OS families following Ansible's convention
+func (m SetupModule) getOSFamily(distroName string) string {
+	if distroName == "" {
+		return ""
+	}
+
+	// Convert to lowercase for case-insensitive matching
+	distro := strings.ToLower(distroName)
+
+	// Map distributions to OS families based on Ansible's logic
+	switch {
+	case strings.Contains(distro, "ubuntu") || strings.Contains(distro, "debian") || strings.Contains(distro, "mint"):
+		return "Debian"
+	case strings.Contains(distro, "red hat") || strings.Contains(distro, "redhat") || strings.Contains(distro, "rhel") ||
+		strings.Contains(distro, "centos") || strings.Contains(distro, "fedora") || strings.Contains(distro, "rocky") ||
+		strings.Contains(distro, "almalinux") || strings.Contains(distro, "oracle"):
+		return "RedHat"
+	case strings.Contains(distro, "arch") || strings.Contains(distro, "manjaro"):
+		return "Archlinux"
+	case strings.Contains(distro, "suse") || strings.Contains(distro, "opensuse"):
+		return "Suse"
+	case strings.Contains(distro, "alpine"):
+		return "Alpine"
+	case strings.Contains(distro, "gentoo"):
+		return "Gentoo"
+	case strings.Contains(distro, "freebsd"):
+		return "FreeBSD"
+	case strings.Contains(distro, "openbsd"):
+		return "OpenBSD"
+	case strings.Contains(distro, "netbsd"):
+		return "NetBSD"
+	case strings.Contains(distro, "darwin") || strings.Contains(distro, "macos"):
+		return "Darwin"
+	default:
+		// Return the distribution name as fallback if we can't determine the family
+		return distroName
+	}
 }

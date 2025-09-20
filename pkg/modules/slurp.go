@@ -22,6 +22,51 @@ func (m SlurpModule) OutputType() reflect.Type {
 	return reflect.TypeOf(SlurpOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (m SlurpModule) Doc() string {
+	return `Fetch a file from the remote host and encode its content as base64. This module is useful for reading configuration files or other data from remote systems.
+
+## Examples
+
+` + "```yaml" + `
+- name: Read remote file
+  slurp:
+    src: /etc/hostname
+  register: hostname_content
+
+- name: Display file content
+  debug:
+    msg: "{{ hostname_content.content | b64decode }}"
+
+- name: Read configuration file
+  slurp:
+    src: /etc/nginx/nginx.conf
+  register: nginx_config
+
+- name: Save remote file locally
+  copy:
+    content: "{{ remote_file.content | b64decode }}"
+    dest: /tmp/local_copy.txt
+  vars:
+    remote_file: "{{ slurp_result }}"
+` + "```" + `
+
+**Note**: The file content is automatically base64 encoded. Use the 'b64decode' filter to get the original content.
+`
+}
+
+// ParameterDocs provides rich documentation for slurp module inputs.
+func (m SlurpModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	notRequired := false
+	return map[string]pkg.ParameterDoc{
+		"src": {
+			Description: "Path to the file to fetch from the remote node. The file content will be base64 encoded.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+	}
+}
+
 // SlurpInput defines the parameters for the slurp module.
 type SlurpInput struct {
 	Source string `yaml:"src"` // Path to the file to fetch from the remote node

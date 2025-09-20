@@ -19,6 +19,69 @@ func (sm SystemdModule) OutputType() reflect.Type {
 	return reflect.TypeOf(SystemdOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (sm SystemdModule) Doc() string {
+	return `Manage systemd services. This module can start, stop, enable, disable services and reload the systemd daemon configuration.
+
+## Examples
+
+` + "```yaml" + `
+- name: Start and enable nginx
+  systemd:
+    name: nginx
+    state: started
+    enabled: true
+
+- name: Stop a service
+  systemd:
+    name: apache2
+    state: stopped
+
+- name: Reload systemd daemon
+  systemd:
+    daemon_reload: true
+
+- name: Enable service without starting
+  systemd:
+    name: postgresql
+    enabled: true
+` + "```" + `
+
+**Note**: This module requires systemd to be the init system on the target host.
+`
+}
+
+// ParameterDocs provides rich documentation for systemd module inputs.
+func (sm SystemdModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	optional := false
+	required := true
+	return map[string]pkg.ParameterDoc{
+		"name": {
+			Description: "Name of the systemd service to manage.",
+			Required:    &required,
+			Default:     "",
+		},
+		"state": {
+			Description: "Desired state of the service.",
+			Required:    &required,
+			Default:     "",
+			Choices:     []string{"started", "stopped", "restarted", "reloaded"},
+		},
+		"enabled": {
+			Description: "Whether the service should be enabled to start at boot.",
+			Required:    &optional,
+			Default:     "",
+			Choices:     []string{"true", "false"},
+		},
+		"daemon_reload": {
+			Description: "Reload systemd daemon configuration before managing the service.",
+			Required:    &optional,
+			Default:     "false",
+			Choices:     []string{"true", "false"},
+		},
+	}
+}
+
 type SystemdState struct {
 	Enabled bool `yaml:"enabled"`
 	Started bool `yaml:"started"`

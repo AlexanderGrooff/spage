@@ -19,6 +19,56 @@ func (sm PacmanModule) OutputType() reflect.Type {
 	return reflect.TypeOf(PacmanOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (sm PacmanModule) Doc() string {
+	return `Manage packages with the pacman package manager. This module can install or remove packages on Arch Linux systems.
+
+## Examples
+
+` + "```yaml" + `
+- name: Install a package
+  pacman:
+    name:
+      - nginx
+    state: present
+
+- name: Install multiple packages
+  pacman:
+    name:
+      - git
+      - vim
+      - htop
+    state: present
+
+- name: Remove a package
+  pacman:
+    name:
+      - apache
+    state: absent
+` + "```" + `
+
+**Note**: This module requires pacman to be installed and is designed for Arch Linux and Arch-based distributions.
+`
+}
+
+// ParameterDocs provides rich documentation for pacman module inputs.
+func (sm PacmanModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	notRequired := false
+	return map[string]pkg.ParameterDoc{
+		"name": {
+			Description: "List of package names to operate on.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+		"state": {
+			Description: "Desired package state.",
+			Required:    &notRequired,
+			Default:     "present",
+			Choices:     []string{"present", "absent"},
+		},
+	}
+}
+
 type PacmanInput struct {
 	Name  []string `yaml:"name"`
 	State string   `yaml:"state"`

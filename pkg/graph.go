@@ -30,6 +30,7 @@ var AllowedFacts = map[string]struct{}{
 	"inventory_hostname_short":           {},
 	"ansible_distribution":               {},
 	"ansible_distribution_major_version": {},
+	"ansible_os_family":                  {},
 }
 
 // normalizeVarNameForDependency converts a variable usage like

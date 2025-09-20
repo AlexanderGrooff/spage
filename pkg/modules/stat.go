@@ -21,6 +21,85 @@ func (sm StatModule) OutputType() reflect.Type {
 	return reflect.TypeOf(StatOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (sm StatModule) Doc() string {
+	return `Retrieve file or filesystem status. This module gathers information about files, directories, and other filesystem objects without modifying them.
+
+## Examples
+
+` + "```yaml" + `
+- name: Get file statistics
+  stat:
+    path: /etc/passwd
+
+- name: Check if file exists
+  stat:
+    path: /tmp/myfile
+  register: file_stat
+
+- name: Get file checksum
+  stat:
+    path: /etc/important.conf
+    get_checksum: true
+    checksum_algorithm: sha256
+
+- name: Follow symlinks
+  stat:
+    path: /usr/bin/python
+    follow: true
+
+- name: Get MIME type
+  stat:
+    path: /var/log/messages
+    get_mime: true
+` + "```" + `
+
+The stat module provides detailed information about filesystem objects including size, permissions, timestamps, and file type.
+`
+}
+
+// ParameterDocs provides rich documentation for stat module inputs.
+func (sm StatModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	notRequired := false
+	return map[string]pkg.ParameterDoc{
+		"path": {
+			Description: "Path to the file or directory to examine.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+		"checksum_algorithm": {
+			Description: "Algorithm to use for file checksum calculation.",
+			Required:    &notRequired,
+			Default:     "sha1",
+			Choices:     []string{"md5", "sha1", "sha224", "sha256", "sha384", "sha512"},
+		},
+		"follow": {
+			Description: "Whether to follow symbolic links and stat the target instead of the link.",
+			Required:    &notRequired,
+			Default:     "false",
+			Choices:     []string{"true", "false"},
+		},
+		"get_attributes": {
+			Description: "Whether to get extended file attributes (Linux only).",
+			Required:    &notRequired,
+			Default:     "false",
+			Choices:     []string{"true", "false"},
+		},
+		"get_checksum": {
+			Description: "Whether to calculate and return file checksum.",
+			Required:    &notRequired,
+			Default:     "false",
+			Choices:     []string{"true", "false"},
+		},
+		"get_mime": {
+			Description: "Whether to determine and return the MIME type of the file.",
+			Required:    &notRequired,
+			Default:     "false",
+			Choices:     []string{"true", "false"},
+		},
+	}
+}
+
 type StatInput struct {
 	Path              string `yaml:"path"`
 	ChecksumAlgorithm string `yaml:"checksum_algorithm,omitempty"`

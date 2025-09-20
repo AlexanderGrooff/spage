@@ -184,6 +184,48 @@ func (m AnsiblePythonModule) OutputType() reflect.Type {
 	return reflect.TypeOf(AnsiblePythonOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (m AnsiblePythonModule) Doc() string {
+	return `Execute Python-based Ansible modules. This is a bridge module that allows running traditional Ansible modules written in Python within the Spage environment.
+
+## Examples
+
+` + "```yaml" + `
+- name: Run Python module
+  ansible_python:
+    module_name: "setup"
+    args:
+      gather_subset: "all"
+
+- name: Execute custom Python module
+  ansible_python:
+    module_name: "my_custom_module"
+    args:
+      parameter1: "value1"
+      parameter2: 42
+` + "```" + `
+
+**Note**: This module requires Python and the specified Ansible module to be available on the target system. It's primarily used for compatibility with existing Ansible modules that haven't been ported to native Go implementations.
+`
+}
+
+// ParameterDocs provides rich documentation for ansible_python module inputs.
+func (m AnsiblePythonModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	notRequired := false
+	return map[string]pkg.ParameterDoc{
+		"module_name": {
+			Description: "Name of the Python Ansible module to execute.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+		"args": {
+			Description: "Arguments to pass to the Python module. Can be a dictionary or other data structure depending on the module requirements.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+	}
+}
+
 func (m AnsiblePythonModule) Execute(params pkg.ConcreteModuleInputProvider, closure *pkg.Closure, runAs string) (pkg.ModuleOutput, error) {
 	pythonParams, ok := params.(AnsiblePythonInput)
 	if !ok {

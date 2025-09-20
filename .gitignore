@@ -17,6 +17,7 @@ generated_tasks.go
 generated_tasks
 test.conf
 /docgen
+/dist
 
 # pre-commit prettier hook
 node_modules

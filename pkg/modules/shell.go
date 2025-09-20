@@ -19,6 +19,50 @@ func (sm ShellModule) OutputType() reflect.Type {
 	return reflect.TypeOf(ShellOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (sm ShellModule) Doc() string {
+	return `Execute shell commands on the target host. Unlike the command module, the shell module runs commands through a shell (/bin/sh), which allows for shell features like pipes, redirects, and variable expansion.
+
+## Examples
+
+` + "```yaml" + `
+- name: Run a simple command
+  shell: ls -la /tmp
+
+- name: Use shell features like pipes
+  shell: ps aux | grep nginx
+
+- name: Command with environment variables
+  shell: echo $HOME
+
+- name: Multi-line command
+  shell: |
+    if [ -f /etc/passwd ]; then
+      echo "File exists"
+    fi
+` + "```" + `
+
+**Warning**: Be careful with shell injection when using variables in shell commands. Always validate and sanitize input.
+`
+}
+
+// ParameterDocs provides rich documentation for shell module inputs.
+func (sm ShellModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	notRequired := false
+	return map[string]pkg.ParameterDoc{
+		"execute": {
+			Description: "The shell command to execute. Can use shell features like pipes, redirects, and variable expansion.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+		"revert": {
+			Description: "The shell command to execute when reverting changes made by the execute command.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+	}
+}
+
 type ShellInput struct {
 	Execute string `yaml:"execute"`
 	Revert  string `yaml:"revert"`

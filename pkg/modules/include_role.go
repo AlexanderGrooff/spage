@@ -11,8 +11,48 @@ import (
 
 type IncludeRoleModule struct{}
 
-func (m IncludeRoleModule) InputType() reflect.Type             { return reflect.TypeOf(IncludeRoleInput{}) }
-func (m IncludeRoleModule) OutputType() reflect.Type            { return reflect.TypeOf(IncludeRoleOutput{}) }
+func (m IncludeRoleModule) InputType() reflect.Type  { return reflect.TypeOf(IncludeRoleInput{}) }
+func (m IncludeRoleModule) OutputType() reflect.Type { return reflect.TypeOf(IncludeRoleOutput{}) }
+
+// Doc returns module-level documentation rendered into Markdown.
+func (m IncludeRoleModule) Doc() string {
+	return `Include and execute all tasks from a specified role. This allows you to reuse role functionality within a playbook.
+
+## Examples
+
+` + "```yaml" + `
+- name: Include webserver role
+  include_role:
+    name: webserver
+
+- name: Include role with variables
+  include_role:
+    name: database
+  vars:
+    db_name: myapp
+    db_user: appuser
+
+- name: Conditionally include role
+  include_role:
+    name: ssl_certificates
+  when: enable_ssl | bool
+` + "```" + `
+
+**Note**: The role must be available in the roles directory or in the Ansible roles path.
+`
+}
+
+// ParameterDocs provides rich documentation for include_role module inputs.
+func (m IncludeRoleModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	notRequired := false
+	return map[string]pkg.ParameterDoc{
+		"name": {
+			Description: "Name of the role to include and execute.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+	}
+}
 func (m IncludeRoleModule) ParameterAliases() map[string]string { return nil }
 
 type IncludeRoleInput struct {

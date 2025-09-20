@@ -20,6 +20,61 @@ func (am AssertModule) OutputType() reflect.Type {
 	return reflect.TypeOf(AssertOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (am AssertModule) Doc() string {
+	return `Assert that given expressions are true. This module evaluates a list of conditions and fails if any of them are false, making it useful for validation and testing.
+
+## Examples
+
+` + "```yaml" + `
+- name: Assert variable is defined
+  assert:
+    that:
+      - my_var is defined
+    msg: "Variable my_var must be defined"
+
+- name: Multiple assertions
+  assert:
+    that:
+      - ansible_os_family == "RedHat"
+      - ansible_distribution_major_version >= "7"
+    msg: "This playbook requires RHEL/CentOS 7 or later"
+
+- name: Assert with complex conditions
+  assert:
+    that:
+      - inventory_hostname in groups['webservers']
+      - port | int > 0 and port | int < 65536
+      - config_file is file
+
+- name: Assert service is running
+  assert:
+    that:
+      - service_status.stdout == "running"
+    msg: "Service must be running before proceeding"
+` + "```" + `
+
+**Note**: All conditions in the 'that' list must be true for the assertion to pass. If any condition fails, the task will fail with the specified message.
+`
+}
+
+// ParameterDocs provides rich documentation for assert module inputs.
+func (am AssertModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	notRequired := false
+	return map[string]pkg.ParameterDoc{
+		"that": {
+			Description: "List of Jinja2 expressions that must evaluate to true. All expressions must pass for the assertion to succeed.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+		"msg": {
+			Description: "Custom message to display when assertion fails. If not provided, a default message will be shown.",
+			Required:    &notRequired,
+			Default:     "Assertion failed",
+		},
+	}
+}
+
 type AssertInput struct {
 	That []string `yaml:"that"` // List of assertions to evaluate
 	Msg  string   `yaml:"msg"`  // Optional message on failure

@@ -29,6 +29,12 @@ import (
 )
 
 var (
+	// Version information - these can be set at build time using ldflags
+	// Example: go build -ldflags "-X github.com/AlexanderGrooff/spage/cmd.Version=1.0.0 -X github.com/AlexanderGrooff/spage/cmd.GitCommit=$(git rev-parse HEAD) -X github.com/AlexanderGrooff/spage/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	Version   = "dev"
+	GitCommit = "unknown"
+	BuildDate = "unknown"
+
 	playbookFile   string
 	outputFile     string
 	inventoryFile  string
@@ -667,20 +673,24 @@ var bundleUploadCmd = &cobra.Command{
 	},
 }
 
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Show version information",
+	Long:  `Display version information for spage including version number, git commit, and build date.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Printf("Spage version %s\n", Version)
+		fmt.Printf("Git commit: %s\n", GitCommit)
+		fmt.Printf("Build date: %s\n", BuildDate)
+	},
+}
+
 func init() {
 	// Add config flag to root command so it's available to all subcommands
 	RootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "", "Config file path (default: ./spage.yaml)")
 	RootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose logging (sets log level to debug)")
 
-	generateCmd.Flags().StringVarP(&playbookFile, "playbook", "p", "", "Playbook file (required)")
 	generateCmd.Flags().StringVarP(&outputFile, "output", "o", "generated_tasks.go", "Output file (default: generated_tasks.go)")
-	generateCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file (default: localhost)")
-	generateCmd.Flags().StringVarP(&limitHosts, "limit", "l", "", "Limit selected hosts to an additional pattern")
-	generateCmd.Flags().StringSliceVarP(&tags, "tags", "t", []string{}, "Only include tasks with these tags (comma-separated)")
-	generateCmd.Flags().StringSliceVar(&skipTags, "skip-tags", []string{}, "Skip tasks with these tags (comma-separated)")
-	generateCmd.Flags().BoolVar(&becomeMode, "become", false, "Run all tasks with become: true and become_user: root")
 
-	runCmd.Flags().StringVarP(&playbookFile, "playbook", "p", "", "Playbook file")
 	runCmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "Inventory file (default: localhost)")
 	runCmd.Flags().StringVarP(&outputFile, "output", "o", "generated_tasks.go", "Output file (default: generated_tasks.go)")
 	runCmd.Flags().StringVarP(&limitHosts, "limit", "l", "", "Limit selected hosts to an additional pattern")
@@ -723,6 +733,7 @@ func init() {
 	RootCmd.AddCommand(runCmd)
 	RootCmd.AddCommand(bundleCmd)
 	RootCmd.AddCommand(inventoryCmd)
+	RootCmd.AddCommand(versionCmd)
 }
 
 // GetConfig returns the loaded configuration

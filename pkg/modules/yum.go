@@ -21,6 +21,106 @@ func (ym YumModule) OutputType() reflect.Type {
 	return reflect.TypeOf(YumOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (ym YumModule) Doc() string {
+	return `Manage packages with the yum package manager. This module can install, upgrade, or remove packages on Red Hat-based systems.
+
+## Examples
+
+` + "```yaml" + `
+- name: Install a package
+  yum:
+    name: httpd
+    state: present
+
+- name: Install multiple packages
+  yum:
+    name:
+      - httpd
+      - mysql-server
+      - php
+
+- name: Update all packages
+  yum:
+    name: "*"
+    state: latest
+
+- name: Remove a package
+  yum:
+    name: httpd
+    state: absent
+
+- name: Install from specific repository
+  yum:
+    name: nginx
+    enablerepo: epel
+
+- name: Update cache before operation
+  yum:
+    name: git
+    state: present
+    update_cache: true
+
+- name: Remove unused dependencies
+  yum:
+    autoremove: true
+` + "```" + `
+
+**Note**: This module requires yum to be installed on the target system and is typically used on Red Hat, CentOS, and Fedora systems.
+`
+}
+
+// ParameterDocs provides rich documentation for yum module inputs.
+func (ym YumModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	notRequired := false
+	return map[string]pkg.ParameterDoc{
+		"name": {
+			Description: "Name of the package(s) to operate on. Can be a string or list of strings. Use '*' to operate on all packages.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+		"state": {
+			Description: "Desired package state.",
+			Required:    &notRequired,
+			Default:     "present",
+			Choices:     []string{"present", "installed", "latest", "absent", "removed"},
+		},
+		"update_cache": {
+			Description: "Run yum makecache before the operation.",
+			Required:    &notRequired,
+			Default:     "false",
+			Choices:     []string{"true", "false"},
+		},
+		"enablerepo": {
+			Description: "Repository names to enable for this operation. Can be a string, comma-separated string, or list.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+		"disablerepo": {
+			Description: "Repository names to disable for this operation. Can be a string, comma-separated string, or list.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+		"exclude": {
+			Description: "Package names to exclude from the operation. Can be a string, comma-separated string, or list.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+		"update_only": {
+			Description: "Only update packages that are already installed, don't install new packages.",
+			Required:    &notRequired,
+			Default:     "false",
+			Choices:     []string{"true", "false"},
+		},
+		"autoremove": {
+			Description: "Remove leaf packages that were installed as dependencies but are no longer needed.",
+			Required:    &notRequired,
+			Default:     "false",
+			Choices:     []string{"true", "false"},
+		},
+	}
+}
+
 // YumInput defines the parameters for the yum module.
 type YumInput struct {
 	Name        interface{} `yaml:"name"`         // Name of the package(s) (string or list of strings)

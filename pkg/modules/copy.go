@@ -20,6 +20,65 @@ func (cm CopyModule) OutputType() reflect.Type {
 	return reflect.TypeOf(CopyOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (cm CopyModule) Doc() string {
+	return `Copy files from the local machine to the target host. You can copy files from a source path or provide content directly.
+
+## Examples
+
+` + "```yaml" + `
+- name: Copy a file
+  copy:
+    src: /path/to/local/file.txt
+    dest: /path/to/remote/file.txt
+    mode: '0644'
+
+- name: Copy with inline content
+  copy:
+    content: |
+      Hello World
+      This is file content
+    dest: /tmp/hello.txt
+    mode: '0644'
+
+- name: Copy from role files directory
+  copy:
+    src: config.conf
+    dest: /etc/myapp/config.conf
+` + "```" + `
+
+**Note**: When used in roles, the copy module will first look for files in the role's ` + "`files/`" + ` directory before checking other locations.
+`
+}
+
+// ParameterDocs provides rich documentation for copy module inputs.
+func (cm CopyModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	notRequired := false
+	required := true
+	return map[string]pkg.ParameterDoc{
+		"src": {
+			Description: "Path to the source file on the local machine. Cannot be used with 'content'.",
+			Required:    &notRequired, // optional - can use content instead
+			Default:     "",
+		},
+		"content": {
+			Description: "Content to write directly to the destination file. Cannot be used with 'src'.",
+			Required:    &notRequired, // optional - can use src instead
+			Default:     "",
+		},
+		"dest": {
+			Description: "Path to the destination file on the target host.",
+			Required:    &required, // dest is required
+			Default:     "",
+		},
+		"mode": {
+			Description: "File permissions to set on the destination file (e.g., '0644', '0755').",
+			Required:    &notRequired, // mode is optional
+			Default:     "",
+		},
+	}
+}
+
 type CopyInput struct {
 	Content string `yaml:"content"`
 	Src     string `yaml:"src"`

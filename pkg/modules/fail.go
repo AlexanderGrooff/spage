@@ -20,6 +20,49 @@ func (m FailModule) OutputType() reflect.Type {
 	return reflect.TypeOf(FailOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (m FailModule) Doc() string {
+	return `Fail the playbook execution with a custom message. This module is useful for implementing custom validation logic and stopping execution when certain conditions are not met.
+
+## Examples
+
+` + "```yaml" + `
+- name: Fail with a simple message
+  fail:
+    msg: "This playbook requires root privileges"
+
+- name: Conditional failure
+  fail:
+    msg: "Variable 'required_var' is not defined"
+  when: required_var is not defined
+
+- name: Fail with templated message
+  fail:
+    msg: "Service {{ service_name }} is not running"
+  when: service_status != "running"
+
+- name: Validation failure
+  fail:
+    msg: "Invalid configuration: port must be between 1 and 65535"
+  when: port < 1 or port > 65535
+` + "```" + `
+
+**Note**: The fail module will immediately stop playbook execution and display the specified message.
+`
+}
+
+// ParameterDocs provides rich documentation for fail module inputs.
+func (m FailModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	notRequired := false
+	return map[string]pkg.ParameterDoc{
+		"msg": {
+			Description: "The failure message to display when the module executes. Can include Jinja2 templating.",
+			Required:    &notRequired,
+			Default:     "Failed as requested from task",
+		},
+	}
+}
+
 // FailInput defines the structure for the fail module's input.
 // It takes a 'msg' to be used as the failure message.
 type FailInput struct {

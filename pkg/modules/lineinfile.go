@@ -20,6 +20,103 @@ func (lm LineinfileModule) OutputType() reflect.Type {
 	return reflect.TypeOf(LineinfileOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (lm LineinfileModule) Doc() string {
+	return `Ensure a particular line is in a file, or replace an existing line using a back-referenced regular expression. This module is useful for making small changes to configuration files.
+
+## Examples
+
+` + "```yaml" + `
+- name: Add a line to a file
+  lineinfile:
+    path: /etc/hosts
+    line: "192.168.1.100 myhost.example.com"
+
+- name: Replace a line using regex
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PermitRootLogin'
+    line: 'PermitRootLogin no'
+
+- name: Remove a line
+  lineinfile:
+    path: /etc/hosts
+    regexp: '^192\.168\.1\.100'
+    state: absent
+
+- name: Insert line after pattern
+  lineinfile:
+    path: /etc/fstab
+    insertafter: '^/dev/sda1'
+    line: '/dev/sda2 /home ext4 defaults 0 2'
+
+- name: Create file if it doesn't exist
+  lineinfile:
+    path: /etc/myapp.conf
+    line: 'setting=value'
+    create: true
+    mode: '0644'
+` + "```" + `
+
+**Note**: Use regular expressions carefully to avoid unintended matches. The module will create the file if it doesn't exist and create=true is specified.
+`
+}
+
+// ParameterDocs provides rich documentation for lineinfile module inputs.
+func (lm LineinfileModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	notRequired := false
+	return map[string]pkg.ParameterDoc{
+		"path": {
+			Description: "Path to the file to modify. Aliases: dest, destfile, name.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+		"line": {
+			Description: "The line to insert or replace. Required when state=present.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+		"regexp": {
+			Description: "Regular expression to match existing lines for replacement or removal.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+		"state": {
+			Description: "Whether the line should be present or absent.",
+			Required:    &notRequired,
+			Default:     "present",
+			Choices:     []string{"present", "absent"},
+		},
+		"backrefs": {
+			Description: "Use backreferences from regexp in the line. Only works with regexp.",
+			Required:    &notRequired,
+			Default:     "false",
+			Choices:     []string{"true", "false"},
+		},
+		"create": {
+			Description: "Create the file if it doesn't exist.",
+			Required:    &notRequired,
+			Default:     "false",
+			Choices:     []string{"true", "false"},
+		},
+		"insertafter": {
+			Description: "Insert line after this regex pattern, or 'EOF' for end of file.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+		"insertbefore": {
+			Description: "Insert line before this regex pattern, or 'BOF' for beginning of file.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+		"mode": {
+			Description: "File permissions to set if creating the file (e.g., '0644').",
+			Required:    &notRequired,
+			Default:     "",
+		},
+	}
+}
+
 type LineinfileInput struct {
 	Path         string `yaml:"path"` // Aliases: dest, destfile, name
 	Line         string `yaml:"line"`

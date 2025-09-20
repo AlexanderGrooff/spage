@@ -20,6 +20,56 @@ func (m DebugModule) OutputType() reflect.Type {
 	return reflect.TypeOf(DebugOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (m DebugModule) Doc() string {
+	return `Print debug information during playbook execution. Use this module to display variable values, messages, or other debugging information.
+
+## Examples
+
+` + "```yaml" + `
+- name: Print a simple message
+  debug:
+    msg: "Hello, World!"
+
+- name: Display variable content
+  debug:
+    var: ansible_hostname
+
+- name: Print variable with message
+  debug:
+    msg: "The hostname is {{ ansible_hostname }}"
+
+- name: Debug complex data structures
+  debug:
+    var: my_dict
+
+- name: Conditional debug
+  debug:
+    msg: "This will only print if condition is true"
+  when: some_condition
+` + "```" + `
+
+**Note**: Debug output is always displayed, even in check mode.
+`
+}
+
+// ParameterDocs provides rich documentation for debug module inputs.
+func (m DebugModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	notRequired := false
+	return map[string]pkg.ParameterDoc{
+		"msg": {
+			Description: "Message to display. Can be a string, list, or templated content. Cannot be used with 'var'.",
+			Required:    &notRequired, // msg is optional (can use var instead)
+			Default:     "",
+		},
+		"var": {
+			Description: "Name of variable to display. Cannot be used with 'msg'.",
+			Required:    &notRequired, // var is optional (can use msg instead)
+			Default:     "",
+		},
+	}
+}
+
 // DebugInput defines the structure for the debug module's input.
 // It can take a 'msg' to print directly, or a 'var' to print a variable's content.
 type DebugInput struct {

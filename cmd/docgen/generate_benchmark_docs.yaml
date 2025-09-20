@@ -55,18 +55,15 @@
         path: "{{ spage_docs_dir }}/docs/benchmarks.md"
         marker: "<!-- {mark} FILE_BENCHMARK -->"
         block: "{{ file_benchmark_content.stdout }}"
-        backup: yes
 
     - name: update main benchmarks.md with Command benchmark
       blockinfile:
         path: "{{ spage_docs_dir }}/docs/benchmarks.md"
         marker: "<!-- {mark} COMMAND_BENCHMARK -->"
         block: "{{ command_benchmark_content.stdout }}"
-        backup: yes
 
     - name: update main benchmarks.md with Jinja benchmark
       blockinfile:
         path: "{{ spage_docs_dir }}/docs/benchmarks.md"
         marker: "<!-- {mark} JINJA_BENCHMARK -->"
         block: "{{ jinja_benchmark_content.stdout }}"
-        backup: yes

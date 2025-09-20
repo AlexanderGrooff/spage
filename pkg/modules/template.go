@@ -22,6 +22,58 @@ func (sm TemplateModule) OutputType() reflect.Type {
 	return reflect.TypeOf(TemplateOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (sm TemplateModule) Doc() string {
+	return `Process Jinja2 templates and write the result to a file on the target host. This module renders templates with variables from the playbook context.
+
+## Examples
+
+` + "```yaml" + `
+- name: Template a configuration file
+  template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+    mode: '0644'
+
+- name: Template from role templates directory
+  template:
+    src: app.conf.j2
+    dest: /etc/myapp/app.conf
+
+- name: Template with backup
+  template:
+    src: important.conf.j2
+    dest: /etc/important.conf
+    mode: '0600'
+` + "```" + `
+
+**Note**: When used in roles, the template module will first look for templates in the role's ` + "`templates/`" + ` directory before checking other locations. Templates have access to all variables in the current context, including facts, registered variables, and playbook variables.
+`
+}
+
+// ParameterDocs provides rich documentation for template module inputs.
+func (sm TemplateModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	notRequired := false
+	required := true
+	return map[string]pkg.ParameterDoc{
+		"src": {
+			Description: "Path to the Jinja2 template file on the local machine.",
+			Required:    &required, // src is required
+			Default:     "",
+		},
+		"dest": {
+			Description: "Path to write the templated file on the target host.",
+			Required:    &required, // dest is required
+			Default:     "",
+		},
+		"mode": {
+			Description: "File permissions to set on the destination file (e.g., '0644', '0755').",
+			Required:    &notRequired, // mode is optional
+			Default:     "",
+		},
+	}
+}
+
 type TemplateInput struct {
 	Src  string `yaml:"src"`
 	Dst  string `yaml:"dest"`

@@ -19,6 +19,56 @@ func (sm YayModule) OutputType() reflect.Type {
 	return reflect.TypeOf(YayOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (sm YayModule) Doc() string {
+	return `Manage packages with the yay AUR helper. This module can install or remove packages from the Arch User Repository (AUR) and official repositories on Arch Linux systems.
+
+## Examples
+
+` + "```yaml" + `
+- name: Install AUR package
+  yay:
+    name:
+      - google-chrome
+    state: present
+
+- name: Install multiple packages
+  yay:
+    name:
+      - discord
+      - visual-studio-code-bin
+      - spotify
+    state: present
+
+- name: Remove AUR package
+  yay:
+    name:
+      - google-chrome
+    state: absent
+` + "```" + `
+
+**Note**: This module requires yay to be installed and is designed for Arch Linux systems. Yay can install both official packages and AUR packages.
+`
+}
+
+// ParameterDocs provides rich documentation for yay module inputs.
+func (sm YayModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	notRequired := false
+	return map[string]pkg.ParameterDoc{
+		"name": {
+			Description: "List of package names to operate on. Can include both official repository and AUR packages.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+		"state": {
+			Description: "Desired package state.",
+			Required:    &notRequired,
+			Default:     "present",
+			Choices:     []string{"present", "absent"},
+		},
+	}
+}
+
 type YayInput struct {
 	Name  []string `yaml:"name"`
 	State string   `yaml:"state"`

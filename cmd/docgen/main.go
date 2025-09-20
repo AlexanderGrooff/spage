@@ -285,7 +285,7 @@ func writeModuleDoc(moduleName string, mod pkg.BaseModule, repoRoot, docsRoot st
 			if len(p.Extra.Choices) > 0 {
 				choices = strings.Join(p.Extra.Choices, ", ")
 			}
-			fmt.Fprintf(b, "| %s | %s | %s | %s | %s | %s |\n", name, f.TypeString, desc, required, def, choices)
+			fmt.Fprintf(b, "| %s | `%s` | %s | %s | %s | %s |\n", name, f.TypeString, desc, required, def, choices)
 		}
 		fmt.Fprintln(b)
 	}
@@ -307,7 +307,7 @@ func writeModuleDoc(moduleName string, mod pkg.BaseModule, repoRoot, docsRoot st
 				name = f.Name
 			}
 			desc := strings.TrimSpace(strings.ReplaceAll(f.Comment, "\n", " "))
-			fmt.Fprintf(b, "| %s | %s | %s |\n", name, f.TypeString, desc)
+			fmt.Fprintf(b, "| %s | `%s` | %s |\n", name, f.TypeString, desc)
 		}
 		fmt.Fprintln(b)
 	}

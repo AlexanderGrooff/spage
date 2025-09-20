@@ -19,6 +19,62 @@ func (sm GitModule) OutputType() reflect.Type {
 	return reflect.TypeOf(GitOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (sm GitModule) Doc() string {
+	return `Clone or update Git repositories. This module can clone repositories from remote sources and checkout specific versions, branches, or tags.
+
+## Examples
+
+` + "```yaml" + `
+- name: Clone a repository
+  git:
+    repo: https://github.com/user/repo.git
+    dest: /opt/myapp
+
+- name: Clone specific branch
+  git:
+    repo: https://github.com/user/repo.git
+    dest: /opt/myapp
+    version: develop
+
+- name: Clone specific tag
+  git:
+    repo: https://github.com/user/repo.git
+    dest: /opt/myapp
+    version: v1.0.0
+
+- name: Clone with SSH
+  git:
+    repo: git@github.com:user/repo.git
+    dest: /opt/myapp
+` + "```" + `
+
+**Note**: This module requires git to be installed on the target host. SSH keys must be configured for SSH repositories.
+`
+}
+
+// ParameterDocs provides rich documentation for git module inputs.
+func (sm GitModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	notRequired := false
+	return map[string]pkg.ParameterDoc{
+		"repo": {
+			Description: "URL of the git repository to clone. Supports HTTP(S) and SSH protocols.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+		"dest": {
+			Description: "Path where the repository should be cloned or updated.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+		"version": {
+			Description: "Version to checkout. Can be a branch name, tag, or commit hash.",
+			Required:    &notRequired,
+			Default:     "HEAD",
+		},
+	}
+}
+
 type GitInput struct {
 	Repo    string `yaml:"repo"`
 	Dest    string `yaml:"dest"`

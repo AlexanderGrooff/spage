@@ -21,6 +21,70 @@ func (fm FileModule) OutputType() reflect.Type {
 	return reflect.TypeOf(FileOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (fm FileModule) Doc() string {
+	return `Manage files, directories, and symbolic links. This module can create, remove, or modify the state and permissions of filesystem objects.
+
+## Examples
+
+` + "```yaml" + `
+- name: Create a file
+  file:
+    path: /tmp/myfile.txt
+    state: touch
+    mode: '0644'
+
+- name: Create a directory
+  file:
+    path: /opt/myapp
+    state: directory
+    mode: '0755'
+
+- name: Create a symbolic link
+  file:
+    src: /etc/myapp/config.conf
+    path: /tmp/config.link
+    state: link
+
+- name: Remove a file or directory
+  file:
+    path: /tmp/unwanted
+    state: absent
+` + "```" + `
+
+**Note**: The 'touch' and 'file' states are equivalent and will create an empty file if it doesn't exist.
+`
+}
+
+// ParameterDocs provides rich documentation for file module inputs.
+func (fm FileModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	notRequired := false
+	required := true
+	return map[string]pkg.ParameterDoc{
+		"path": {
+			Description: "Path to the file, directory, or link to manage.",
+			Required:    &required, // path is required
+			Default:     "",
+		},
+		"state": {
+			Description: "Desired state of the filesystem object.",
+			Required:    &notRequired, // state is optional (defaults to file)
+			Default:     "file",
+			Choices:     []string{"file", "touch", "directory", "link", "absent"},
+		},
+		"mode": {
+			Description: "File permissions to set (e.g., '0644', '0755'). Not applicable to links.",
+			Required:    &notRequired, // mode is optional
+			Default:     "",
+		},
+		"src": {
+			Description: "Source path for symbolic links. Only used when state=link.",
+			Required:    &notRequired, // src is optional (only needed for links)
+			Default:     "",
+		},
+	}
+}
+
 type FileInput struct {
 	Path  string `yaml:"path"` // Destination path
 	State string `yaml:"state"`

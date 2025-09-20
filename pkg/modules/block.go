@@ -18,6 +18,60 @@ func (m BlockModule) OutputType() reflect.Type {
 	return reflect.TypeOf(BlockOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (m BlockModule) Doc() string {
+	return `Group related tasks together and apply common parameters. Blocks allow you to organize tasks logically and handle errors collectively.
+
+## Examples
+
+` + "```yaml" + `
+- name: Install and configure web server
+  block:
+    - name: Install nginx
+      apt:
+        name: nginx
+        state: present
+
+    - name: Start nginx service
+      systemd:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: Copy configuration
+      template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/nginx.conf
+  rescue:
+    - name: Handle installation failure
+      debug:
+        msg: "Failed to install web server"
+  always:
+    - name: Always run this
+      debug:
+        msg: "Block execution completed"
+
+- name: Block with common when condition
+  block:
+    - name: Task 1
+      debug:
+        msg: "Running task 1"
+    - name: Task 2
+      debug:
+        msg: "Running task 2"
+  when: ansible_os_family == "Debian"
+` + "```" + `
+
+**Note**: Blocks support rescue and always sections for error handling, and can have when conditions that apply to all tasks in the block.
+`
+}
+
+// ParameterDocs provides rich documentation for block module inputs.
+func (m BlockModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	// Block module doesn't have traditional parameters - it contains other tasks
+	return map[string]pkg.ParameterDoc{}
+}
+
 type BlockInput struct {
 }
 

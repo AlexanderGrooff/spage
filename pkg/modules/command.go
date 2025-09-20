@@ -22,6 +22,44 @@ func (cm CommandModule) OutputType() reflect.Type {
 	return reflect.TypeOf(CommandOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (cm CommandModule) Doc() string {
+	return `Execute commands directly without going through a shell. This means shell features like pipes (|), redirects (\>, \<), variable expansion ($VAR), and command substitution will not work. Use the shell module if you need these features.
+
+## Examples
+
+` + "```yaml" + `
+- name: Run a simple command
+  command: ls -la /tmp
+
+- name: Execute with arguments
+  command: /usr/bin/whoami
+
+- name: Command with explicit path
+  command: /bin/date +%Y-%m-%d
+` + "```" + `
+
+**Note**: The command module is safer than shell as it prevents shell injection, but it's more limited in functionality.
+`
+}
+
+// ParameterDocs provides rich documentation for command module inputs.
+func (cm CommandModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	notRequired := false
+	return map[string]pkg.ParameterDoc{
+		"execute": {
+			Description: "The command to execute directly without shell interpretation. Shell features like pipes and redirects will not work.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+		"revert": {
+			Description: "The command to execute when reverting changes made by the execute command.",
+			Required:    &notRequired,
+			Default:     "",
+		},
+	}
+}
+
 // CommandInput defines the parameters for the command module.
 type CommandInput struct {
 	Execute string `yaml:"execute"` // The command to execute. Aliased as 'cmd'.

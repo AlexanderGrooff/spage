@@ -23,6 +23,49 @@ func (m SetFactModule) OutputType() reflect.Type {
 	return reflect.TypeOf(SetFactOutput{})
 }
 
+// Doc returns module-level documentation rendered into Markdown.
+func (m SetFactModule) Doc() string {
+	return `Set variables (facts) that can be used in subsequent tasks. This module allows you to define new variables or modify existing ones during playbook execution.
+
+## Examples
+
+` + "```yaml" + `
+- name: Set simple facts
+  set_fact:
+    my_var: "hello world"
+    another_var: 42
+
+- name: Set fact with templating
+  set_fact:
+    hostname_upper: "{{ ansible_hostname | upper }}"
+
+- name: Set complex data structures
+  set_fact:
+    app_config:
+      name: "myapp"
+      version: "1.0.0"
+      ports: [8080, 8443]
+
+- name: Set fact based on condition
+  set_fact:
+    environment: "{{ 'prod' if ansible_hostname.startswith('prod') else 'dev' }}"
+
+- name: Use set facts in later tasks
+  debug:
+    msg: "Application {{ app_config.name }} version {{ app_config.version }}"
+` + "```" + `
+
+**Note**: Facts set with this module are available to all subsequent tasks in the playbook and can be used in templates and conditions.
+`
+}
+
+// ParameterDocs provides rich documentation for set_fact module inputs.
+func (m SetFactModule) ParameterDocs() map[string]pkg.ParameterDoc {
+	// set_fact is special - it accepts arbitrary key-value pairs
+	// We can't document specific parameters since they're dynamic
+	return map[string]pkg.ParameterDoc{}
+}
+
 // SetFactInput defines the structure for facts to be set.
 // Using a map directly allows flexible key-value pairs.
 type SetFactInput struct {
