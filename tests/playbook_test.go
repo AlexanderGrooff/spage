@@ -799,6 +799,20 @@ func TestAnsibleBuiltinPlaybook(t *testing.T) {
 	})
 }
 
+func TestSpageModulePing(t *testing.T) {
+	runPlaybookTest(t, playbookTestCase{
+		playbookFile: "playbooks/spage_playbook.yaml",
+		configFile:   "sequential.yaml",
+		check: func(t *testing.T, envName string, exitCode int, output string, inventory *pkg.Inventory) {
+			// We assume a daemon is running and NATS is reachable. The module itself does not create files.
+			// Success criteria: play runs without error.
+			assert.Equal(t, 0, exitCode, "spage_playbook should run without error in env: %s, output: %s", envName, output)
+			// Best-effort output check from debug task
+			assert.Contains(t, output, "spage ping sent")
+		},
+	})
+}
+
 func TestConnectionLocalPlaybook(t *testing.T) {
 	runPlaybookTest(t, playbookTestCase{
 		playbookFile: "playbooks/connection_local_playbook.yaml",

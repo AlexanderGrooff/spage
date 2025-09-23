@@ -1,0 +1,42 @@
+---
+- name: Spage gRPC ping playbook
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Send ping to spage daemon over gRPC
+      spage:
+        action: ping
+        grpc_endpoint: "localhost:9091"
+      register: result
+
+    - name: Confirm ping was sent
+      debug:
+        msg: "spage ping sent: {{ result }}"
+
+    - name: Verify response
+      assert:
+        that:
+          - result.response.status == "healthy"
+
+    - name: Start play
+      spage:
+        action: start
+        grpc_endpoint: "localhost:9091"
+        play_id: "demo-001"
+        playbook: "stat_playbook.yaml"
+        inventory: "inventory.yaml"
+        variables:
+          hello: world
+      register: result
+
+    - name: Verify play started
+      debug:
+        msg: "spage play started: {{ result }}"
+
+    - name: Verify response
+      assert:
+        that:
+          - result.response.success == true
+          - result.response.play_id == "demo-001"
+      register: result
