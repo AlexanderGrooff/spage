@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -166,26 +167,58 @@ func materializeBundleToFS(bundleRef string) (fs.FS, string, func(), error) {
 	bundleID := parts[0]
 	rootPath := parts[1]
 
-	url := fmt.Sprintf("%s/api/bundles/%s/archive", strings.TrimRight(cfg.API.HTTPBase, "/"), bundleID)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return nil, "", nil, err
+	// Prefer signed URL from environment if provided
+	signedURL := os.Getenv("SPAGE_BUNDLE_URL")
+	var reader io.Reader
+	if signedURL != "" {
+		// Fetch directly without Authorization header
+		resp, err := http.Get(signedURL)
+		if err != nil {
+			return nil, "", nil, fmt.Errorf("failed to download bundle via signed URL: %w", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			return nil, "", nil, fmt.Errorf("bundle archive signed URL http %d", resp.StatusCode)
+		}
+		// If SHA is provided, buffer and verify before loading
+		wantSHA := os.Getenv("SPAGE_BUNDLE_SHA256")
+		if wantSHA != "" {
+			var buf bytes.Buffer
+			if _, err := io.Copy(&buf, resp.Body); err != nil {
+				return nil, "", nil, fmt.Errorf("failed to read bundle: %w", err)
+			}
+			got := sha256.Sum256(buf.Bytes())
+			if fmt.Sprintf("%x", got[:]) != strings.ToLower(wantSHA) {
+				return nil, "", nil, fmt.Errorf("bundle SHA256 mismatch")
+			}
+			reader = bytes.NewReader(buf.Bytes())
+		} else {
+			reader = resp.Body
+		}
+	} else {
+		url := fmt.Sprintf("%s/api/bundles/%s/archive", strings.TrimRight(cfg.API.HTTPBase, "/"), bundleID)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		if apiToken == "" && cfg != nil && cfg.ApiToken != "" {
+			apiToken = cfg.ApiToken
+		}
+		if apiToken != "" {
+			req.Header.Set("Authorization", "Bearer "+apiToken)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, "", nil, fmt.Errorf("failed to download bundle archive %s: %w", url, err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			return nil, "", nil, fmt.Errorf("bundle archive %s http %d", url, resp.StatusCode)
+		}
+		reader = resp.Body
 	}
-	if apiToken == "" && cfg != nil && cfg.ApiToken != "" {
-		apiToken = cfg.ApiToken
-	}
-	if apiToken != "" {
-		req.Header.Set("Authorization", "Bearer "+apiToken)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to download bundle archive %s: %w", url, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, "", nil, fmt.Errorf("bundle archive %s http %d", url, resp.StatusCode)
-	}
-	memfs, err := pkg.NewMemFSFromTarGz(resp.Body)
+
+	memfs, err := pkg.NewMemFSFromTarGz(reader)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("failed to load bundle into FS: %w", err)
 	}
